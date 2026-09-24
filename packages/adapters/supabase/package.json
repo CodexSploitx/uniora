@@ -1,0 +1,49 @@
+{
+  "name": "@uniora/supabase",
+  "version": "0.1.0",
+  "description": "Supabase Auth adapter for @uniora/core — traduce la sesión de Supabase a Identity (docs/PROYECT.md §13-14)",
+  "license": "PolyForm-Shield-1.0.0",
+  "keywords": [
+    "uniora",
+    "supabase",
+    "auth",
+    "identity"
+  ],
+  "homepage": "https://github.com/CodexSploitx/uniora#readme",
+  "bugs": {
+    "url": "https://github.com/CodexSploitx/uniora/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CodexSploitx/uniora.git",
+    "directory": "packages/adapters/supabase"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "prepack": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@uniora/core": "workspace:^"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}
