@@ -1,0 +1,54 @@
+{
+  "name": "@uniora/next",
+  "version": "0.1.0",
+  "description": "Next.js glue for @uniora/core (docs/PROYECT.md §25) — request-scoped snapshot/identity memoization, and authorization guards for Server Actions and Route Handlers. No hard dependency on the `next` package itself.",
+  "license": "PolyForm-Shield-1.0.0",
+  "keywords": [
+    "uniora",
+    "nextjs",
+    "authorization",
+    "server-actions"
+  ],
+  "homepage": "https://github.com/CodexSploitx/uniora#readme",
+  "bugs": {
+    "url": "https://github.com/CodexSploitx/uniora/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CodexSploitx/uniora.git",
+    "directory": "packages/next"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "prepack": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "dependencies": {
+    "@uniora/core": "workspace:^"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "react": "^19.3.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}
