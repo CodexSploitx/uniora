@@ -1,0 +1,58 @@
+{
+  "name": "@uniora/cli",
+  "version": "0.1.0",
+  "description": "CLI oficial de UNIORA (docs/PROYECT.md §19): init/migrate/studio/check/doctor",
+  "license": "PolyForm-Shield-1.0.0",
+  "keywords": [
+    "uniora",
+    "cli",
+    "authorization",
+    "migrations"
+  ],
+  "homepage": "https://github.com/CodexSploitx/uniora#readme",
+  "bugs": {
+    "url": "https://github.com/CodexSploitx/uniora/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CodexSploitx/uniora.git",
+    "directory": "packages/cli"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "uniora": "./dist/bin.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20.6"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "prepack": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@uniora/postgres": "workspace:^",
+    "@uniora/studio": "workspace:^",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}
