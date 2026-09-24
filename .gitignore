@@ -1,0 +1,25 @@
+# Dependencias
+node_modules/
+
+# Builds
+dist/
+*.tsbuildinfo
+
+# Logs
+*.log
+pnpm-debug.log*
+
+# Variables de entorno (ver .env.example)
+.env
+.env.*.local
+
+# Sistema operativo / editor
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+
+# Contexto local de desarrollo: no se versiona (solo referencia local)
+.claude/
+docs/
+CLAUDE.md
+apps/*/CLAUDE.md
