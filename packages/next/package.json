@@ -1,6 +1,6 @@
 {
   "name": "@uniora/next",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Next.js glue for @uniora/core (docs/PROYECT.md §25) — request-scoped snapshot/identity memoization, and authorization guards for Server Actions and Route Handlers. No hard dependency on the `next` package itself.",
   "license": "PolyForm-Shield-1.0.0",
   "keywords": [
