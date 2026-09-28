@@ -34,7 +34,7 @@ export async function isSchemaReady(): Promise<boolean> {
   return schemaKnownReady;
 }
 
-function toActivity(entry: AuditLogEntry, organizationName: string): ActivityItem {
+function toActivity(entry: AuditLogEntry, organizationName: string | undefined): ActivityItem {
   return {
     id: entry.id,
     organizationId: entry.organizationId,
@@ -49,13 +49,18 @@ function toActivity(entry: AuditLogEntry, organizationName: string): ActivityIte
 
 /**
  * Turns audit entries into view items, resolving each distinct organization
- * name with ONE batched `findByIds` (never a lookup per entry).
+ * name with ONE batched `findByIds` (never a lookup per entry). A GLOBAL
+ * entry (`entry.organizationId === undefined`, e.g. `identity_link.created`
+ * — docs/security-pentest-2026-09-24.md Hallazgo 5) never appears inside one
+ * organization's own activity log (`listByOrganization` never returns it),
+ * only in the cross-organization `/activity` view — there it renders with no
+ * organization name/link.
  */
 async function toActivityItems(entries: AuditLogEntry[]): Promise<ActivityItem[]> {
-  const organizationIds = [...new Set(entries.map((entry) => entry.organizationId))];
+  const organizationIds = [...new Set(entries.flatMap((entry) => (entry.organizationId ? [entry.organizationId] : [])))];
   const organizations = await getStorage().organizations.findByIds(organizationIds);
   const nameById = new Map(organizations.map((organization) => [organization.id, organization.name]));
-  return entries.map((entry) => toActivity(entry, nameById.get(entry.organizationId) ?? entry.organizationId));
+  return entries.map((entry) => toActivity(entry, entry.organizationId ? nameById.get(entry.organizationId) : undefined));
 }
 
 /**

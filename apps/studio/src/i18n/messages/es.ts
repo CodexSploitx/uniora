@@ -312,6 +312,8 @@ export const es: Record<keyof typeof en, string> = {
   "activity.roleUnassigned": "Rol quitado",
   "activity.featureEnabled": "Feature activada",
   "activity.featureDisabled": "Feature desactivada",
+  "activity.identityLinkCreated": "Identidad vinculada",
+  "activity.global": "Sistema",
 
   "time.justNow": "ahora mismo",
 

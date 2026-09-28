@@ -315,6 +315,8 @@ export const en = {
   "activity.roleUnassigned": "Role unassigned",
   "activity.featureEnabled": "Feature enabled",
   "activity.featureDisabled": "Feature disabled",
+  "activity.identityLinkCreated": "Identity linked",
+  "activity.global": "System",
 
   "time.justNow": "just now",
 

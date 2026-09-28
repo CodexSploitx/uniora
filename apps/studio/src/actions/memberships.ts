@@ -59,7 +59,16 @@ export async function assignMemberRole(args: {
   return mutateInOrg(args?.organizationId, orgPaths, async (tx, organizationId) => {
     const member = await requireMember(tx, organizationId, text(args.membershipId, "field.member", { max: 128 }));
     const role = await requireOrgRole(tx, organizationId, text(args.roleId, "field.role", { max: 128 }));
-    await tx.memberships.assignRole(member.id, role.id);
+    // `assignRole`/`assignOwnerRole` are deliberately separate methods
+    // (docs/security-pentest-2026-09-24.md Hallazgo 7) — Studio's own
+    // session is already fully privileged either way, but it still has to
+    // call the right one, since the generic method now rejects the Owner
+    // role outright.
+    if (role.isOwnerRole) {
+      await tx.memberships.assignOwnerRole(member.id, role.id);
+    } else {
+      await tx.memberships.assignRole(member.id, role.id);
+    }
     await audit(tx, organizationId, "membership.role_assigned", { type: "membership", id: member.id }, {
       identity: member.identity,
       role: role.name,
@@ -75,7 +84,12 @@ export async function unassignMemberRole(args: {
   return mutateInOrg(args?.organizationId, orgPaths, async (tx, organizationId) => {
     const member = await requireMember(tx, organizationId, text(args.membershipId, "field.member", { max: 128 }));
     const role = await requireOrgRole(tx, organizationId, text(args.roleId, "field.role", { max: 128 }));
-    await tx.memberships.unassignRole(member.id, role.id);
+    // Same split as assignMemberRole above.
+    if (role.isOwnerRole) {
+      await tx.memberships.unassignOwnerRole(member.id, role.id);
+    } else {
+      await tx.memberships.unassignRole(member.id, role.id);
+    }
     await audit(tx, organizationId, "membership.role_unassigned", { type: "membership", id: member.id }, {
       identity: member.identity,
       role: role.name,

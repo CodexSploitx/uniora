@@ -57,9 +57,16 @@ export async function ActivityFeed({ items, showOrganization = false }: { items:
               {showOrganization && (
                 <>
                   {detail ? " · " : ""}
-                  <Link href={`/organizations/${item.organizationId}`} className="underline-offset-4 hover:underline">
-                    {item.organizationName}
-                  </Link>
+                  {item.organizationId ? (
+                    <Link href={`/organizations/${item.organizationId}`} className="underline-offset-4 hover:underline">
+                      {item.organizationName}
+                    </Link>
+                  ) : (
+                    // Global entry (docs/security-pentest-2026-09-24.md
+                    // Hallazgo 5, e.g. `identity_link.created`) — not scoped
+                    // to any organization, so there's nothing to link to.
+                    <span className="text-muted-foreground">{t("activity.global")}</span>
+                  )}
                 </>
               )}
             </TimelineContent>

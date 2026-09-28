@@ -5,8 +5,9 @@ export interface IdentityView {
 
 export interface ActivityItem {
   id: string;
-  organizationId: string;
-  organizationName: string;
+  /** Absent for a GLOBAL entry (e.g. `identity_link.created`) — not scoped to any single organization. */
+  organizationId?: string;
+  organizationName?: string;
   action: string;
   actor: IdentityView;
   target?: { type: string; id: string };

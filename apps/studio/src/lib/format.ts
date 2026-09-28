@@ -60,6 +60,15 @@ export function describeActivity(
       return { title: t("activity.featureEnabled"), detail: item.target?.id, tone: "success" };
     case "feature.disabled":
       return { title: t("activity.featureDisabled"), detail: item.target?.id, tone: "warning" };
+    case "identity_link.created": {
+      // Global entry (docs/security-pentest-2026-09-24.md Hallazgo 5) — no
+      // `role`/`identity` string metadata like the others, just the two
+      // linked identities.
+      const from = item.metadata?.from as { provider?: string; subject?: string } | undefined;
+      const to = item.metadata?.to as { provider?: string; subject?: string } | undefined;
+      const detail = from && to ? `${from.provider}:${from.subject} → ${to.provider}:${to.subject}` : undefined;
+      return { title: t("activity.identityLinkCreated"), detail, tone: "info" };
+    }
     default:
       return { title: item.action, detail: item.target ? `${item.target.type}:${item.target.id}` : undefined, tone: "info" };
   }
