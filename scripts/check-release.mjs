@@ -46,6 +46,15 @@ for (const { dir, pkg } of packages) {
   if (!pkg.scripts?.prepack) problems.push(`${at}: falta "prepack" (el tarball debe llevar un build fresco)`);
   if (pkg.publishConfig?.access !== "public") problems.push(`${at}: falta publishConfig.access = "public" (paquete con scope)`);
   if (!pkg.repository?.url) problems.push(`${at}: falta repository (necesario para el provenance)`);
+  if (Array.isArray(pkg.files) && pkg.files.includes(".next")) {
+    // R11-1: .next/trace y .next/trace-build no llevan código ni secretos, pero
+    // sí rutas absolutas del filesystem de la máquina de build — nunca deben viajar.
+    for (const required of ["!.next/trace", "!.next/trace-build"]) {
+      if (!pkg.files.includes(required)) {
+        problems.push(`${at}: "files" incluye ".next" pero no excluye "${required}" (filtra rutas de build, ver R11-1)`);
+      }
+    }
+  }
   for (const section of ["dependencies", "peerDependencies", "optionalDependencies"]) {
     for (const [name, range] of Object.entries(pkg[section] ?? {})) {
       if (name.startsWith("@uniora/") && range !== "workspace:^") {

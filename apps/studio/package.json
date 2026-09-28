@@ -27,6 +27,8 @@
     "!.next/dev",
     "!.next/types",
     "!.next/diagnostics",
+    "!.next/trace",
+    "!.next/trace-build",
     "public",
     "next.config.mjs"
   ],
