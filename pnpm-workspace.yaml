@@ -3,6 +3,7 @@ packages:
   - "packages/adapters/*"
   - "packages/database/*"
   - "apps/*"
+  - "test/integration"
 allowBuilds:
   esbuild: true
   unrs-resolver: true

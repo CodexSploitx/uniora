@@ -1,0 +1,22 @@
+{
+  "name": "@uniora-test/integration",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Prueba de integración end-to-end de UNIORA contra el código fuente del monorepo y un Postgres real (nunca se publica).",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@uniora/core": "workspace:*",
+    "@uniora/postgres": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.10",
+    "pg": "^8.13.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "uniora-npm-consumer-check",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Consumidor externo real de UNIORA: instala @uniora/* desde el registro público de npm (nunca vía workspace:*) para comprobar que los paquetes tal como se publican funcionan de punta a punta. Deliberadamente FUERA del workspace de pnpm (ver pnpm-workspace.yaml) — usa npm, como haría cualquier usuario real del proyecto.",
+  "type": "module",
+  "scripts": {
+    "verify": "node verify.mjs"
+  },
+  "dependencies": {
+    "@uniora/cli": "^0.1.0",
+    "@uniora/core": "^0.1.0",
+    "@uniora/postgres": "^0.1.0",
+    "pg": "^8.13.1"
+  }
+}

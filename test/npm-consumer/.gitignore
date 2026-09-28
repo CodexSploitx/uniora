@@ -1,0 +1,4 @@
+node_modules/
+.env
+uniora.config.mjs
+.env.*.local
