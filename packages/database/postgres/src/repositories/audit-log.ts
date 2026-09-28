@@ -10,7 +10,7 @@ import type { Queryable } from "../queryable.js";
 
 interface AuditLogRow {
   id: string;
-  organization_id: string;
+  organization_id: string | null;
   actor_provider: string;
   actor_subject: string;
   action: string;
@@ -26,7 +26,7 @@ function toEntry(row: AuditLogRow): AuditLogEntry {
 
   return {
     id: row.id,
-    organizationId: row.organization_id,
+    organizationId: row.organization_id ?? undefined,
     actor: { provider: row.actor_provider, subject: row.actor_subject },
     action: row.action,
     target,
@@ -48,7 +48,7 @@ export function createAuditLogRepository(db: Queryable): AuditLogRepository {
          returning ${SELECT_COLUMNS}`,
         [
           input.id,
-          input.organizationId,
+          input.organizationId ?? null,
           input.actor.provider,
           input.actor.subject,
           input.action,

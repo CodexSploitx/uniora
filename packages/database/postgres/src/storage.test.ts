@@ -281,7 +281,7 @@ describe("createPostgresStorage", () => {
       ownerIdentity: identity,
     });
 
-    await expect(storage.memberships.unassignRole(membership.id, ownerRole.id)).rejects.toThrow(MembershipError);
+    await expect(storage.memberships.unassignOwnerRole(membership.id, ownerRole.id)).rejects.toThrow(MembershipError);
     await expect(storage.memberships.delete(membership.id)).rejects.toThrow(MembershipError);
 
     // Nada debe haber cambiado.
@@ -306,7 +306,7 @@ describe("createPostgresStorage", () => {
       roleIds: [ownerRole.id],
     });
 
-    await expect(storage.memberships.unassignRole(membership.id, ownerRole.id)).resolves.toBeUndefined();
+    await expect(storage.memberships.unassignOwnerRole(membership.id, ownerRole.id)).resolves.toBeUndefined();
     const found = await storage.memberships.findByIdentity("org-1", identity);
     expect(found?.roleIds).toEqual([]);
 
@@ -322,6 +322,27 @@ describe("createPostgresStorage", () => {
     await expect(storage.memberships.unassignRole(membership.id, "no-such-role")).resolves.toBeUndefined();
     await storage.memberships.delete(membership.id);
     await expect(storage.memberships.delete(membership.id)).rejects.toThrow(MembershipError);
+  });
+
+  it("rechaza create()/assignRole() con un roleId de otra organización (regresión — docs/security-pentest-2026-09-24.md Hallazgo 2)", async () => {
+    const storage = createPostgresStorage(pool);
+    await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+    await storage.organizations.create({ id: "org-2", name: "Other Org" });
+    const roleOrg2 = await storage.roles.create({ id: "role-org-2", organizationId: "org-2", name: "Admin" });
+
+    await expect(
+      storage.memberships.create({ id: "m-forged", organizationId: "org-1", identity, roleIds: [roleOrg2.id] }),
+    ).rejects.toThrow(MembershipError);
+    expect(await storage.memberships.findById("m-forged")).toBeNull();
+
+    const membership = await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity });
+    await expect(storage.memberships.assignRole(membership.id, roleOrg2.id)).rejects.toThrow(MembershipError);
+    expect((await storage.memberships.findById(membership.id))?.roleIds).toEqual([]);
+
+    // El mismo role SÍ se asigna normalmente dentro de su propia organización.
+    const roleOrg1 = await storage.roles.create({ id: "role-org-1", organizationId: "org-1", name: "Sales" });
+    await expect(storage.memberships.assignRole(membership.id, roleOrg1.id)).resolves.toBeUndefined();
+    expect((await storage.memberships.findById(membership.id))?.roleIds).toEqual([roleOrg1.id]);
   });
 
   it("toggles features per organization", async () => {
@@ -452,8 +473,15 @@ describe("createPostgresStorage", () => {
     await storage.roles.create({ id: "role-other-org", organizationId: "org-2", name: "Admin", permissionKeys: ["vehicles.create"] });
     await storage.roles.create({ id: "role-admin", organizationId: "org-1", name: "Admin", permissionKeys: ["vehicles.delete"] });
     const membership = await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity });
-    // A forged/corrupted roleId pointing at another org's role must never grant access.
-    await storage.memberships.assignRole(membership.id, "role-other-org");
+    // `MembershipRepository.create`/`assignRole` both reject a cross-org
+    // roleId at the source (docs/security-pentest-2026-09-24.md Hallazgo 2)
+    // — so this can no longer be produced through the public API. Insert the
+    // forged/corrupted row directly to prove the Engine's own defense-in-depth
+    // still holds regardless of how such a row came to exist.
+    await pool.query(`insert into uniora.membership_roles (membership_id, role_id) values ($1, $2)`, [
+      membership.id,
+      "role-other-org",
+    ]);
     await storage.memberships.assignRole(membership.id, "role-admin");
 
     const engine = createAuthorizationEngine(storage);
@@ -471,6 +499,32 @@ describe("createPostgresStorage", () => {
     expect(
       await engine.access.check({ identity, organizationId: "org-1", permission: "vehicles.delete", feature: "advanced_inventory" }),
     ).toBe(true);
+  });
+
+  it("access.check({ feature }) sin permission exige membership real (regresión — docs/security-pentest-2026-09-24.md Hallazgo 4)", async () => {
+    const storage = createPostgresStorage(pool);
+    const engine = createAuthorizationEngine(storage);
+    await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+    await storage.features.register({ key: "ai_assistant", name: "AI Assistant" });
+    await storage.features.enable("org-1", "ai_assistant");
+    const ownerOfOrg2 = { provider: "supabase", subject: "owner-2" };
+    await createOrganizationWithOwner(storage, {
+      organizationId: "org-2",
+      organizationName: "Other Org With Owner",
+      ownerRoleId: "role-owner-2",
+      membershipId: "membership-owner-2",
+      ownerIdentity: ownerOfOrg2,
+    });
+    const outsider = { provider: "attacker-controlled", subject: "nobody" };
+
+    expect(await storage.features.isEnabled("org-1", "ai_assistant")).toBe(true);
+    // Ninguna de las dos identidades tiene membership en org-1 — el feature
+    // habilitado ahí no debe concederles acceso.
+    expect(await engine.access.check({ identity: outsider, organizationId: "org-1", feature: "ai_assistant" })).toBe(false);
+    expect(await engine.access.check({ identity: ownerOfOrg2, organizationId: "org-1", feature: "ai_assistant" })).toBe(false);
+
+    await storage.memberships.create({ id: "m-real", organizationId: "org-1", identity });
+    expect(await engine.access.check({ identity, organizationId: "org-1", feature: "ai_assistant" })).toBe(true);
   });
 
   it("registra y lista entradas de audit log, aisladas por organización", async () => {
@@ -891,6 +945,100 @@ describe("createPostgresStorage", () => {
     await expect(storage.roles.count({ organizationId: "o1", isOwnerRole: false })).resolves.toBe(3);
   });
 
+  it("Ronda 4 Hallazgo 8 (TOCTOU, CRITICAL): dos Owners no pueden demoverse mutuamente y dejar la organización sin ninguno", async () => {
+    const storage = createPostgresStorage(pool);
+    const { organization, ownerRole, membership: owner1 } = await createOrganizationWithOwner(storage, {
+      organizationId: "org-toctou",
+      organizationName: "TOCTOU Corp",
+      ownerRoleId: "role-owner-toctou",
+      membershipId: "m-owner1-toctou",
+      ownerIdentity: { provider: "e2e", subject: "owner1-toctou" },
+    });
+    const owner2 = await storage.memberships.create({
+      id: "m-owner2-toctou",
+      organizationId: organization.id,
+      identity: { provider: "e2e", subject: "owner2-toctou" },
+    });
+    await storage.memberships.assignOwnerRole(owner2.id, ownerRole.id);
+    await expect(storage.memberships.countByRole([ownerRole.id])).resolves.toEqual({ [ownerRole.id]: 2 });
+
+    // Sin `await` entre las dos llamadas: maximiza la superposición real de
+    // las dos conexiones de red hacia Postgres, reproduciendo la carrera
+    // (antes del fix: 4/5 corridas dejaban la organización sin owners).
+    const results = await Promise.allSettled([
+      storage.memberships.unassignOwnerRole(owner1.id, ownerRole.id),
+      storage.memberships.unassignOwnerRole(owner2.id, ownerRole.id),
+    ]);
+
+    const remaining = (await storage.memberships.countByRole([ownerRole.id]))[ownerRole.id];
+    expect(remaining).toBeGreaterThanOrEqual(1);
+    // Exactamente una de las dos debe haber sido rechazada — nunca "las dos
+    // tuvieron éxito" (eso es precisamente el bug que dejaba 0 owners).
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(rejected.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("Ronda 4 Hallazgo 8 (TOCTOU): misma race vía delete() de membership, no solo unassignOwnerRole()", async () => {
+    const storage = createPostgresStorage(pool);
+    const { organization, ownerRole, membership: owner1 } = await createOrganizationWithOwner(storage, {
+      organizationId: "org-toctou-del",
+      organizationName: "TOCTOU Del Corp",
+      ownerRoleId: "role-owner-toctou-del",
+      membershipId: "m-owner1-toctou-del",
+      ownerIdentity: { provider: "e2e", subject: "owner1-toctou-del" },
+    });
+    const owner2 = await storage.memberships.create({
+      id: "m-owner2-toctou-del",
+      organizationId: organization.id,
+      identity: { provider: "e2e", subject: "owner2-toctou-del" },
+    });
+    await storage.memberships.assignOwnerRole(owner2.id, ownerRole.id);
+
+    const results = await Promise.allSettled([storage.memberships.delete(owner1.id), storage.memberships.delete(owner2.id)]);
+
+    const remaining = (await storage.memberships.countByRole([ownerRole.id]))[ownerRole.id];
+    expect(remaining).toBeGreaterThanOrEqual(1);
+    expect(results.filter((r) => r.status === "rejected").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("Ronda 4 Hallazgo 9 (TOCTOU): identityLinks.link() no permite crear una cadena de 2 saltos vía condición de carrera", async () => {
+    const storage = createPostgresStorage(pool);
+    const A = { provider: "chain-toctou", subject: "A" };
+    const B = { provider: "chain-toctou", subject: "B" };
+    const C = { provider: "chain-toctou", subject: "C" };
+
+    // Sin `await` entre ambas: A->B y B->C compiten por la identidad
+    // compartida B (B es el `to` de la primera y el `from` de la segunda).
+    // Antes del fix: 20/20 corridas creaban la cadena completa.
+    const results = await Promise.allSettled([
+      storage.identityLinks.link({ from: A, to: B, actor: B }),
+      storage.identityLinks.link({ from: B, to: C, actor: C }),
+    ]);
+
+    const bothSucceeded = results.every((r) => r.status === "fulfilled");
+    expect(bothSucceeded).toBe(false);
+
+    // Verificación directa del invariante "no chains": nunca debe existir
+    // simultáneamente un link cuyo `to` es B y otro cuyo `from` es B.
+    const resolvedFromA = await storage.identityLinks.resolve(A);
+    const resolvedFromB = await storage.identityLinks.resolve(B);
+    const aWasLinked = resolvedFromA.provider === B.provider && resolvedFromA.subject === B.subject;
+    const bWasLinked = resolvedFromB.provider === C.provider && resolvedFromB.subject === C.subject;
+    expect(aWasLinked && bWasLinked).toBe(false);
+  }, 15000);
+
+  it("Ronda 6 (adapter parity, encontrado por fuzzing): rechaza un segundo membership para la misma identidad en la misma organización, igual que memoria tras su fix", async () => {
+    const storage = createPostgresStorage(pool);
+    await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+    await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity });
+
+    await expect(storage.memberships.create({ id: "m-2-duplicate", organizationId: "org-1", identity })).rejects.toThrow(MembershipError);
+
+    // Control: la misma identidad SÍ puede tener un membership en otra organización.
+    await storage.organizations.create({ id: "org-2", name: "Beta" });
+    await expect(storage.memberships.create({ id: "m-org2", organizationId: "org-2", identity })).resolves.toMatchObject({ organizationId: "org-2" });
+  });
+
   it("resuelve una identidad migrada al mismo membership, sin re-otorgar permisos", async () => {
     const storage = createPostgresStorage(pool);
     const oldIdentity = { provider: "supabase", subject: "user-1" };
@@ -948,5 +1096,187 @@ describe("createPostgresStorage", () => {
     await expect(
       storage.identityLinks.link({ from: otherIdentity, to: newIdentity, actor: oldIdentity }),
     ).rejects.toThrow(IdentityLinkError);
+  });
+});
+
+describe("MembershipRepository.create() — boundary collapse vía identity link inverso (regresión, docs/security-pentest-2026-09-24.md Ronda 7)", () => {
+  let pool: Pool | undefined;
+  const actor = { provider: "supabase", subject: "actor-owner" };
+
+  beforeAll(async () => {
+    pool = createTestPool();
+    await applyMigrations(pool);
+  });
+
+  afterAll(async () => {
+    await pool?.end();
+  });
+
+  beforeEach(async () => {
+    if (!pool) return;
+    await pool.query(
+      "truncate table uniora.audit_logs, uniora.identity_links, uniora.membership_roles, uniora.role_permissions, uniora.memberships, uniora.roles, uniora.features, uniora.feature_definitions, uniora.permissions, uniora.organizations cascade",
+    );
+  });
+
+  it("rechaza secuencialmente crear un membership directo para una identidad que ya es 'from' de un link", async () => {
+    const storage = createPostgresStorage(pool);
+    const y = { provider: "legacy", subject: "y" };
+    const x = { provider: "new-provider", subject: "x" };
+    await storage.organizations.create({ id: "org-1", name: "Acme" });
+    await storage.memberships.create({ id: "m-y", organizationId: "org-1", identity: y });
+    await storage.identityLinks.link({ from: x, to: y, actor });
+
+    // Antes del fix: nada impedía esto, produciendo el estado "ambiguous/
+    // hijackable lookup" que link() ya rechaza en la dirección opuesta —
+    // Memory y Postgres resolvían la ambigüedad resultante de forma
+    // DISTINTA (Memory siempre favorecía el link; Postgres, la fila
+    // directa), confirmando también una divergencia real entre adapters.
+    await expect(
+      storage.memberships.create({ id: "m-x", organizationId: "org-1", identity: x, roleIds: [] }),
+    ).rejects.toThrow(MembershipError);
+  });
+
+  it("una identidad no linkeada crea su membership directo normalmente (no es una regresión general)", async () => {
+    const storage = createPostgresStorage(pool);
+    const x = { provider: "new-provider", subject: "x" };
+    await storage.organizations.create({ id: "org-1", name: "Acme" });
+    await expect(
+      storage.memberships.create({ id: "m-x", organizationId: "org-1", identity: x, roleIds: [] }),
+    ).resolves.toMatchObject({ organizationId: "org-1" });
+  });
+
+  it("bajo concurrencia real, link() y create() para la misma identidad nunca tienen éxito ambos (TOCTOU cerrado)", async () => {
+    // Antes del fix, esta carrera dejaba el estado ambiguo en 25/25
+    // intentos: `create()` nunca leía `identity_links`, así que el SERIALIZABLE
+    // que envuelve `link()` (Hallazgo 9, Ronda 4) no tenía el ciclo de
+    // dependencia read-write que necesita para detectar el conflicto —
+    // solo protegía a link() contra otros link(), nunca contra create().
+    const storage = createPostgresStorage(pool);
+    const y = { provider: "legacy", subject: "y" };
+    const x = { provider: "new-provider", subject: "x" };
+    await storage.organizations.create({ id: "org-1", name: "Acme" });
+    await storage.memberships.create({ id: "m-y", organizationId: "org-1", identity: y });
+
+    const [linkResult, createResult] = await Promise.allSettled([
+      storage.identityLinks.link({ from: x, to: y, actor }),
+      storage.memberships.create({ id: "m-x", organizationId: "org-1", identity: x, roleIds: [] }),
+    ]);
+
+    const bothSucceeded = linkResult.status === "fulfilled" && createResult.status === "fulfilled";
+    expect(bothSucceeded).toBe(false);
+  });
+});
+
+describe("Ronda 8 (docs/security-pentest-2026-09-24.md) — ABA de role y auditoría fantasma de identity link", () => {
+  let pool: Pool | undefined;
+  const actor = { provider: "supabase", subject: "actor-owner" };
+
+  beforeAll(async () => {
+    pool = createTestPool();
+    await applyMigrations(pool);
+  });
+
+  afterAll(async () => {
+    await pool?.end();
+  });
+
+  beforeEach(async () => {
+    if (!pool) return;
+    await pool.query(
+      "truncate table uniora.audit_logs, uniora.identity_links, uniora.membership_roles, uniora.role_permissions, uniora.memberships, uniora.roles, uniora.features, uniora.feature_definitions, uniora.permissions, uniora.organizations cascade",
+    );
+  });
+
+  it("assignRole() nunca inserta membership_roles para un role.id reciclado en otra organización (ABA)", async () => {
+    // Antes del fix, `assignRole()` capturaba `role.organization_id` en un
+    // SELECT separado y lo reutilizaba en el INSERT posterior — si el role
+    // se borraba y se recreaba con el MISMO id en OTRA organización entre
+    // esos dos statements (`roles.id` es una PK global, no por-organización,
+    // así que esto es alcanzable vía la API pública), el INSERT usaba el
+    // valor obsoleto y creaba una fila cross-org. Reproducido aquí
+    // simulando la ventana directamente contra Postgres real; confirma que
+    // el `where exists (...)` correlacionado del fix la cierra.
+    const storage = createPostgresStorage(pool);
+    const orgA = await storage.organizations.create({ id: "org-a", name: "Org A" });
+    const orgB = await storage.organizations.create({ id: "org-b", name: "Org B" });
+    const roleId = "role-shared-id";
+    await storage.roles.create({ id: roleId, organizationId: orgA.id, name: "Sales" });
+    const member = await storage.memberships.create({ id: "m-1", organizationId: orgA.id, identity: { provider: "supabase", subject: "member" } });
+
+    await storage.roles.delete(roleId);
+    await storage.roles.create({ id: roleId, organizationId: orgB.id, name: "Sales (recreado en Org B)" });
+
+    // assignRole() ahora re-lee organization_id FRESCO, correlacionado con
+    // el INSERT — con el role ya en Org B, debe rechazar (o al menos nunca
+    // insertar la fila) para un membership de Org A.
+    await expect(storage.memberships.assignRole(member.id, roleId)).rejects.toThrow(MembershipError);
+    const row = await pool.query("select 1 from uniora.membership_roles where membership_id=$1 and role_id=$2", [member.id, roleId]);
+    expect(row.rowCount).toBe(0);
+  });
+
+  it("el insert de membership_roles dentro de create() nunca acepta un role.id que ya no pertenece a la organización (misma guarda que assignRole)", async () => {
+    // La validación por lote de `roleIds` en `create()` (un `select`
+    // previo al insert de la membership) ya rechaza el caso SECUENCIAL —
+    // ese `select` corre después de que el role fue reciclado a otra
+    // organización, así que lo detecta igual (confirmado: llamar
+    // `create()` tras el reciclaje ya lanza `MembershipError` desde esa
+    // validación, sin siquiera llegar al insert de `membership_roles`).
+    // Este test ejercita directamente la SEGUNDA capa — el `insert ...
+    // where exists (...)` correlacionado que protege la ventana entre esa
+    // validación por lote y el insert real, reproduciendo esa ventana con
+    // el mismo id ya reciclado (mismo patrón que el test de `assignRole`
+    // arriba).
+    const storage = createPostgresStorage(pool);
+    const orgA = await storage.organizations.create({ id: "org-a", name: "Org A" });
+    const orgB = await storage.organizations.create({ id: "org-b", name: "Org B" });
+    const roleId = "role-shared-id-2";
+    await storage.roles.create({ id: roleId, organizationId: orgA.id, name: "Sales" });
+    await storage.memberships.create({ id: "m-2", organizationId: orgA.id, identity: { provider: "supabase", subject: "member-2" } });
+
+    await storage.roles.delete(roleId);
+    await storage.roles.create({ id: roleId, organizationId: orgB.id, name: "Sales (recreado en Org B)" });
+
+    const result = await pool.query(
+      `insert into uniora.membership_roles (membership_id, role_id)
+       select $1, $2
+       where exists (select 1 from uniora.roles r where r.id = $2 and r.organization_id = $3)
+       on conflict do nothing`,
+      ["m-2", roleId, orgA.id],
+    );
+    expect(result.rowCount).toBe(0);
+
+    const row = await pool.query("select 1 from uniora.membership_roles where membership_id=$1 and role_id=$2", ["m-2", roleId]);
+    expect(row.rowCount).toBe(0);
+  });
+
+  it("link() bajo serialization failure nunca deja una entrada de audit log para un link que no se persistió", async () => {
+    // Antes del fix, `auditLogs.record()` dentro de `performLink()` usaba
+    // un `AuditLogRepository` ligado al `Pool` de nivel superior (no al
+    // `client` de la transacción SERIALIZABLE del intento actual) — un
+    // intento que fallaba al hacer COMMIT (40001) hacía rollback del
+    // insert en `identity_links`, pero la entrada de audit log, ya
+    // comiteada de forma independiente vía el pool, sobrevivía. Reproducido
+    // 5/5 veces con este escenario exacto antes del fix; ahora debe quedar
+    // como máximo una entrada de audit log por cada link REALMENTE
+    // persistido.
+    const storage = createPostgresStorage(pool);
+    const org = await storage.organizations.create({ id: "org-1", name: "Acme" });
+    const A = { provider: "legacy", subject: "chain-a" };
+    const B = { provider: "legacy", subject: "chain-b" };
+    const C = { provider: "legacy", subject: "chain-c" };
+    await storage.memberships.create({ id: "m-a", organizationId: org.id, identity: A });
+
+    const [r1, r2] = await Promise.allSettled([
+      storage.identityLinks.link({ from: B, to: A, actor }),
+      storage.identityLinks.link({ from: C, to: B, actor }),
+    ]);
+    const succeededCount = [r1, r2].filter((r) => r.status === "fulfilled").length;
+
+    const persistedLinks = await pool.query("select from_subject from uniora.identity_links where from_subject like 'chain-%'");
+    expect(persistedLinks.rowCount).toBe(succeededCount);
+
+    const auditEntries = await pool.query("select id from uniora.audit_logs where action = 'identity_link.created' and id like 'identity-link:legacy:chain-%'");
+    expect(auditEntries.rowCount).toBe(succeededCount);
   });
 });

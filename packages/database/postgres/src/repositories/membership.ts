@@ -1,8 +1,17 @@
+import type { Pool } from "pg";
 import type { CreateMembershipInput, Identity, Membership, MembershipListing, MembershipRepository, SearchMembershipsOptions } from "@uniora/core";
 import { MembershipError } from "@uniora/core";
 import type { Queryable } from "../queryable.js";
 import { countByOrganization } from "../pg-counts.js";
 import { toLikePattern } from "../pg-like.js";
+import { isUniqueViolation, violatedConstraint } from "../pg-errors.js";
+
+/** Postgres error code for a serializable-transaction conflict (SSI) — same constant as `identity-link.ts`. */
+const SERIALIZATION_FAILURE = "40001";
+
+function isSerializationFailure(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as { code?: string }).code === SERIALIZATION_FAILURE;
+}
 
 interface MembershipRow {
   id: string;
@@ -28,22 +37,170 @@ const SELECT_MEMBERSHIP_WITH_ROLES = `
   left join uniora.membership_roles mr on mr.membership_id = m.id
 `;
 
-export function createMembershipRepository(db: Queryable): MembershipRepository {
+/**
+ * All of `create()`'s real work (validate roleIds, insert, attach roles),
+ * against whatever `Queryable` it's given. Shared by both call paths in
+ * `createMembershipRepository` below: the ordinary one (whatever isolation
+ * the caller's connection already has) and the SERIALIZABLE-wrapped one.
+ */
+async function performCreate(db: Queryable, input: CreateMembershipInput): Promise<Membership> {
+  const roleIds = input.roleIds ?? [];
+
+  // Validated BEFORE inserting the membership row (not after) — same
+  // "validate before insert" pattern as `RoleRepository.create()`'s
+  // `permissionKeys` fix: a fault mid-insert must never leave an orphaned
+  // membership behind instead of nothing at all (docs/security-pentest-2026-09-24.md
+  // Hallazgo 2, found by repository-wide review after fixing `assignRole`).
+  if (roleIds.length > 0) {
+    const validRoles = await db.query<{ id: string }>(
+      `select id from uniora.roles where id = any($1::text[]) and organization_id = $2`,
+      [roleIds, input.organizationId],
+    );
+    const validIds = new Set(validRoles.rows.map((row) => row.id));
+    const invalidRoleId = roleIds.find((roleId) => !validIds.has(roleId));
+    if (invalidRoleId !== undefined) {
+      throw new MembershipError(
+        `Cannot assign role "${invalidRoleId}" to membership "${input.id}": the role does not exist or belongs to a different organization than "${input.organizationId}".`,
+      );
+    }
+  }
+
+  // SECURITY FIX (docs/security-pentest-2026-09-24.md Ronda 6): the
+  // `unique(organization_id, provider, subject)` constraint (migration
+  // 0001) already rejected a duplicate identity in the same organization —
+  // fail-closed was never actually broken here — but the raw Postgres
+  // error leaked past this repository uncaught, instead of the clear
+  // `MembershipError` every other constraint violation in this package
+  // translates it to. Distinguished from the `id` collision
+  // (`memberships_pkey`) the same way as everywhere else in this package
+  // (`violatedConstraint`), so retrying with a fresh `id` for a genuinely
+  // duplicate identity doesn't look like it might help.
+  //
+  // SECURITY FIX (docs/security-pentest-2026-09-24.md Ronda 7 — boundary
+  // collapse): `IdentityLinkRepository.link()` refuses to link a `from`
+  // identity that already owns a membership directly, in ANY organization
+  // ("would create an ambiguous/hijackable lookup" — its own error
+  // message). Nothing enforced the same invariant here, so the identical
+  // ambiguous state was reachable in the OPPOSITE order (link() first,
+  // then a direct create() for that same `from` identity). The `where not
+  // exists (...)` guard below makes the check part of the SAME statement
+  // as the insert (same atomic-guard pattern as `assignRole`/
+  // `unassignOwnerRole` elsewhere in this file) — a duplicate `id`/identity-
+  // in-org still throws from the constraint violation below; a `from`-
+  // identity conflict instead inserts zero rows, handled right after.
+  // Closing the SEQUENTIAL bypass this way is necessary but not
+  // sufficient — see `createMembershipRepository` below for why a genuine
+  // CONCURRENT race additionally needed `create()` to run under its own
+  // SERIALIZABLE transaction, exactly like `link()` already does.
+  let result;
+  try {
+    result = await db.query(
+      `insert into uniora.memberships (id, organization_id, provider, subject)
+       select $1, $2, $3, $4
+       where not exists (
+         select 1 from uniora.identity_links
+         where from_provider = $3 and from_subject = $4
+       )`,
+      [input.id, input.organizationId, input.identity.provider, input.identity.subject],
+    );
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      if (violatedConstraint(error) === "memberships_pkey") {
+        throw new MembershipError(`A membership with id "${input.id}" already exists.`);
+      }
+      throw new MembershipError(
+        `Identity ${input.identity.provider}:${input.identity.subject} already has a membership in organization "${input.organizationId}".`,
+      );
+    }
+    throw error;
+  }
+  if ((result.rowCount ?? 0) === 0) {
+    throw new MembershipError(
+      `Cannot create a direct membership for identity ${input.identity.provider}:${input.identity.subject}: it is already linked as an alias of another identity (see IdentityLinkRepository.link) — creating a direct membership here would produce an ambiguous/hijackable lookup.`,
+    );
+  }
+
+  // SECURITY FIX (docs/security-pentest-2026-09-24.md Ronda 8, ABA — same
+  // root cause as `assignRole()`): `roleIds` was validated once, up front
+  // (the batch `select` above), then inserted here unconditionally — a
+  // window in between where a role could be deleted and recreated with the
+  // SAME id in a DIFFERENT organization (`roles.id` is a global PK) would
+  // insert a `membership_roles` row for a role that no longer belongs to
+  // `input.organizationId`. Re-checks `organization_id` FRESH, correlated
+  // within this SAME insert statement, instead of trusting the earlier
+  // batch validation.
+  for (const roleId of roleIds) {
+    await db.query(
+      `insert into uniora.membership_roles (membership_id, role_id)
+       select $1, $2
+       where exists (select 1 from uniora.roles r where r.id = $2 and r.organization_id = $3)
+       on conflict do nothing`,
+      [input.id, roleId, input.organizationId],
+    );
+  }
+
+  return { id: input.id, organizationId: input.organizationId, identity: input.identity, roleIds: [...roleIds] };
+}
+
+/**
+ * `db` is used for the ordinary path (including when this repository was
+ * built inside `storage.transaction()`, where `db` is already the caller's
+ * transactional client). `pool` is only passed at the top level (see
+ * `storage.ts`) and, when present, is used to run `create()` in its OWN
+ * short-lived SERIALIZABLE transaction — mirror of the exact same pattern
+ * `identity-link.ts`'s `link()` uses, needed for the same class of reason.
+ */
+export function createMembershipRepository(db: Queryable, pool?: Pool): MembershipRepository {
   return {
     async create(input: CreateMembershipInput) {
-      await db.query(
-        `insert into uniora.memberships (id, organization_id, provider, subject) values ($1, $2, $3, $4)`,
-        [input.id, input.organizationId, input.identity.provider, input.identity.subject],
-      );
+      if (!pool) return performCreate(db, input);
 
-      for (const roleId of input.roleIds ?? []) {
-        await db.query(
-          `insert into uniora.membership_roles (membership_id, role_id) values ($1, $2) on conflict do nothing`,
-          [input.id, roleId],
-        );
+      // SECURITY FIX (docs/security-pentest-2026-09-24.md Ronda 7 —
+      // boundary collapse, part 2). The `where not exists (...)` guard
+      // above closes the SEQUENTIAL bypass (link() then create()), but a
+      // genuine CONCURRENT race between them still reproduced the same
+      // ambiguous state 25/25 times even after that fix: `create()`'s read
+      // of `identity_links` only matters to Postgres's SSI conflict
+      // detector if `create()` ITSELF is a SERIALIZABLE transaction —
+      // SIREAD predicate locks (the mechanism SSI uses to notice "this read
+      // would have seen different data") are only taken by SERIALIZABLE
+      // transactions, never by a plain autocommit statement. Without that,
+      // `create()`'s read of `identity_links` left no trace for SSI to
+      // reference, so when `link()` (which IS serializable, see
+      // `identity-link.ts` Hallazgo 9) later wrote to `identity_links`,
+      // there was nothing to conflict against — only a one-way rw edge
+      // (`link()` → `create()`, via `memberships`), never the two-way cycle
+      // SSI requires to detect write skew. Wrapping `create()` in its own
+      // SERIALIZABLE transaction gives it a symmetric SIREAD lock on
+      // `identity_links`, completing the cycle: verified empirically, 0/25
+      // concurrent trials left the ambiguous state after this fix (vs.
+      // 25/25 before it). Same retry-with-jitter treatment as `link()`,
+      // for the same reason (a `40001` here can be a genuine conflict — the
+      // retry correctly re-observes state and rejects normally — or
+      // incidental contention from unrelated activity).
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const client = await pool.connect();
+        try {
+          await client.query("begin isolation level serializable");
+          const created = await performCreate(client, input);
+          await client.query("commit");
+          return created;
+        } catch (error) {
+          await client.query("rollback").catch(() => {});
+          if (isSerializationFailure(error)) {
+            lastError = error;
+            await new Promise((resolve) => setTimeout(resolve, 10 * (attempt + 1) + Math.random() * 20));
+            continue;
+          }
+          throw error;
+        } finally {
+          client.release();
+        }
       }
-
-      return { id: input.id, organizationId: input.organizationId, identity: input.identity, roleIds: [...(input.roleIds ?? [])] };
+      throw new MembershipError(
+        `Cannot create membership "${input.id}": too much concurrent identity-linking activity to safely resolve this request (${(lastError as Error | undefined)?.message ?? "serialization failure"}). Please retry.`,
+      );
     },
 
     async findByIdentity(organizationId: string, identity: Identity) {
@@ -195,28 +352,169 @@ export function createMembershipRepository(db: Queryable): MembershipRepository 
     },
 
     async assignRole(membershipId: string, roleId: string) {
-      await db.query(
-        `insert into uniora.membership_roles (membership_id, role_id) values ($1, $2) on conflict do nothing`,
+      // Security fix (docs/security-pentest-2026-09-24.md Hallazgo 7): the
+      // role's type is resolved and checked FIRST, unconditionally — never
+      // skipped by an "already assigned" idempotency short-circuit. Without
+      // this ordering, calling assignRole() on a pair that's already
+      // correctly assigned (e.g. via assignOwnerRole()) would silently
+      // "succeed" instead of telling the caller it used the wrong method,
+      // defeating the whole point of the split for that caller.
+      const role = await db.query<{ organization_id: string; is_owner_role: boolean }>(
+        `select organization_id, is_owner_role from uniora.roles where id = $1`,
+        [roleId],
+      );
+      const roleRow = role.rows[0];
+      if (!roleRow) throw new MembershipError(`Role not found: ${roleId}`);
+      if (roleRow.is_owner_role) {
+        throw new MembershipError(
+          `Cannot assign the protected Owner role "${roleId}" via assignRole() — use assignOwnerRole() instead.`,
+        );
+      }
+
+      // SECURITY FIX (docs/security-pentest-2026-09-24.md Ronda 8, ABA):
+      // the comment this replaced claimed "a role's own organization never
+      // changes after creation, so no race applies" — true for a single
+      // Role ENTITY, but false for a role `id`: `roles.id` is a global PK
+      // (not per-organization), so deleting a role and creating a NEW one
+      // with the SAME id in a DIFFERENT organization is reachable through
+      // the public API alone. The `organization_id` captured in the SELECT
+      // above is a snapshot — if it goes stale between that read and this
+      // insert (role deleted + recreated elsewhere in between), using the
+      // captured value here would insert a `membership_roles` row for a
+      // role that no longer belongs to the organization being validated —
+      // reproduced empirically. The `where exists (...)` below now
+      // re-reads `uniora.roles` FRESH, correlated within this SAME
+      // statement, instead of trusting the earlier snapshot — closing the
+      // ABA window entirely (the org-match decision and the insert are now
+      // atomic against current data, not a captured value). `on conflict
+      // do nothing` keeps this idempotent.
+      const result = await db.query(
+        `insert into uniora.membership_roles (membership_id, role_id)
+         select $1, $2
+         where exists (
+           select 1 from uniora.memberships m
+           join uniora.roles r on r.id = $2
+           where m.id = $1 and m.organization_id = r.organization_id
+         )
+         on conflict do nothing`,
         [membershipId, roleId],
+      );
+      if ((result.rowCount ?? 0) > 0) return; // newly assigned
+
+      const alreadyAssigned = await db.query(
+        `select 1 from uniora.membership_roles where membership_id = $1 and role_id = $2`,
+        [membershipId, roleId],
+      );
+      if ((alreadyAssigned.rowCount ?? 0) > 0) return; // idempotent no-op
+
+      const membership = await db.query(`select 1 from uniora.memberships where id = $1`, [membershipId]);
+      if ((membership.rowCount ?? 0) === 0) throw new MembershipError(`Membership not found: ${membershipId}`);
+
+      throw new MembershipError(
+        `Cannot assign role "${roleId}" to membership "${membershipId}": the role belongs to a different organization than the membership.`,
+      );
+    },
+
+    async assignOwnerRole(membershipId: string, roleId: string) {
+      // Mirror of `assignRole` above — role type checked first,
+      // unconditionally, same reasoning (Hallazgo 7).
+      const role = await db.query<{ organization_id: string; is_owner_role: boolean }>(
+        `select organization_id, is_owner_role from uniora.roles where id = $1`,
+        [roleId],
+      );
+      const roleRow = role.rows[0];
+      if (!roleRow) throw new MembershipError(`Role not found: ${roleId}`);
+      if (!roleRow.is_owner_role) {
+        throw new MembershipError(`Role "${roleId}" is not the protected Owner role — use assignRole() instead.`);
+      }
+
+      const result = await db.query(
+        `insert into uniora.membership_roles (membership_id, role_id)
+         select $1, $2
+         where exists (select 1 from uniora.memberships m where m.id = $1 and m.organization_id = $3)
+         on conflict do nothing`,
+        [membershipId, roleId, roleRow.organization_id],
+      );
+      if ((result.rowCount ?? 0) > 0) return;
+
+      const alreadyAssigned = await db.query(
+        `select 1 from uniora.membership_roles where membership_id = $1 and role_id = $2`,
+        [membershipId, roleId],
+      );
+      if ((alreadyAssigned.rowCount ?? 0) > 0) return;
+
+      const membership = await db.query(`select 1 from uniora.memberships where id = $1`, [membershipId]);
+      if ((membership.rowCount ?? 0) === 0) throw new MembershipError(`Membership not found: ${membershipId}`);
+
+      throw new MembershipError(
+        `Cannot assign role "${roleId}" to membership "${membershipId}": the role belongs to a different organization than the membership.`,
       );
     },
 
     async unassignRole(membershipId: string, roleId: string) {
-      // Single WHERE-guarded DELETE, not check-then-delete: the "never drop
-      // the organization's last Owner" decision must be atomic with the
-      // unassignment itself (uniora-security-engineering §11, §21 Race
-      // Conditions). A role is only ever the protected Owner role for one
-      // organization, so checking by `roleId` alone is already tenant-safe.
+      // Security fix (docs/security-pentest-2026-09-24.md Hallazgo 7): role
+      // type checked first, unconditionally — same reasoning as
+      // `assignRole` above (an already-not-assigned Owner role must still
+      // be reported as "wrong method", never silently treated as a no-op).
+      // An unknown `roleId` (never registered, or since deleted) obviously
+      // isn't the Owner role that needs protecting, so it falls through to
+      // the plain delete below — a non-owner role never needs the atomic
+      // last-owner guard that `unassignOwnerRole` has, so a plain
+      // unconditional delete is correct and sufficient here.
+      const role = await db.query<{ is_owner_role: boolean }>(`select is_owner_role from uniora.roles where id = $1`, [roleId]);
+      if (role.rows[0]?.is_owner_role) {
+        throw new MembershipError(
+          `Cannot unassign the protected Owner role "${roleId}" via unassignRole() — use unassignOwnerRole() instead.`,
+        );
+      }
+
+      await db.query(`delete from uniora.membership_roles where membership_id = $1 and role_id = $2`, [membershipId, roleId]);
+    },
+
+    async unassignOwnerRole(membershipId: string, roleId: string) {
+      // Role type checked first, unconditionally (same reasoning as
+      // `assignOwnerRole`/`unassignRole` above) — an unknown `roleId` can't
+      // be the Owner role, so it's an idempotent no-op with nothing further
+      // to protect.
+      const role = await db.query<{ is_owner_role: boolean }>(`select is_owner_role from uniora.roles where id = $1`, [roleId]);
+      const roleRow = role.rows[0];
+      if (!roleRow) return;
+      if (!roleRow.is_owner_role) {
+        throw new MembershipError(`Role "${roleId}" is not the protected Owner role — use unassignRole() instead.`);
+      }
+
+      // SECURITY FIX (docs/security-pentest-2026-09-24.md Hallazgo 8, Ronda
+      // 4 — CRITICAL): the single WHERE-guarded DELETE below still isn't
+      // enough on its own. It correctly makes "check + delete" atomic
+      // against itself, but the `exists (...)` subquery is a plain read —
+      // it does not lock the row it inspects. Two DIFFERENT owners removing
+      // EACH OTHER at the same instant is the textbook "write skew"
+      // anomaly: TX1 reads "does mr2 (owner B) still exist?" (yes) and
+      // deletes owner A; concurrently TX2 reads "does mr2 (owner A) still
+      // exist?" (yes, TX1 hasn't committed yet) and deletes owner B — both
+      // succeed, leaving ZERO owners. Reproduced against real Postgres: 4/5
+      // trials with no locking left the organization ownerless.
+      //
+      // Fix: a CTE locks every `membership_roles` row for this `role_id`
+      // with `SELECT ... FOR UPDATE` (ordered by `membership_id`, so two
+      // concurrent callers always contend for the SAME lock in the SAME
+      // order — no deadlock) *before* counting them. Unlike a plain
+      // advisory lock, `FOR UPDATE` returns the row's latest COMMITTED
+      // content once the lock is acquired — the waiting transaction sees
+      // the other one's deletion, not its own stale start-of-statement
+      // snapshot. Verified empirically: 0/15 trials left an organization
+      // ownerless after this fix (docs/security-pentest-2026-09-24.md
+      // Ronda 4).
       const result = await db.query(
-        `delete from uniora.membership_roles mr
-         where mr.membership_id = $1 and mr.role_id = $2
-           and (
-             not exists (select 1 from uniora.roles r where r.id = $2 and r.is_owner_role)
-             or exists (
-               select 1 from uniora.membership_roles mr2
-               where mr2.role_id = $2 and mr2.membership_id <> $1
-             )
-           )`,
+        `with locked as (
+           select membership_id from uniora.membership_roles
+           where role_id = $2
+           order by membership_id
+           for update
+         )
+         delete from uniora.membership_roles
+         where membership_id = $1 and role_id = $2
+           and (select count(*) from locked) > 1`,
         [membershipId, roleId],
       );
       if ((result.rowCount ?? 0) > 0) return;
@@ -225,32 +523,42 @@ export function createMembershipRepository(db: Queryable): MembershipRepository 
         `select 1 from uniora.membership_roles where membership_id = $1 and role_id = $2`,
         [membershipId, roleId],
       );
-      if ((stillAssigned.rowCount ?? 0) > 0) {
-        throw new MembershipError(
-          "Cannot remove the organization's last Owner — every organization must keep at least one.",
-        );
-      }
-      // else: wasn't assigned to begin with — idempotent no-op.
+      if ((stillAssigned.rowCount ?? 0) === 0) return; // wasn't assigned to begin with — idempotent no-op
+
+      throw new MembershipError(
+        "Cannot remove the organization's last Owner — every organization must keep at least one.",
+      );
     },
 
     async delete(membershipId: string) {
-      // Same atomic WHERE-guard pattern as `unassignRole`: the delete
-      // itself carries the "not the org's last Owner" check, so there is
-      // no window where a concurrent request could observe (or create) an
-      // organization with zero Owners.
+      // SECURITY FIX (docs/security-pentest-2026-09-24.md Hallazgo 8, Ronda
+      // 4 — same write-skew race as `unassignOwnerRole` above, reachable
+      // here too since deleting a membership drops its Owner role the same
+      // way). `locked` first resolves which of this membership's roles are
+      // the (at most one) protected Owner role, then `FOR UPDATE`-locks
+      // every `membership_roles` row sharing that `role_id` (ordered, same
+      // deadlock-avoidance reasoning as above) before counting survivors. A
+      // membership with no Owner role never touches `locked`'s lock set, so
+      // the ordinary (non-owner) delete path is unaffected.
       const result = await db.query(
-        `delete from uniora.memberships m
+        `with owner_role_ids as (
+           select mr.role_id
+           from uniora.membership_roles mr
+           join uniora.roles r on r.id = mr.role_id
+           where mr.membership_id = $1 and r.is_owner_role
+         ),
+         locked as (
+           select mr.membership_id, mr.role_id
+           from uniora.membership_roles mr
+           where mr.role_id in (select role_id from owner_role_ids)
+           order by mr.role_id, mr.membership_id
+           for update
+         )
+         delete from uniora.memberships m
          where m.id = $1
            and not exists (
-             select 1
-             from uniora.membership_roles mr
-             join uniora.roles r on r.id = mr.role_id
-             where mr.membership_id = m.id
-               and r.is_owner_role
-               and not exists (
-                 select 1 from uniora.membership_roles mr2
-                 where mr2.role_id = mr.role_id and mr2.membership_id <> m.id
-               )
+             select 1 from owner_role_ids o
+             where (select count(*) from locked l where l.role_id = o.role_id) <= 1
            )`,
         [membershipId],
       );

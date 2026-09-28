@@ -13,6 +13,8 @@ import { MIGRATION_0010_ORGANIZATIONS_CREATED_AT_INDEX } from "./migrations/0010
 import { MIGRATION_0011_MILLISECOND_PRECISION_TIMESTAMPS } from "./migrations/0011_millisecond_precision_timestamps.js";
 import { MIGRATION_0012_FEATURES_ENABLED_INDEX } from "./migrations/0012_features_enabled_index.js";
 import { MIGRATION_0013_DETAIL_INDEXES } from "./migrations/0013_detail_indexes.js";
+import { MIGRATION_0014_NULLABLE_AUDIT_ORGANIZATION } from "./migrations/0014_nullable_audit_organization.js";
+import { MIGRATION_0015_IDENTITY_LINKS_TO_INDEX } from "./migrations/0015_identity_links_to_index.js";
 
 interface Migration {
   readonly id: string;
@@ -34,6 +36,8 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0011_millisecond_precision_timestamps", sql: MIGRATION_0011_MILLISECOND_PRECISION_TIMESTAMPS },
   { id: "0012_features_enabled_index", sql: MIGRATION_0012_FEATURES_ENABLED_INDEX },
   { id: "0013_detail_indexes", sql: MIGRATION_0013_DETAIL_INDEXES },
+  { id: "0014_nullable_audit_organization", sql: MIGRATION_0014_NULLABLE_AUDIT_ORGANIZATION },
+  { id: "0015_identity_links_to_index", sql: MIGRATION_0015_IDENTITY_LINKS_TO_INDEX },
 ];
 
 /**
