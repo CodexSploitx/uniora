@@ -40,7 +40,7 @@ describe("computeAuthorizationSnapshot", () => {
     await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
     const owner = await storage.roles.createOwnerRole({ id: "role-owner", organizationId: "org-1" });
     const membership = await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity });
-    await storage.memberships.assignRole(membership.id, owner.id);
+    await storage.memberships.assignOwnerRole(membership.id, owner.id);
 
     const engine = createAuthorizationEngine(storage);
     const snapshot = await computeAuthorizationSnapshot(engine, storage.features, {
@@ -77,5 +77,61 @@ describe("computeAuthorizationSnapshot", () => {
     });
 
     expect(snapshot.permissions).toEqual({ "vehicles.read": false });
+  });
+
+  describe("features requieren membership real (regresión — docs/security-pentest-2026-09-24.md Hallazgo 4)", () => {
+    it("una identidad sin membership nunca ve un feature habilitado como true, aunque lo esté para la organización", async () => {
+      const storage = createMemoryStorage();
+      await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+      await storage.features.register({ key: "ai_assistant", name: "AI Assistant" });
+      await storage.features.enable("org-1", "ai_assistant");
+      const engine = createAuthorizationEngine(storage);
+
+      const attacker = { provider: "attacker-controlled", subject: "nobody" };
+      const snapshot = await computeAuthorizationSnapshot(engine, storage.features, {
+        identity: attacker,
+        organizationId: "org-1",
+        features: ["ai_assistant"],
+      });
+
+      expect(snapshot.features).toEqual({ ai_assistant: false });
+    });
+
+    it("un miembro legítimo de OTRA organización (cross-tenant) tampoco ve el feature como true", async () => {
+      const storage = createMemoryStorage();
+      await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+      await storage.organizations.create({ id: "org-2", name: "Other Corp" });
+      await storage.features.register({ key: "ai_assistant", name: "AI Assistant" });
+      await storage.features.enable("org-1", "ai_assistant");
+      const owner = await storage.roles.createOwnerRole({ id: "role-owner-2", organizationId: "org-2" });
+      const memberOfOrg2 = await storage.memberships.create({ id: "m-2", organizationId: "org-2", identity });
+      await storage.memberships.assignOwnerRole(memberOfOrg2.id, owner.id);
+      const engine = createAuthorizationEngine(storage);
+
+      const snapshot = await computeAuthorizationSnapshot(engine, storage.features, {
+        identity,
+        organizationId: "org-1",
+        features: ["ai_assistant"],
+      });
+
+      expect(snapshot.features).toEqual({ ai_assistant: false });
+    });
+
+    it("un miembro real de la organización sí ve el feature habilitado como true", async () => {
+      const storage = createMemoryStorage();
+      await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+      await storage.features.register({ key: "ai_assistant", name: "AI Assistant" });
+      await storage.features.enable("org-1", "ai_assistant");
+      await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity });
+      const engine = createAuthorizationEngine(storage);
+
+      const snapshot = await computeAuthorizationSnapshot(engine, storage.features, {
+        identity,
+        organizationId: "org-1",
+        features: ["ai_assistant"],
+      });
+
+      expect(snapshot.features).toEqual({ ai_assistant: true });
+    });
   });
 });

@@ -51,7 +51,10 @@ export function createMemoryStorage(): UnioraStorage {
   const identityLinksByFromKey = new Map<string, IdentityLink>();
 
   // Defined before `membershipRepository` because `findByIdentity` calls
-  // `resolve()` directly.
+  // `resolve()` directly. `auditLogRepository` is referenced from `link()`
+  // below even though it's declared later in this function — safe, because
+  // by the time any caller can actually invoke `link()`, `createMemoryStorage`
+  // has already finished running and every `const` here is initialized.
   const identityLinkRepository: IdentityLinkRepository = {
     async link(input: LinkIdentityInput) {
       if (sameIdentity(input.from, input.to)) {
@@ -75,8 +78,45 @@ export function createMemoryStorage(): UnioraStorage {
         throw new IdentityLinkError("Cannot link: the 'to' identity is itself an alias of another identity (no chains).");
       }
 
+      // Symmetric to the check above (docs/security-pentest-2026-09-24.md
+      // Hallazgo 6 — "no chains" was only enforced in one direction): if
+      // `from` is ALREADY the `to` of some other link, accepting it here
+      // would silently build a 2-hop chain (`other -> from -> to`) through
+      // sheer ordering, even though a direct attempt at that same chain (`to`
+      // already a `from`) is correctly rejected above. `from` can only ever
+      // become a link target for the "no own membership" reason already
+      // checked, never because it's currently someone else's alias.
+      const fromIsAliasTarget = [...identityLinksByFromKey.values()].some((existingLink) =>
+        sameIdentity(existingLink.to, input.from),
+      );
+      if (fromIsAliasTarget) {
+        throw new IdentityLinkError(
+          "Cannot link: the 'from' identity is itself the target of another identity's link (no chains).",
+        );
+      }
+
       const link: IdentityLink = { from: input.from, to: input.to, linkedAt: new Date() };
       identityLinksByFromKey.set(identityKey(input.from), link);
+
+      // Security fix (docs/security-pentest-2026-09-24.md Hallazgo 5):
+      // `input.actor` exists specifically "for the mandatory audit
+      // trail" (see the interface JSDoc) — this is the one Core primitive
+      // that self-audits, because merging two identities' access is
+      // dangerous enough to require a forensic trail regardless of whether
+      // the host caller remembers to add one of its own. Global entry (no
+      // `organizationId`): a link isn't scoped to any single organization.
+      // Deterministic id (`from`'s natural key, unique by construction —
+      // same guarantee as `identity_links`' own primary key) instead of
+      // generating a random one, consistent with Core never depending on an
+      // id-generation library.
+      await auditLogRepository.record({
+        id: `identity-link:${input.from.provider}:${input.from.subject}`,
+        actor: input.actor,
+        action: "identity_link.created",
+        target: { type: "identity_link", id: `${input.from.provider}:${input.from.subject}` },
+        metadata: { from: input.from, to: input.to },
+      });
+
       return link;
     },
     async resolve(identity: Identity) {
@@ -162,11 +202,75 @@ export function createMemoryStorage(): UnioraStorage {
 
   const membershipRepository: MembershipRepository = {
     async create(input: CreateMembershipInput) {
+      // SECURITY FIX (docs/security-pentest-2026-09-24.md Ronda 6, hallazgo
+      // de adapter differential encontrado por fuzzing dirigido):
+      // `@uniora/postgres` rechaza esto vía `unique(organization_id,
+      // provider, subject)` (migration 0001), pero `createMemoryStorage`
+      // no tenía la comprobación equivalente — permitía crear DOS
+      // memberships distintos para la MISMA identidad en la MISMA
+      // organización. `findByIdentity` siempre resuelve al PRIMERO
+      // insertado (orden de iteración de `Map`), así que el segundo queda
+      // inalcanzable por la ruta normal de autorización — pero SÍ es
+      // visible para `countByRole`/`assignOwnerRole`. Combinado, esto
+      // rompía el invariante de "toda organización tiene ≥1 Owner
+      // ALCANZABLE": asignar el Owner role también al duplicado infla el
+      // conteo que `unassignOwnerRole` usa para decidir "¿queda otro
+      // Owner?", permitiendo quitarle el Owner role al membership real
+      // (alcanzable) mientras el duplicado (inalcanzable) lo conserva —
+      // la organización queda, en la práctica, sin ningún Owner operativo
+      // aunque el conteo diga 1. Ver `docs/core.md` para el detalle.
+      const identityTaken = [...memberships.values()].some(
+        (m) => m.organizationId === input.organizationId && sameIdentity(m.identity, input.identity),
+      );
+      if (identityTaken) {
+        throw new MembershipError(
+          `Identity ${input.identity.provider}:${input.identity.subject} already has a membership in organization "${input.organizationId}".`,
+        );
+      }
+      // SECURITY FIX (docs/security-pentest-2026-09-24.md Ronda 7 —
+      // boundary collapse): `IdentityLinkRepository.link()` refuses to link
+      // a `from` identity that already owns a membership directly, in ANY
+      // organization, precisely "to avoid an ambiguous/hijackable lookup"
+      // (its own error message). That invariant was enforced ONLY inside
+      // `link()` — nothing stopped the SAME ambiguous state from being
+      // built in the opposite order: link() first (from has no membership
+      // yet, so it's accepted), then a direct `create()` here for that same
+      // `from` identity. Once both exist, `findByIdentity` has two
+      // conflicting sources of truth for one identity in one organization
+      // (this membership, and the linked-to identity's membership) — Memory
+      // and Postgres resolved that ambiguity DIFFERENTLY (Memory always
+      // favored the link, silently ignoring this row entirely — including
+      // any explicit grant made to it; Postgres favored this row instead,
+      // silently making the link dead), and the ambiguous state was also
+      // reachable via a genuine race between `link()` and `create()`, not
+      // only by sequential misordering. Rejecting it here — the same check
+      // `link()` already performs, just from the other side — closes both
+      // the ordering and the adapter-divergence issue at the source.
+      if (identityLinksByFromKey.has(identityKey(input.identity))) {
+        throw new MembershipError(
+          `Cannot create a direct membership for identity ${input.identity.provider}:${input.identity.subject}: it is already linked as an alias of another identity (see IdentityLinkRepository.link) — creating a direct membership here would produce an ambiguous/hijackable lookup.`,
+        );
+      }
+      const roleIds = [...(input.roleIds ?? [])];
+      // Same organization-match guard as `assignRole` below — an initial
+      // `roleIds` at creation time is just as capable of smuggling a
+      // cross-organization role reference as a later `assignRole` call
+      // (docs/security-pentest-2026-09-24.md Hallazgo 2, found by
+      // repository-wide review after fixing `assignRole`).
+      for (const roleId of roleIds) {
+        const role = roles.get(roleId);
+        if (!role) throw new MembershipError(`Role not found: ${roleId}`);
+        if (role.organizationId !== input.organizationId) {
+          throw new MembershipError(
+            `Cannot assign role "${roleId}" to membership "${input.id}": the role belongs to a different organization than "${input.organizationId}".`,
+          );
+        }
+      }
       const membership: Membership = {
         id: input.id,
         organizationId: input.organizationId,
         identity: input.identity,
-        roleIds: [...(input.roleIds ?? [])],
+        roleIds,
       };
       memberships.set(membership.id, membership);
       return membership;
@@ -219,12 +323,77 @@ export function createMemoryStorage(): UnioraStorage {
     async assignRole(membershipId, roleId) {
       const membership = memberships.get(membershipId);
       if (!membership) throw new MembershipError(`Membership not found: ${membershipId}`);
+      // Reject assigning a role that belongs to a DIFFERENT organization than
+      // the membership (uniora-security-engineering §17/§20 — an
+      // organization-scoped relationship must not be creatable across
+      // tenants). Harmless today only because `AuthorizationEngine.can()`
+      // separately re-checks `role.organizationId` at evaluation time; this
+      // closes the gap at the source instead of relying solely on that
+      // defense-in-depth layer (docs/security-pentest-2026-09-24.md Hallazgo 2).
+      const role = roles.get(roleId);
+      if (!role) throw new MembershipError(`Role not found: ${roleId}`);
+      if (role.organizationId !== membership.organizationId) {
+        throw new MembershipError(
+          `Cannot assign role "${roleId}" to membership "${membershipId}": the role belongs to a different organization than the membership.`,
+        );
+      }
+      // Security fix (docs/security-pentest-2026-09-24.md Hallazgo 7): the
+      // Owner role must never be grantable through the same generic path as
+      // any other role — see `assignOwnerRole` and the interface JSDoc.
+      if (role.isOwnerRole) {
+        throw new MembershipError(
+          `Cannot assign the protected Owner role "${roleId}" via assignRole() — use assignOwnerRole() instead.`,
+        );
+      }
+      if (!membership.roleIds.includes(roleId)) membership.roleIds.push(roleId);
+    },
+    async assignOwnerRole(membershipId, roleId) {
+      const membership = memberships.get(membershipId);
+      if (!membership) throw new MembershipError(`Membership not found: ${membershipId}`);
+      const role = roles.get(roleId);
+      if (!role) throw new MembershipError(`Role not found: ${roleId}`);
+      if (role.organizationId !== membership.organizationId) {
+        throw new MembershipError(
+          `Cannot assign role "${roleId}" to membership "${membershipId}": the role belongs to a different organization than the membership.`,
+        );
+      }
+      if (!role.isOwnerRole) {
+        throw new MembershipError(`Role "${roleId}" is not the protected Owner role — use assignRole() instead.`);
+      }
       if (!membership.roleIds.includes(roleId)) membership.roleIds.push(roleId);
     },
     async unassignRole(membershipId, roleId) {
       const membership = memberships.get(membershipId);
       if (!membership) throw new MembershipError(`Membership not found: ${membershipId}`);
+
+      // Security fix (docs/security-pentest-2026-09-24.md Hallazgo 7): role
+      // type checked BEFORE the idempotency short-circuit — an Owner role
+      // that isn't currently assigned to this membership must still be
+      // reported as "wrong method", never silently treated as a no-op (that
+      // would defeat the point of the split for a caller who relies on this
+      // rejecting). An unknown/deleted `roleId` obviously isn't the Owner
+      // role, so it correctly falls through to the plain idempotent path.
+      if (roles.get(roleId)?.isOwnerRole) {
+        throw new MembershipError(
+          `Cannot unassign the protected Owner role "${roleId}" via unassignRole() — use unassignOwnerRole() instead.`,
+        );
+      }
+
       if (!membership.roleIds.includes(roleId)) return; // idempotent no-op
+
+      const index = membership.roleIds.indexOf(roleId);
+      membership.roleIds.splice(index, 1);
+    },
+    async unassignOwnerRole(membershipId, roleId) {
+      const membership = memberships.get(membershipId);
+      if (!membership) throw new MembershipError(`Membership not found: ${membershipId}`);
+
+      const role = roles.get(roleId);
+      if (role && !role.isOwnerRole) {
+        throw new MembershipError(`Role "${roleId}" is not the protected Owner role — use unassignRole() instead.`);
+      }
+
+      if (!membership.roleIds.includes(roleId)) return; // idempotent no-op (also covers an unknown roleId)
 
       if (isLastOwnerRoleHolder(roleId, membershipId)) {
         throw new MembershipError(

@@ -32,7 +32,7 @@ describe("createAuthorizationEngine", () => {
     await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
     const owner = await storage.roles.createOwnerRole({ id: "role-owner", organizationId: "org-1" });
     const membership = await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity });
-    await storage.memberships.assignRole(membership.id, owner.id);
+    await storage.memberships.assignOwnerRole(membership.id, owner.id);
 
     const engine = createAuthorizationEngine(storage);
 
@@ -43,8 +43,15 @@ describe("createAuthorizationEngine", () => {
     const storage = createMemoryStorage();
     await storage.roles.create({ id: "role-other-org", organizationId: "org-2", name: "Admin", permissionKeys: ["vehicles.create"] });
     const membership = await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity });
-    // Simulates a corrupted/forged roleId pointing at another org's role.
-    await storage.memberships.assignRole(membership.id, "role-other-org");
+    // `MembershipRepository.create`/`assignRole` both reject a cross-org
+    // roleId at the source (docs/security-pentest-2026-09-24.md Hallazgo 2)
+    // — so a corrupted/forged reference like this can no longer be produced
+    // through the public API. Simulate it by mutating the stored object
+    // directly (the memory adapter returns live references, not copies),
+    // exactly as if the data had been corrupted some other way, to prove
+    // the Engine's own defense-in-depth still holds regardless.
+    const raw = await storage.memberships.findById(membership.id);
+    raw!.roleIds.push("role-other-org");
 
     const engine = createAuthorizationEngine(storage);
     const allowed = await engine.can({ identity, organizationId: "org-1", permission: "vehicles.create" });
@@ -70,5 +77,127 @@ describe("createAuthorizationEngine", () => {
     expect(
       await engine.access.check({ identity, organizationId: "org-1", permission: "vehicles.delete", feature: "advanced_inventory" }),
     ).toBe(true);
+  });
+
+  describe("access.check() without permission or feature (regression — see docs/security-pentest-2026-09-24.md Hallazgo 1)", () => {
+    it("denies an identity with no membership anywhere, even one invented by an attacker", async () => {
+      const storage = createMemoryStorage();
+      await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+      const engine = createAuthorizationEngine(storage);
+
+      const attacker = { provider: "attacker-controlled", subject: "nobody" };
+      const allowed = await engine.access.check({ identity: attacker, organizationId: "org-1" });
+
+      expect(allowed).toBe(false);
+    });
+
+    it("denies a legitimate member of a DIFFERENT organization (cross-tenant, INV-001)", async () => {
+      const storage = createMemoryStorage();
+      await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+      await storage.organizations.create({ id: "org-2", name: "Other Corp" });
+      const owner = await storage.roles.createOwnerRole({ id: "role-owner-2", organizationId: "org-2" });
+      const memberOfOrg2 = await storage.memberships.create({ id: "m-2", organizationId: "org-2", identity });
+      await storage.memberships.assignOwnerRole(memberOfOrg2.id, owner.id);
+      const engine = createAuthorizationEngine(storage);
+
+      const allowed = await engine.access.check({ identity, organizationId: "org-1" });
+
+      expect(allowed).toBe(false);
+    });
+
+    it("allows an identity that genuinely holds a membership in that organization", async () => {
+      const storage = createMemoryStorage();
+      await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+      await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity });
+      const engine = createAuthorizationEngine(storage);
+
+      const allowed = await engine.access.check({ identity, organizationId: "org-1" });
+
+      expect(allowed).toBe(true);
+    });
+  });
+
+  describe("access.check({ feature }) sin permission (regresión — docs/security-pentest-2026-09-24.md Hallazgo 4)", () => {
+    it("deniega a una identidad sin membership aunque el feature esté habilitado en la organización", async () => {
+      const storage = createMemoryStorage();
+      await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+      await storage.features.register({ key: "ai_assistant", name: "AI Assistant" });
+      await storage.features.enable("org-1", "ai_assistant");
+      const engine = createAuthorizationEngine(storage);
+
+      const attacker = { provider: "attacker-controlled", subject: "nobody" };
+      const allowed = await engine.access.check({ identity: attacker, organizationId: "org-1", feature: "ai_assistant" });
+
+      expect(allowed).toBe(false);
+    });
+
+    it("deniega a un miembro legítimo de OTRA organización (cross-tenant) aunque el feature esté habilitado aquí", async () => {
+      const storage = createMemoryStorage();
+      await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+      await storage.organizations.create({ id: "org-2", name: "Other Corp" });
+      await storage.features.register({ key: "ai_assistant", name: "AI Assistant" });
+      await storage.features.enable("org-1", "ai_assistant");
+      const owner = await storage.roles.createOwnerRole({ id: "role-owner-2", organizationId: "org-2" });
+      const memberOfOrg2 = await storage.memberships.create({ id: "m-2", organizationId: "org-2", identity });
+      await storage.memberships.assignOwnerRole(memberOfOrg2.id, owner.id);
+      const engine = createAuthorizationEngine(storage);
+
+      const allowed = await engine.access.check({ identity, organizationId: "org-1", feature: "ai_assistant" });
+
+      expect(allowed).toBe(false);
+    });
+
+    it("permite a un miembro real de la organización cuando el feature está habilitado", async () => {
+      const storage = createMemoryStorage();
+      await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+      await storage.features.register({ key: "ai_assistant", name: "AI Assistant" });
+      await storage.features.enable("org-1", "ai_assistant");
+      await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity });
+      const engine = createAuthorizationEngine(storage);
+
+      const allowed = await engine.access.check({ identity, organizationId: "org-1", feature: "ai_assistant" });
+
+      expect(allowed).toBe(true);
+    });
+  });
+
+  describe("access.check({ permission: \"\" }) / ({ feature: \"\" }) — regresión, docs/security-pentest-2026-09-24.md Hallazgo 10 (Ronda 4)", () => {
+    it("deniega para un permission='' explícito, no lo trata como 'omitido' (permission NO pedido)", async () => {
+      const storage = createMemoryStorage();
+      await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+      // Miembro real de la organización, SIN ningún permiso — si `permission: ""`
+      // se tratara como "no se pidió permission" (el bug: `if (input.permission)`
+      // es falsy para ""), esto caería al chequeo de membership desnudo y
+      // devolvería `true` para cualquier miembro real, sin importar el permiso.
+      await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity });
+      const engine = createAuthorizationEngine(storage);
+
+      const allowed = await engine.access.check({ identity, organizationId: "org-1", permission: "" });
+
+      expect(allowed).toBe(false);
+    });
+
+    it("deniega para un feature='' explícito, no lo trata como 'omitido'", async () => {
+      const storage = createMemoryStorage();
+      await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+      await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity });
+      const engine = createAuthorizationEngine(storage);
+
+      const allowed = await engine.access.check({ identity, organizationId: "org-1", feature: "" });
+
+      expect(allowed).toBe(false);
+    });
+
+    it("can() con permission='' deniega igual para un role sin ese permiso (no está protegido solo por access.check)", async () => {
+      const storage = createMemoryStorage();
+      await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+      const role = await storage.roles.create({ id: "role-1", organizationId: "org-1", name: "Member", permissionKeys: [] });
+      await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity, roleIds: [role.id] });
+      const engine = createAuthorizationEngine(storage);
+
+      const allowed = await engine.can({ identity, organizationId: "org-1", permission: "" });
+
+      expect(allowed).toBe(false);
+    });
   });
 });

@@ -67,9 +67,25 @@ export async function computeAuthorizationSnapshot(
     }),
   );
 
+  const requestedFeatures = input.features ?? [];
+  // `Feature.isEnabled` is purely organization-scoped — it says nothing
+  // about whether `input.identity` actually belongs to `organizationId`
+  // (docs/security-pentest-2026-09-24.md Hallazgo 4, the same root cause as
+  // `access.check()`'s "feature-only" bug in `engine.ts`, found here too by
+  // repository-wide review). Permission entries above already get this for
+  // free from `engine.can()`; feature entries need it resolved explicitly.
+  // Delegates to `engine.access.check()` (no `permission`/`feature`) — which
+  // is exactly what a plain membership check is after the Hallazgo 1/4
+  // fix — instead of a second, independent membership lookup here, so this
+  // stays a single source of truth for "does this identity belong here".
+  const hasMembership =
+    requestedFeatures.length > 0
+      ? await engine.access.check({ identity: input.identity, organizationId: input.organizationId })
+      : true;
+
   const featureEntries = await Promise.all(
-    (input.features ?? []).map(async (key) => {
-      const enabled = await features.isEnabled(input.organizationId, key);
+    requestedFeatures.map(async (key) => {
+      const enabled = hasMembership && (await features.isEnabled(input.organizationId, key));
       return [key, enabled] as const;
     }),
   );

@@ -244,7 +244,7 @@ describe("RoleRepository", () => {
       const owner = await storage.roles.createOwnerRole({ id: "role-owner", organizationId: "org-1" });
       const identity = { provider: "supabase", subject: "user-1" };
       const membership = await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity });
-      await storage.memberships.assignRole(membership.id, owner.id);
+      await storage.memberships.assignOwnerRole(membership.id, owner.id);
 
       const engine = createAuthorizationEngine(storage);
 
@@ -259,8 +259,10 @@ describe("RoleRepository", () => {
       const owner = await storage.roles.createOwnerRole({ id: "role-owner-2", organizationId: "org-2" });
       const identity = { provider: "supabase", subject: "user-1" };
       const membership = await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity });
-      // Simula un roleId forjado/corrupto apuntando al Owner role de otra organización.
-      await storage.memberships.assignRole(membership.id, owner.id);
+      // `assignRole()` ya rechaza esto desde el origen (docs/security-pentest-2026-09-24.md
+      // Hallazgo 2) — se simula el roleId forjado/corrupto mutando el objeto en
+      // memoria directamente para seguir probando la defensa del engine.
+      membership.roleIds.push(owner.id);
 
       const engine = createAuthorizationEngine(storage);
 

@@ -17,7 +17,13 @@ export interface AuditLogTarget {
  */
 export interface AuditLogEntry {
   readonly id: string;
-  readonly organizationId: string;
+  /**
+   * Absent for a GLOBAL entry — an operation with no single organization to
+   * scope it to (e.g. `IdentityLinkRepository.link()`, which spans whatever
+   * organizations the linked identities happen to have memberships in).
+   * Never appears in `listByOrganization`, only in `listRecent`.
+   */
+  readonly organizationId?: string;
   readonly actor: Identity;
   readonly action: string;
   readonly target?: AuditLogTarget;

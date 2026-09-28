@@ -60,6 +60,12 @@ export interface RoleRepository {
    * another role in the same organization already has this exact name or
    * this key, or if the key is malformed/reserved ("owner").
    * `permissionKeys` must already be registered via `PermissionRepository.register` — adapters may enforce this with a foreign key.
+   *
+   * **Performs no authorization of its own** — it does not check that the
+   * caller may create roles (or grant the requested `permissionKeys`) in
+   * `organizationId`. The host application must authorize that decision
+   * itself before calling this primitive (uniora-security-engineering
+   * §71-72 "Unsafe APIs"; docs/security-pentest-2026-09-24.md Hallazgo 3).
    */
   create(input: CreateRoleInput): Promise<Role>;
   /**
@@ -100,9 +106,21 @@ export interface RoleRepository {
   /**
    * `permissionKey` must already be registered via `PermissionRepository.register`.
    * Rejects if the role is not found or is the protected Owner role.
+   *
+   * **Performs no authorization of its own** — it does not check that the
+   * caller may grant `permissionKey` to this role. The host application must
+   * authorize that decision itself (typically via `engine.can()`) before
+   * calling this primitive (uniora-security-engineering §71-72 "Unsafe
+   * APIs"; docs/security-pentest-2026-09-24.md Hallazgo 3).
    */
   grantPermission(roleId: string, permissionKey: string): Promise<void>;
-  /** Idempotent (no-op if not granted). Rejects if the role is not found or is the protected Owner role. */
+  /**
+   * Idempotent (no-op if not granted). Rejects if the role is not found or
+   * is the protected Owner role.
+   *
+   * **Performs no authorization of its own** — same trust boundary as
+   * `grantPermission` above.
+   */
   revokePermission(roleId: string, permissionKey: string): Promise<void>;
   /** Rejects if the role is not found, is the protected Owner role, or the name collides with another role in the same organization. */
   rename(roleId: string, name: string): Promise<Role>;
@@ -110,6 +128,9 @@ export interface RoleRepository {
    * Deletes the role and detaches it from every membership that had it
    * assigned. Rejects if the role is not found or is the protected Owner
    * role — the organization must always keep its Owner role.
+   *
+   * **Performs no authorization of its own** — same trust boundary as
+   * `create`/`grantPermission` above.
    */
   delete(roleId: string): Promise<void>;
 }

@@ -3,7 +3,8 @@ import type { AuditLogEntry, AuditLogTarget } from "./types.js";
 
 export interface RecordAuditLogInput {
   id: string;
-  organizationId: string;
+  /** Omit for a GLOBAL entry with no single organization to scope it to — see `AuditLogEntry.organizationId`. */
+  organizationId?: string;
   actor: Identity;
   action: string;
   target?: AuditLogTarget;
