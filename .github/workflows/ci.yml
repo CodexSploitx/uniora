@@ -81,5 +81,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: node scripts/check-release.mjs
+      # build antes del ensayo: `publish` omite (sin correr su prepack) los paquetes cuya versión ya está en
+      # npm, así que un paquete nuevo (p. ej. @uniora/sqlite) no encontraría el dist/ de @uniora/core.
+      - run: pnpm -r build
       # Ensayo de publicación: arma (prepack = build fresco) y valida cada tarball sin subir nada.
       - run: pnpm -r publish --dry-run --no-git-checks

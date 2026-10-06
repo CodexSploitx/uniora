@@ -1,11 +1,12 @@
 {
-  "name": "@uniora/postgres",
+  "name": "@uniora/sqlite",
   "version": "0.2.0",
-  "description": "PostgreSQL storage adapter for @uniora/core (docs/PROYECT.md \u00a718)",
+  "description": "SQLite storage adapter for @uniora/core, over better-sqlite3",
   "license": "PolyForm-Shield-1.0.0",
   "keywords": [
     "uniora",
-    "postgresql",
+    "sqlite",
+    "better-sqlite3",
     "authorization",
     "multi-tenant"
   ],
@@ -16,7 +17,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/CodexSploitx/uniora.git",
-    "directory": "packages/database/postgres"
+    "directory": "packages/database/sqlite"
   },
   "publishConfig": {
     "access": "public"
@@ -33,6 +34,9 @@
   "files": [
     "dist"
   ],
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
@@ -40,12 +44,15 @@
     "prepack": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@uniora/core": "workspace:^",
-    "pg": "^8.13.1"
+    "@uniora/core": "workspace:^"
+  },
+  "peerDependencies": {
+    "better-sqlite3": "^13.0.0"
   },
   "devDependencies": {
-    "@types/pg": "^8.11.10",
+    "@types/better-sqlite3": "^9.6.0",
     "@uniora/storage-conformance": "workspace:^",
+    "better-sqlite3": "^13.0.3",
     "typescript": "^5.6.3",
     "vitest": "^2.1.4"
   }
