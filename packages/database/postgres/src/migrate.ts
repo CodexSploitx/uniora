@@ -20,6 +20,7 @@ import { MIGRATION_0017_AUDIT_LOG_INTEGRITY } from "./migrations/0017_audit_log_
 import { MIGRATION_0018_FEATURE_DEFAULTS_HIERARCHY } from "./migrations/0018_feature_defaults_hierarchy.js";
 import { MIGRATION_0019_MEMBERSHIP_STATUS } from "./migrations/0019_membership_status.js";
 import { MIGRATION_0020_AUDIT_LOG_SEARCH_INDEXES } from "./migrations/0020_audit_log_search_indexes.js";
+import { MIGRATION_0021_RLS_FUNCTIONS } from "./migrations/0021_rls_functions.js";
 
 interface Migration {
   readonly id: string;
@@ -48,6 +49,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0018_feature_defaults_hierarchy", sql: MIGRATION_0018_FEATURE_DEFAULTS_HIERARCHY },
   { id: "0019_membership_status", sql: MIGRATION_0019_MEMBERSHIP_STATUS },
   { id: "0020_audit_log_search_indexes", sql: MIGRATION_0020_AUDIT_LOG_SEARCH_INDEXES },
+  { id: "0021_rls_functions", sql: MIGRATION_0021_RLS_FUNCTIONS },
 ];
 
 /**
