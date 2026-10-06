@@ -84,6 +84,12 @@ importers:
       '@uniora/postgres':
         specifier: workspace:^
         version: link:../../packages/database/postgres
+      '@uniora/sqlite':
+        specifier: workspace:^
+        version: link:../../packages/database/sqlite
+      better-sqlite3:
+        specifier: ^13.0.3
+        version: 13.0.3
       next:
         specifier: 16.3.6
         version: 16.3.6(@babel/core@7.29.7(supports-color@7.2.0))(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -106,6 +112,9 @@ importers:
       '@tailwindcss/postcss':
         specifier: ^4
         version: 4.3.3
+      '@types/better-sqlite3':
+        specifier: ^9.6.0
+        version: 9.6.0
       '@types/node':
         specifier: ^20
         version: 20.19.43
@@ -212,13 +221,22 @@ importers:
       '@uniora/postgres':
         specifier: workspace:^
         version: link:../database/postgres
+      '@uniora/sqlite':
+        specifier: workspace:^
+        version: link:../database/sqlite
       '@uniora/studio':
         specifier: workspace:^
         version: link:../../apps/studio
+      better-sqlite3:
+        specifier: ^13.0.3
+        version: 13.0.3
       pg:
         specifier: ^8.13.1
         version: 8.23.0
     devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^9.6.0
+        version: 9.6.0
       '@types/pg':
         specifier: ^8.11.10
         version: 8.23.1

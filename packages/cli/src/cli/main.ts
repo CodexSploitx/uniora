@@ -27,9 +27,10 @@ interface CommandDef {
 const COMMANDS: Record<string, CommandDef> = {
   init: {
     summary: "Crea uniora.config.mjs y .env.example en el proyecto actual",
-    usage: "uniora init [--force] [--json]",
-    details: "  --force   Sobrescribe archivos existentes (por defecto nunca los toca)",
-    spec: { help: "boolean", json: "boolean", force: "boolean" },
+    usage: "uniora init [--provider postgresql|sqlite] [--force] [--json]",
+    details: `  --provider P  Base de datos de la plantilla: postgresql (por defecto) o sqlite
+  --force       Sobrescribe archivos existentes (por defecto nunca los toca)`,
+    spec: { help: "boolean", json: "boolean", force: "boolean", provider: "string" },
   },
   check: {
     summary: "Valida la configuración y la conexión a la base de datos",
@@ -38,14 +39,14 @@ const COMMANDS: Record<string, CommandDef> = {
     spec: JSON_SPEC,
   },
   migrate: {
-    summary: "Aplica las migraciones de UNIORA (registradas en uniora.schema_migrations)",
+    summary: "Aplica las migraciones de UNIORA (registradas en su propio ledger: uniora.schema_migrations / uniora_schema_migrations)",
     usage: "uniora migrate [--status | --dry-run] [--config <ruta>] [--env <nombre>] [--json]",
     details: `  --status    Solo reporta aplicadas/pendientes. Sale con 1 si hay pendientes o modificadas (gate de CI)
   --dry-run   Muestra qué aplicaría "migrate" sin tocar la base`,
     spec: { ...JSON_SPEC, status: "boolean", "dry-run": "boolean" },
   },
   doctor: {
-    summary: "Diagnóstico profundo (runtime, config, conexión, versión de PostgreSQL, migraciones, owners, Studio)",
+    summary: "Diagnóstico profundo (runtime, config, conexión, versión del motor, migraciones, owners, Studio)",
     usage: "uniora doctor [--config <ruta>] [--env <nombre>] [--json]",
     details: "",
     spec: JSON_SPEC,
@@ -120,9 +121,14 @@ export async function runCli(argv: readonly string[], cwd: string = process.cwd(
     }
 
     switch (command) {
-      case "init":
-        runInit(cwd, { force: flags.force === true, json: flags.json === true });
+      case "init": {
+        const provider = flags.provider;
+        if (provider !== undefined && provider !== "postgresql" && provider !== "sqlite") {
+          throw new UsageError(`--provider "${String(provider)}" no es válido: usa postgresql o sqlite.`);
+        }
+        runInit(cwd, { force: flags.force === true, json: flags.json === true, provider });
         return;
+      }
       case "check":
         await runCheck(cwd, commonFromFlags(flags));
         return;

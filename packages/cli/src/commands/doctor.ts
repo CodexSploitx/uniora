@@ -1,17 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { Pool } from "pg";
-import { getMigrationStatus } from "@uniora/postgres";
 import type { CommonOptions } from "../cli/common.js";
-import { describeDatabaseTarget, emit, type CheckResult } from "../cli/output.js";
+import { emit, type CheckResult } from "../cli/output.js";
 import { loadConfig } from "../config/loader.js";
 import type { UnioraConfig } from "../config/types.js";
+import { openDriver } from "../database/open.js";
 import { resolveStudio } from "./studio.js";
 
 export type { CheckResult } from "../cli/output.js";
-
-/** Versión mayor mínima de PostgreSQL con soporte upstream (14 sale de soporte en nov-2026). */
-const MIN_SUPPORTED_POSTGRES_MAJOR = 14;
 
 /**
  * Feature-detección en vez de parsear `process.version` con semver: lo único
@@ -64,48 +60,31 @@ export function checkGitignore(cwd: string, envName?: string): CheckResult {
   return { name: ".gitignore", severity: "ok", message: `${envFile} está ignorado` };
 }
 
-function postgresMajor(serverVersionNum: string): number {
-  return Math.floor(Number(serverVersionNum) / 10000);
-}
-
 /**
  * Chequeos contra la base de datos. Nunca imprime `config.database.url`
  * (usuario/contraseña) — mismo criterio que `check` y `migrate`. Todo es de
  * **solo lectura**: si algo falta, indica qué comando correr, pero no lo
- * ejecuta (ninguna mutación implícita).
+ * ejecuta (ninguna mutación implícita; con SQLite ni siquiera crea el archivo).
  */
-export async function checkDatabase(config: UnioraConfig): Promise<CheckResult[]> {
-  const pool = new Pool({ connectionString: config.database.url });
+export async function checkDatabase(config: UnioraConfig, cwd: string = process.cwd()): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
 
+  let driver;
   try {
-    await pool.query("select 1");
-    const target = describeDatabaseTarget(config.database.url);
-    results.push({ name: "Conexión a la base de datos", severity: "ok", message: target ? `conectado a ${target}` : "conectado" });
+    driver = await openDriver(config.database, cwd, "inspect");
+    const probe = await driver.probe();
+    results.push({ name: "Conexión a la base de datos", severity: probe.severity, message: probe.message });
   } catch (error) {
-    await pool.end();
+    await driver?.close();
     return [
       { name: "Conexión a la base de datos", severity: "fail", message: error instanceof Error ? error.message : String(error) },
     ];
   }
 
   try {
-    const version = await pool.query<{ server_version: string; server_version_num: string }>(
-      "select current_setting('server_version') as server_version, current_setting('server_version_num') as server_version_num",
-    );
-    const row = version.rows[0];
-    const major = row ? postgresMajor(row.server_version_num) : 0;
-    results.push(
-      major >= MIN_SUPPORTED_POSTGRES_MAJOR
-        ? { name: "PostgreSQL", severity: "ok", message: `${row?.server_version} (soportada)` }
-        : {
-            name: "PostgreSQL",
-            severity: "warn",
-            message: `${row?.server_version ?? "versión desconocida"}: por debajo de la ${MIN_SUPPORTED_POSTGRES_MAJOR}, fuera de soporte upstream. Actualiza cuando puedas.`,
-          },
-    );
+    results.push(...(await driver.engineChecks()));
 
-    const migrations = await getMigrationStatus(pool);
+    const migrations = await driver.migrationStatus();
     if (migrations.modified.length > 0) {
       results.push({
         name: "Migraciones",
@@ -131,48 +110,15 @@ export async function checkDatabase(config: UnioraConfig): Promise<CheckResult[]
 
     // Las consultas de integridad asumen el schema completo: solo si no falta ninguna migración.
     if (migrations.ledgerPresent && migrations.pending.length === 0 && migrations.modified.length === 0) {
-      results.push(await checkOwnerInvariant(pool));
+      results.push(await driver.ownerInvariant());
     }
   } catch (error) {
     results.push({ name: "Diagnóstico de la base", severity: "fail", message: error instanceof Error ? error.message : String(error) });
   } finally {
-    await pool.end();
+    await driver.close();
   }
 
   return results;
-}
-
-/**
- * Invariante "toda organización tiene ≥ 1 owner" (skill §11). Se garantiza al
- * crear con `createOrganizationWithOwner` y al no poder quitar el último
- * owner — pero una organización creada con `organizations.create()` a secas
- * (o insertada a mano en SQL) puede no tenerlo. Es `warn`, no `fail`: hay
- * usos legítimos (seeds, tests) y no es un fallo de la instalación, pero
- * quien administre debe saberlo.
- */
-async function checkOwnerInvariant(pool: Pool): Promise<CheckResult> {
-  const result = await pool.query<{ id: string; total: string }>(
-    `select o.id, count(*) over () as total
-       from uniora.organizations o
-      where not exists (
-        select 1 from uniora.roles r
-          join uniora.membership_roles mr on mr.role_id = r.id
-         where r.organization_id = o.id and r.is_owner_role)
-      order by o.id
-      limit 5`,
-  );
-
-  if (result.rows.length === 0) {
-    return { name: "Owners", severity: "ok", message: "todas las organizaciones tienen al menos un owner" };
-  }
-
-  const total = Number(result.rows[0]?.total ?? 0);
-  const sample = result.rows.map((row) => row.id).join(", ");
-  return {
-    name: "Owners",
-    severity: "warn",
-    message: `${total} organización(es) sin ningún miembro con el role Owner (${sample}${total > result.rows.length ? ", …" : ""}). Créalas con createOrganizationWithOwner() o asigna el Owner role a un miembro.`,
-  };
 }
 
 export function checkStudio(): CheckResult {
@@ -187,7 +133,7 @@ export function checkStudio(): CheckResult {
 /**
  * `npx uniora doctor` (docs/PROYECT.md §19): diagnóstico de solo lectura,
  * más profundo que `check`: runtime de Node, higiene de `.gitignore`,
- * configuración, conexión, versión de PostgreSQL, estado de las migraciones,
+ * configuración, conexión, versión del motor (PostgreSQL o SQLite), estado de las migraciones,
  * invariante de owners y disponibilidad de Studio. Nunca modifica nada.
  */
 export async function runDoctor(cwd: string = process.cwd(), options: CommonOptions = {}): Promise<void> {
@@ -206,7 +152,7 @@ export async function runDoctor(cwd: string = process.cwd(), options: CommonOpti
   }
 
   if (config) {
-    checks.push(...(await checkDatabase(config)));
+    checks.push(...(await checkDatabase(config, cwd)));
   }
   checks.push(checkStudio());
 

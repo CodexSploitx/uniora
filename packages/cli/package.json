@@ -47,10 +47,13 @@
   },
   "dependencies": {
     "@uniora/postgres": "workspace:^",
+    "@uniora/sqlite": "workspace:^",
     "@uniora/studio": "workspace:^",
+    "better-sqlite3": "^13.0.3",
     "pg": "^8.13.1"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/pg": "^8.11.10",
     "typescript": "^5.6.3",
     "vitest": "^2.1.4"

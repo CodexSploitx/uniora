@@ -1,6 +1,7 @@
 import { createServer } from "node:net";
 import { describe, expect, it } from "vitest";
-import { buildStudioEnv, findFreePort, generateLaunchToken, parseStudioArgs, studioLaunchUrl } from "./studio.js";
+import { resolve } from "node:path";
+import { buildStudioEnv, findFreePort, generateLaunchToken, parseStudioArgs, studioDatabaseUrl, studioLaunchUrl } from "./studio.js";
 
 describe("parseStudioArgs", () => {
   it("usa valores por defecto sin flags", () => {
@@ -72,5 +73,19 @@ describe("findFreePort", () => {
     } finally {
       server.close();
     }
+  });
+});
+
+describe("Studio con SQLite", () => {
+  it("buildStudioEnv indica el proveedor (postgresql por defecto)", () => {
+    const base = { databaseUrl: "x", token: "t", port: 4321, readOnly: false };
+    expect(buildStudioEnv({}, base).UNIORA_STUDIO_DATABASE_PROVIDER).toBe("postgresql");
+    expect(buildStudioEnv({}, { ...base, databaseProvider: "sqlite" }).UNIORA_STUDIO_DATABASE_PROVIDER).toBe("sqlite");
+  });
+
+  it("studioDatabaseUrl resuelve la ruta SQLite relativa contra el proyecto (Studio corre en otro directorio) y no toca la de Postgres", () => {
+    const cwd = resolve("/projects/app");
+    expect(studioDatabaseUrl({ provider: "sqlite", url: "sqlite:./data/uniora.db" }, cwd)).toBe(`sqlite:${resolve(cwd, "data/uniora.db")}`);
+    expect(studioDatabaseUrl({ provider: "postgresql", url: "postgresql://u:p@h/db" }, cwd)).toBe("postgresql://u:p@h/db");
   });
 });
