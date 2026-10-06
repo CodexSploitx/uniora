@@ -1,6 +1,6 @@
 import "server-only";
 import type { AuditLogEntry, Organization } from "@uniora/core";
-import { getPool, getStorage } from "@/lib/db";
+import { databaseSchemaExists, getStorage } from "@/lib/db";
 import { requireSession } from "@/lib/session";
 import type {
   ActivityItem,
@@ -29,8 +29,7 @@ let schemaKnownReady = false;
 export async function isSchemaReady(): Promise<boolean> {
   await requireSession();
   if (schemaKnownReady) return true;
-  const result = await getPool().query("select 1 from information_schema.schemata where schema_name = 'uniora'");
-  schemaKnownReady = (result.rowCount ?? 0) > 0;
+  schemaKnownReady = await databaseSchemaExists();
   return schemaKnownReady;
 }
 

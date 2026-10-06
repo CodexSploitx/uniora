@@ -9,6 +9,8 @@ import { Badge } from "@/components/reui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/reui/alert";
 import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { databaseProviderLabel } from "@/lib/database-provider";
+import { getStudioEnv } from "@/lib/env";
 import { isReadOnly, requireSession } from "@/lib/session";
 import { getSidebarOrganizations, isSchemaReady } from "@/lib/queries";
 
@@ -34,7 +36,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <span className="text-sm text-muted-foreground">{t("nav.localAdmin")}</span>
           <div className="ml-auto flex items-center gap-2">
             {readOnly && <Badge variant="warning-light">{t("common.readOnly")}</Badge>}
-            <Badge variant="success-light">PostgreSQL</Badge>
+            <Badge variant="success-light">{databaseProviderLabel(getStudioEnv().databaseProvider)}</Badge>
             <LanguageSwitcher />
             <ThemeToggle />
           </div>

@@ -1,4 +1,5 @@
-import type { UnioraConfig } from "./types.js";
+import { SqliteUrlError, sqlitePathFromUrl } from "@uniora/sqlite";
+import type { UnioraConfig, UnioraDatabaseConfig } from "./types.js";
 
 export class UnioraConfigError extends Error {
   constructor(message: string) {
@@ -7,10 +8,36 @@ export class UnioraConfigError extends Error {
   }
 }
 
-const SUPPORTED_DATABASE_PROVIDERS = ["postgresql"] as const;
+const SUPPORTED_DATABASE_PROVIDERS = ["postgresql", "sqlite"] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+/**
+ * Una URL que no corresponde al proveedor declarado fallaría más tarde con un
+ * error confuso del driver (o, peor, tocaría un archivo que nadie quiso). Se
+ * rechaza aquí, nombrando ambas cosas.
+ */
+function checkUrlMatchesProvider(provider: UnioraDatabaseConfig["provider"], url: string, source: string): void {
+  if (provider === "sqlite") {
+    try {
+      sqlitePathFromUrl(url);
+    } catch (error) {
+      if (error instanceof SqliteUrlError) {
+        throw new UnioraConfigError(`Configuración inválida en ${source}: "database.url" para sqlite — ${error.message}`);
+      }
+      throw error;
+    }
+    return;
+  }
+
+  if (url.startsWith("sqlite:")) {
+    throw new UnioraConfigError(
+      `Configuración inválida en ${source}: "database.provider" es "postgresql" pero "database.url" es una URL de SQLite. ` +
+        'Cambia el proveedor a "sqlite" o usa una connection string de PostgreSQL.',
+    );
+  }
 }
 
 /**
@@ -36,7 +63,7 @@ export function validateConfig(config: unknown, source: string): UnioraConfig {
   }
 
   const provider = database.provider;
-  if (typeof provider !== "string" || !SUPPORTED_DATABASE_PROVIDERS.includes(provider as "postgresql")) {
+  if (typeof provider !== "string" || !SUPPORTED_DATABASE_PROVIDERS.includes(provider as UnioraDatabaseConfig["provider"])) {
     throw new UnioraConfigError(
       `Proveedor de base de datos no soportado en ${source}: "${String(provider)}". ` +
         `Soportados en V1: ${SUPPORTED_DATABASE_PROVIDERS.join(", ")} (docs/PROYECT.md §16).`,
@@ -52,7 +79,10 @@ export function validateConfig(config: unknown, source: string): UnioraConfig {
     );
   }
 
-  const result: UnioraConfig = { database: { provider: "postgresql", url } };
+  const databaseProvider = provider as UnioraDatabaseConfig["provider"];
+  checkUrlMatchesProvider(databaseProvider, url, source);
+
+  const result: UnioraConfig = { database: { provider: databaseProvider, url } };
 
   if (config.auth === undefined) {
     return result;

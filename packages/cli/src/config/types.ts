@@ -3,7 +3,11 @@
  * anfitrión exporta esto por defecto desde `uniora.config.mjs`.
  */
 export interface UnioraDatabaseConfig {
-  readonly provider: "postgresql";
+  /**
+   * `postgresql`: `url` es una connection string (`postgresql://...`).
+   * `sqlite`: `url` es `sqlite:<ruta>` (relativa al directorio del proyecto, o absoluta).
+   */
+  readonly provider: "postgresql" | "sqlite";
   readonly url: string;
 }
 

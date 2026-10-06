@@ -177,7 +177,7 @@ Conviene saber:
 
 - **Usa una conexión por proceso.** El adapter serializa cada operación sobre ella y ejecuta cada operación de varias sentencias (guarda del último Owner, vinculación de identidades, ...) en una transacción `begin immediate`: otro proceso sobre el mismo archivo espera su turno en lugar de competir. Las foreign keys se activan — y se verifican — en la conexión.
 - Los timestamps son texto ISO-8601 con precisión de milisegundos, y las búsquedas tipo `ILIKE` pliegan mayúsculas Unicode, igual que el adapter de Postgres.
-- La CLI y Studio siguen apuntando solo a Postgres; el soporte de SQLite ahí aún no está conectado.
+- La CLI y Studio también funcionan con SQLite — ver [CLI](#cli).
 
 ## Instalación y desarrollo local
 
@@ -207,10 +207,10 @@ npm install --save-dev @uniora/cli
 o ejecútalo una vez sin instalar nada: `npx @uniora/cli init`. (Usa el nombre con scope en esa forma puntual — un `npx uniora` a secas, fuera de un proyecto que ya tenga `@uniora/cli` instalado, resolvería a *otro* paquete de npm.)
 
 ```bash
-npx uniora init      # crea uniora.config.mjs y .env.example en tu proyecto
+npx uniora init      # crea uniora.config.mjs y .env.example (--provider sqlite para un proyecto SQLite)
 npx uniora check     # valida la config y la conexión a la base de datos
 npx uniora migrate   # aplica las migraciones pendientes de uniora.* (registradas en un ledger, aditivas, nunca destructivas)
-npx uniora doctor    # diagnóstico más profundo: Node, .gitignore, config, DB, versión de PostgreSQL, migraciones, owners, Studio
+npx uniora doctor    # diagnóstico más profundo: Node, .gitignore, config, DB, versión del motor, migraciones, owners, Studio
 npx uniora studio    # abre UNIORA Studio en local (--read-only, --port N, --no-open)
 ```
 
@@ -221,6 +221,16 @@ npx uniora migrate --status --env production   # sale con 1 si hay migraciones p
 npx uniora migrate --dry-run                   # ¿qué haría `migrate`? no toca nada
 npx uniora doctor --json | jq '.checks[] | select(.severity != "ok")'
 ```
+
+**PostgreSQL o SQLite.** `database.provider` en `uniora.config.mjs` elige el motor, y `database.url` es una connection string para `"postgresql"` o `sqlite:<ruta>` para `"sqlite"` (relativa a tu proyecto, o absoluta):
+
+```js
+export default defineConfig({
+  database: { provider: "sqlite", url: process.env.DATABASE_URL }, // DATABASE_URL=sqlite:./uniora.db
+});
+```
+
+Con SQLite, los comandos de solo lectura (`check`, `doctor`, `migrate --status`/`--dry-run`) abren el archivo en solo lectura y nunca lo crean ni lo alteran — un archivo ausente se reporta, no se inventa; solo `migrate` lo crea (y lo pasa a WAL). `init --provider sqlite` además añade `uniora.db*` al `.gitignore`, porque el archivo contiene tus datos de autorización. Studio muestra en qué motor está y funciona igual, incluido `--read-only` (entonces la propia conexión SQLite es de solo lectura).
 
 Todos los comandos aceptan `--config <archivo>`, `--env <nombre>` (carga `.env.<nombre>` — y solo ese, sin caer en silencio a tu `.env` de desarrollo) y `--json` (un único objeto JSON en stdout, que nunca contiene tu connection string). Códigos de salida: `0` ok · `1` algo falló · `2` uso incorrecto. `npx uniora <comando> --help` para más detalle.
 

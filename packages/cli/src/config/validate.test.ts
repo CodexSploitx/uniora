@@ -64,4 +64,31 @@ describe("validateConfig", () => {
       validateConfig({ database: { provider: "postgresql", url: "x" }, auth: "supabase" }, SOURCE),
     ).toThrow(/auth.provider/);
   });
+
+  describe("sqlite", () => {
+    it("acepta una URL sqlite: relativa o absoluta", () => {
+      expect(validateConfig({ database: { provider: "sqlite", url: "sqlite:./data/uniora.db" } }, SOURCE)).toEqual({
+        database: { provider: "sqlite", url: "sqlite:./data/uniora.db" },
+      });
+      expect(() => validateConfig({ database: { provider: "sqlite", url: "sqlite:///var/lib/uniora.db" } }, SOURCE)).not.toThrow();
+    });
+
+    it("rechaza una URL que no es de sqlite, nombrando el proveedor", () => {
+      expect(() => validateConfig({ database: { provider: "sqlite", url: "postgresql://u:p@host/db" } }, SOURCE)).toThrow(
+        /sqlite.*sqlite:/s,
+      );
+      expect(() => validateConfig({ database: { provider: "sqlite", url: "./uniora.db" } }, SOURCE)).toThrow(UnioraConfigError);
+    });
+
+    it("rechaza una base en memoria y una URL sin archivo", () => {
+      expect(() => validateConfig({ database: { provider: "sqlite", url: "sqlite::memory:" } }, SOURCE)).toThrow(/memoria/);
+      expect(() => validateConfig({ database: { provider: "sqlite", url: "sqlite:" } }, SOURCE)).toThrow(/ningún archivo/);
+    });
+
+    it("rechaza provider postgresql con una URL sqlite (no la deja llegar al driver de pg)", () => {
+      expect(() => validateConfig({ database: { provider: "postgresql", url: "sqlite:./uniora.db" } }, SOURCE)).toThrow(
+        /"postgresql" pero "database.url" es una URL de SQLite/,
+      );
+    });
+  });
 });

@@ -1,8 +1,8 @@
-import { Pool } from "pg";
-import { applyMigrations, getMigrationStatus, type MigrationStatus } from "@uniora/postgres";
 import type { CommonOptions } from "../cli/common.js";
-import { describeDatabaseTarget, emit, failReport, type CheckResult, type Report } from "../cli/output.js";
+import { emit, failReport, type CheckResult, type Report } from "../cli/output.js";
 import { loadConfig } from "../config/loader.js";
+import { openDriver } from "../database/open.js";
+import type { DatabaseDriver, MigrationStatus } from "../database/types.js";
 
 export interface MigrateOptions extends CommonOptions {
   /** Solo reporta aplicadas/pendientes. Sale con código 1 si hay pendientes o modificadas (gate de CI). */
@@ -38,12 +38,12 @@ function statusChecks(status: MigrationStatus, mode: "status" | "dry-run"): Chec
  * `npx uniora migrate [--status | --dry-run]` (docs/PROYECT.md §19).
  *
  * Aplicar (sin flags) no pide confirmación: las migraciones de
- * @uniora/postgres son aditivas e idempotentes y se registran en
- * `uniora.schema_migrations` (ver `docs/postgres.md`) — cada una se aplica
- * una sola vez y una ya aplicada cuyo SQL cambió **bloquea** el comando. Si en
+ * @uniora/postgres y @uniora/sqlite son aditivas e idempotentes y se
+ * registran en su ledger (`uniora.schema_migrations` / `uniora_schema_migrations`)
+ * — cada una se aplica una sola vez y una ya aplicada cuyo SQL cambió **bloquea** el comando. Si en
  * el futuro una migración pudiera ser destructiva, este comando debe pedir
- * confirmación explícita (skill §58). Siempre muestra `host/base` (nunca las
- * credenciales) para que el operador vea qué base va a tocar — importante con
+ * confirmación explícita (skill §58). Siempre muestra el destino — `host/base`
+ * o la ruta del archivo SQLite, nunca las credenciales — para que el operador vea qué base va a tocar — importante con
  * `--env production`.
  */
 export async function runMigrate(cwd: string = process.cwd(), options: MigrateOptions = {}): Promise<void> {
@@ -57,14 +57,23 @@ export async function runMigrate(cwd: string = process.cwd(), options: MigrateOp
     return;
   }
 
-  const target = describeDatabaseTarget(config.database.url);
-  const pool = new Pool({ connectionString: config.database.url });
+  const inspecting = options.status === true || options.dryRun === true;
+
+  let driver: DatabaseDriver;
+  try {
+    driver = await openDriver(config.database, cwd, inspecting ? "inspect" : "write");
+  } catch (error) {
+    emit(failReport("migrate", "Migraciones", error), json);
+    return;
+  }
+
+  const target = driver.target;
   let report: Report;
 
   try {
-    if (options.status || options.dryRun) {
+    if (inspecting) {
       const mode = options.status ? "status" : "dry-run";
-      const status = await getMigrationStatus(pool);
+      const status = await driver.migrationStatus();
       const checks = statusChecks(status, mode);
       if (status.modified.length > 0 && mode === "dry-run") {
         // `migrate` se negaría a correr — el dry-run debe reflejarlo, no prometer un éxito falso.
@@ -77,7 +86,7 @@ export async function runMigrate(cwd: string = process.cwd(), options: MigrateOp
       };
     } else {
       if (!json) console.log(`Aplicando migraciones de UNIORA (${config.database.provider}${target ? ` → ${target}` : ""})...`);
-      const result = await applyMigrations(pool);
+      const result = await driver.applyMigrations();
       const message =
         result.applied.length === 0
           ? "nada que aplicar: la base ya está al día"
@@ -97,7 +106,7 @@ export async function runMigrate(cwd: string = process.cwd(), options: MigrateOp
       data: { target },
     };
   } finally {
-    await pool.end();
+    await driver.close();
   }
 
   emit(report, json);
