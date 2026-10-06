@@ -201,3 +201,58 @@ describe("createAuthorizationEngine", () => {
     });
   });
 });
+
+describe("malformed permission keys (audit F-02)", () => {
+  async function ownerWorld() {
+    const storage = createMemoryStorage();
+    await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+    await storage.roles.createOwnerRole({ id: "role-owner", organizationId: "org-1" });
+    const membership = await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity });
+    await storage.memberships.assignOwnerRole(membership.id, "role-owner");
+    return storage;
+  }
+
+  it.each(["", "NotAKey", "no-dots", undefined, null, 42])("denies the Owner too for the key %j", async (bad) => {
+    const engine = createAuthorizationEngine(await ownerWorld());
+    expect(await engine.can({ identity, organizationId: "org-1", permission: bad as unknown as string })).toBe(false);
+    expect(await engine.access.check({ identity, organizationId: "org-1", permission: bad as unknown as string })).toBe(
+      bad === undefined, // omitted permission means "membership only"
+    );
+  });
+
+  it("still grants the Owner a well-formed key", async () => {
+    const engine = createAuthorizationEngine(await ownerWorld());
+    expect(await engine.can({ identity, organizationId: "org-1", permission: "anything.at_all" })).toBe(true);
+  });
+});
+
+describe("onDecision (audit F-05)", () => {
+  it("reports every allow and deny exactly once, and a throwing hook never changes the answer", async () => {
+    const storage = createMemoryStorage();
+    await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+    await storage.roles.create({ id: "r", organizationId: "org-1", name: "Admin", permissionKeys: ["vehicles.create"] });
+    await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity, roleIds: ["r"] });
+
+    const seen: Array<{ kind: string; allowed: boolean; reason: string }> = [];
+    const engine = createAuthorizationEngine(storage, {
+      onDecision: (d) => void seen.push({ kind: d.kind, allowed: d.allowed, reason: d.reason }),
+    });
+    await engine.can({ identity, organizationId: "org-1", permission: "vehicles.create" });
+    await engine.can({ identity, organizationId: "org-1", permission: "vehicles.delete" });
+    await engine.can({ identity, organizationId: "org-1", permission: "" });
+    await engine.access.check({ identity, organizationId: "org-1", permission: "vehicles.create" });
+    expect(seen).toEqual([
+      { kind: "can", allowed: true, reason: "evaluated" },
+      { kind: "can", allowed: false, reason: "evaluated" },
+      { kind: "can", allowed: false, reason: "malformed_input" },
+      { kind: "access.check", allowed: true, reason: "evaluated" },
+    ]);
+
+    const noisy = createAuthorizationEngine(storage, {
+      onDecision: () => {
+        throw new Error("logger down");
+      },
+    });
+    expect(await noisy.can({ identity, organizationId: "org-1", permission: "vehicles.create" })).toBe(true);
+  });
+});

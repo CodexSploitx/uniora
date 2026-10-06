@@ -1,5 +1,39 @@
 import type { Identity } from "../identity/types.js";
 import type { UnioraStorage } from "../storage/types.js";
+import { assertValidPermissionKey } from "../permission/key.js";
+
+/** A permission key the engine will even consider: a string with the registered `resource.action` shape. */
+function isWellFormedPermissionKey(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    assertValidPermissionKey(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** One authorization decision, as reported to `AuthorizationEngineOptions.onDecision`. */
+export interface AuthorizationDecision {
+  kind: "can" | "access.check";
+  identity: Identity;
+  organizationId: string;
+  permission?: string;
+  feature?: string;
+  allowed: boolean;
+  /** `malformed_input` when a permission key was refused before touching storage (empty/odd key). */
+  reason: "evaluated" | "malformed_input";
+  at: Date;
+}
+
+export interface AuthorizationEngineOptions {
+  /**
+   * Called after every decision (allow and deny) so the host can keep a
+   * forensic trail — the engine itself never writes audit entries. Errors
+   * from the hook are swallowed: a failing logger must never change a decision.
+   */
+  onDecision?: (decision: AuthorizationDecision) => void | Promise<void>;
+}
 
 export interface CanInput {
   identity: Identity;
@@ -40,8 +74,40 @@ export interface AuthorizationEngine {
  * verifies real membership in `organizationId` before answering (see the
  * comment inside `check()` below).
  */
-export function createAuthorizationEngine(storage: UnioraStorage): AuthorizationEngine {
+export function createAuthorizationEngine(
+  storage: UnioraStorage,
+  options: AuthorizationEngineOptions = {},
+): AuthorizationEngine {
+  async function report(decision: Omit<AuthorizationDecision, "at">): Promise<void> {
+    if (!options.onDecision) return;
+    try {
+      await options.onDecision({ ...decision, at: new Date() });
+    } catch {
+      /* a failing logger never changes the decision */
+    }
+  }
+
+  const keyOf = (value: unknown): string | undefined => (typeof value === "string" ? value : undefined);
+
   async function can(input: CanInput): Promise<boolean> {
+    const allowed = await evaluateCan(input);
+    await report({
+      kind: "can",
+      identity: input.identity,
+      organizationId: input.organizationId,
+      permission: keyOf(input.permission),
+      allowed,
+      reason: isWellFormedPermissionKey(input.permission) ? "evaluated" : "malformed_input",
+    });
+    return allowed;
+  }
+
+  async function evaluateCan(input: CanInput): Promise<boolean> {
+    // SECURITY FIX (audit F-02): the Owner bypass below grants ANY key, so a
+    // malformed one (`""`, `undefined`, a non-string) is refused first —
+    // otherwise an upstream bug that yields an empty key is invisible to
+    // Owners (always allowed) and only shows up for everyone else.
+    if (!isWellFormedPermissionKey(input.permission)) return false;
     const membership = await storage.memberships.findByIdentity(input.organizationId, input.identity);
     if (!membership || membership.roleIds.length === 0) return false;
 
@@ -54,6 +120,21 @@ export function createAuthorizationEngine(storage: UnioraStorage): Authorization
   }
 
   async function check(input: AccessCheckInput): Promise<boolean> {
+    const allowed = await evaluateCheck(input);
+    await report({
+      kind: "access.check",
+      identity: input.identity,
+      organizationId: input.organizationId,
+      permission: keyOf(input.permission),
+      feature: keyOf(input.feature),
+      allowed,
+      reason:
+        input.permission !== undefined && !isWellFormedPermissionKey(input.permission) ? "malformed_input" : "evaluated",
+    });
+    return allowed;
+  }
+
+  async function evaluateCheck(input: AccessCheckInput): Promise<boolean> {
     // `!== undefined`, never plain truthiness (SECURITY FIX — see
     // docs/security-pentest-2026-09-24.md Hallazgo 10, Ronda 4): a caller
     // that explicitly passes `permission: ""` or `feature: ""` (e.g. an
@@ -75,7 +156,7 @@ export function createAuthorizationEngine(storage: UnioraStorage): Authorization
     if (input.permission !== undefined) {
       // `can()` already re-derives real membership internally, so nothing
       // further is needed on this branch.
-      const allowed = await can({
+      const allowed = await evaluateCan({
         identity: input.identity,
         organizationId: input.organizationId,
         permission: input.permission,

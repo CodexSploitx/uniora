@@ -26,8 +26,14 @@ export function normalizeInvitationEmail(email: string): string {
 }
 
 export interface InvitationRateLimits {
-  /** New invitations to one e-mail address (any organization) per hour. Default 5. */
+  /** New invitations from ONE organization to one e-mail address per hour. Default 5. */
   perEmailPerHour?: number;
+  /**
+   * New invitations to one e-mail address from ALL organizations per hour — a ceiling against
+   * abuse of the mailer, deliberately much higher than `perEmailPerHour` so that organizations
+   * an attacker controls can't exhaust a victim's quota for everybody else (audit F-06). Default 50.
+   */
+  perEmailGlobalPerHour?: number;
   /** New invitations created by one organization per hour. Default 200. */
   perOrganizationPerHour?: number;
   /** Minimum time between two sends of the SAME invitation (`resend`). Default 60 s. */
@@ -87,6 +93,14 @@ export interface InvitationPreview {
   expiresAt: Date;
 }
 
+/** Identifies ONE invitation inside ONE organization — the organization is checked, not trusted (audit F-03). */
+export interface InvitationRef {
+  organizationId: string;
+  invitationId: string;
+  /** The member performing the action. The host must have authorized it. */
+  actor: Identity;
+}
+
 export interface AcceptInvitationInput {
   token: string;
   /** The identity that just authenticated in the host application. */
@@ -108,9 +122,12 @@ export interface AcceptInvitationResult {
 
 export interface InvitationService {
   invite(input: InviteInput): Promise<InviteResult>;
-  /** Issues a NEW link (the old one stops working), extends the expiry and sends again. */
-  resend(invitationId: string, actor: Identity, options?: { locale?: string }): Promise<InviteResult>;
-  revoke(invitationId: string, actor: Identity): Promise<Invitation>;
+  /**
+   * Issues a NEW link (the old one stops working), extends the expiry and sends again. An
+   * invitation that doesn't belong to `ref.organizationId` is reported exactly like a missing one.
+   */
+  resend(ref: InvitationRef, options?: { locale?: string }): Promise<InviteResult>;
+  revoke(ref: InvitationRef): Promise<Invitation>;
   /** What an accept page may show before sign-in. `null` for any unusable token — no reason is leaked. */
   preview(token: string): Promise<InvitationPreview | null>;
   accept(input: AcceptInvitationInput): Promise<AcceptInvitationResult>;
@@ -146,9 +163,19 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
   if (ttlMs <= 0) throw new RangeError("ttlMs must be greater than zero.");
   const limits = {
     perEmailPerHour: positive(options.rateLimits?.perEmailPerHour, 5, "perEmailPerHour"),
+    perEmailGlobalPerHour: positive(options.rateLimits?.perEmailGlobalPerHour, 50, "perEmailGlobalPerHour"),
     perOrganizationPerHour: positive(options.rateLimits?.perOrganizationPerHour, 200, "perOrganizationPerHour"),
     resendCooldownMs: positive(options.rateLimits?.resendCooldownMs, 60_000, "resendCooldownMs"),
   };
+
+  /**
+   * Audit history is append-only and long-lived, so it keeps a salted fingerprint of the invitee's
+   * address (enough to correlate events and to prove "this address was invited") instead of the
+   * address itself — personal data that could never be erased later (audit F-10).
+   */
+  async function emailFingerprint(invitation: Invitation): Promise<string> {
+    return (await hashInvitationToken(`${invitation.organizationId}:${invitation.email}`)).slice(0, 32);
+  }
 
   async function auditEvent(
     tx: Pick<UnioraStorage, "auditLogs">,
@@ -164,7 +191,7 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
       actor,
       action,
       target: { type: "invitation", id: invitation.id },
-      metadata: { email: invitation.email, ...metadata },
+      metadata: { emailFingerprint: await emailFingerprint(invitation), ...metadata },
     });
   }
 
@@ -238,15 +265,39 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
     };
   }
 
-  async function checkRate(organizationId: string, email: string): Promise<void> {
+  // The rate check and the insert must not interleave with another `invite()` of this service, or N
+  // concurrent calls all see "under the limit" and all succeed (audit F-06). This serializes them
+  // in-process; across several processes the check still runs inside the same database transaction
+  // as the insert, but only a serializable isolation level (or a database-side counter) closes the
+  // window completely — see docs/hardening.md.
+  let inviteQueue: Promise<unknown> = Promise.resolve();
+  function serialized<T>(work: () => Promise<T>): Promise<T> {
+    const run = inviteQueue.then(work, work);
+    inviteQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  async function checkRate(repo: Pick<UnioraStorage["invitations"], "countCreatedSince">, organizationId: string, email: string): Promise<void> {
     const since = new Date(now().getTime() - HOUR_MS);
-    const [forEmail, forOrg] = await Promise.all([
-      storage.invitations.countCreatedSince({ email, since }),
-      storage.invitations.countCreatedSince({ organizationId, since }),
+    const [forEmailInOrg, forEmailEverywhere, forOrg] = await Promise.all([
+      repo.countCreatedSince({ organizationId, email, since }),
+      repo.countCreatedSince({ email, since }),
+      repo.countCreatedSince({ organizationId, since }),
     ]);
-    if (forEmail >= limits.perEmailPerHour || forOrg >= limits.perOrganizationPerHour) {
+    if (
+      forEmailInOrg >= limits.perEmailPerHour ||
+      forEmailEverywhere >= limits.perEmailGlobalPerHour ||
+      forOrg >= limits.perOrganizationPerHour
+    ) {
       throw new InvitationError("Too many invitations were sent recently. Try again later.", "rate_limited");
     }
+  }
+
+  /** Looks the invitation up AND checks it belongs to `ref.organizationId` (audit F-03); a stranger's id is just "not found". */
+  async function findInOrganization(ref: InvitationRef): Promise<Invitation | null> {
+    if (typeof ref?.organizationId !== "string" || typeof ref?.invitationId !== "string") return null;
+    const found = await storage.invitations.findById(ref.invitationId);
+    return found && found.organizationId === ref.organizationId ? found : null;
   }
 
   return {
@@ -256,33 +307,35 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
       if (!(await storage.organizations.findById(input.organizationId))) {
         throw new InvitationError("The organization does not exist.", "bad_request");
       }
-      await checkRate(input.organizationId, email);
 
       const token = generateInvitationToken();
       const tokenHash = await hashInvitationToken(token);
-      const at = now();
 
-      const invitation = await storage.transaction(async (tx) => {
-        await tx.invitations.expireStale(input.organizationId, email, at);
-        const created = await tx.invitations.create({
-          id: generateId(),
-          organizationId: input.organizationId,
-          email,
-          roleIds: roles.map((role) => role.id),
-          tokenHash,
-          invitedBy: input.invitedBy,
-          createdAt: at,
-          expiresAt: new Date(at.getTime() + ttlMs),
-        });
-        await auditEvent(tx, input.invitedBy, "invitation.created", created, { roles: roles.map((role) => role.name) });
-        return created;
-      });
+      const invitation = await serialized(() =>
+        storage.transaction(async (tx) => {
+          await checkRate(tx.invitations, input.organizationId, email);
+          const at = now();
+          await tx.invitations.expireStale(input.organizationId, email, at);
+          const created = await tx.invitations.create({
+            id: generateId(),
+            organizationId: input.organizationId,
+            email,
+            roleIds: roles.map((role) => role.id),
+            tokenHash,
+            invitedBy: input.invitedBy,
+            createdAt: at,
+            expiresAt: new Date(at.getTime() + ttlMs),
+          });
+          await auditEvent(tx, input.invitedBy, "invitation.created", created, { roles: roles.map((role) => role.name) });
+          return created;
+        }),
+      );
 
       return deliver(invitation, token, input.locale, input.invitedBy);
     },
 
-    async resend(invitationId, actor, resendOptions) {
-      const existing = await storage.invitations.findById(invitationId);
+    async resend(ref, resendOptions) {
+      const existing = await findInOrganization(ref);
       if (!existing || existing.status !== "pending") {
         throw new InvitationError("Only a pending invitation can be sent again.", "invalid");
       }
@@ -293,19 +346,28 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
 
       const token = generateInvitationToken();
       const at = now();
-      const rotated = await storage.invitations.rotateToken(existing.id, {
-        tokenHash: await hashInvitationToken(token),
-        expiresAt: new Date(at.getTime() + ttlMs),
+      const tokenHash = await hashInvitationToken(token);
+      const rotated = await storage.transaction(async (tx) => {
+        const next = await tx.invitations.rotateToken(existing.id, {
+          tokenHash,
+          expiresAt: new Date(at.getTime() + ttlMs),
+        });
+        if (next) await auditEvent(tx, ref.actor, "invitation.resent", next);
+        return next;
       });
       if (!rotated) throw new InvitationError("Only a pending invitation can be sent again.", "invalid");
-      await auditEvent(storage, actor, "invitation.resent", rotated);
-      return deliver(rotated, token, resendOptions?.locale, actor);
+      return deliver(rotated, token, resendOptions?.locale, ref.actor);
     },
 
-    async revoke(invitationId, actor) {
-      const revoked = await storage.invitations.revoke(invitationId, now());
+    async revoke(ref) {
+      const existing = await findInOrganization(ref);
+      if (!existing) throw new InvitationError("Only a pending invitation can be revoked.", "invalid");
+      const revoked = await storage.transaction(async (tx) => {
+        const result = await tx.invitations.revoke(existing.id, now());
+        if (result) await auditEvent(tx, ref.actor, "invitation.revoked", result);
+        return result;
+      });
       if (!revoked) throw new InvitationError("Only a pending invitation can be revoked.", "invalid");
-      await auditEvent(storage, actor, "invitation.revoked", revoked);
       return revoked;
     },
 

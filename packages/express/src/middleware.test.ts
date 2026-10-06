@@ -241,3 +241,67 @@ describe("with the real engine", () => {
     expect((await get("/orgs/org-2?as=user-1")).status).toBe(403);
   });
 });
+
+describe("dynamic keys that resolve to nothing (audit F-01)", () => {
+  it.each([
+    ["undefined", undefined],
+    ["null", null],
+    ["an empty string", ""],
+    ["a number", 42],
+  ])("answers 403 and never asks the engine when the permission resolver returns %s", async (_label, value) => {
+    const { engine, calls } = fakeEngine(true);
+    const { get, reached } = await serve((app, r) => {
+      app.get(
+        "/orgs/:orgId",
+        requirePermission(engine, (() => value) as unknown as () => string, { resolve: resolveFromParams }),
+        (_req, res) => {
+          r.value = true;
+          res.json({ ok: true });
+        },
+      );
+    });
+
+    expect((await get("/orgs/org-1")).status).toBe(403);
+    expect(reached.value).toBe(false);
+    expect(calls.can).toEqual([]);
+    expect(calls.access).toEqual([]);
+  });
+
+  it("also denies when a dynamic feature resolver returns undefined", async () => {
+    const { engine, calls } = fakeEngine(true);
+    const { get } = await serve((app) => {
+      app.get(
+        "/orgs/:orgId",
+        requireFeature(engine, (() => undefined) as unknown as () => string, { resolve: resolveFromParams }),
+        (_req, res) => void res.json({ ok: true }),
+      );
+    });
+
+    expect((await get("/orgs/org-1")).status).toBe(403);
+    expect(calls.access).toEqual([]);
+  });
+
+  it("does not let a real member through a route whose permission was never mapped (end to end)", async () => {
+    const storage = createMemoryStorage();
+    await createOrganizationWithOwner(storage, {
+      organizationId: "org-1",
+      organizationName: "Acme",
+      ownerRoleId: "r-owner",
+      membershipId: "m-owner",
+      ownerIdentity: { provider: "supabase", subject: "owner" },
+    });
+    await storage.roles.create({ id: "r-viewer", organizationId: "org-1", name: "Viewer", permissionKeys: [] });
+    await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity, roleIds: ["r-viewer"] });
+    const engine = createAuthorizationEngine(storage);
+    const mapped: Record<string, string> = { GET: "reports.read" };
+
+    const { get } = await serve((app) => {
+      app.use(
+        "/orgs/:orgId",
+        requirePermission(engine, (req: Request) => mapped[req.method] as string, { resolve: resolveFromParams }),
+        (_req, res) => void res.json({ ok: true }),
+      );
+    });
+    expect((await get("/orgs/org-1")).status).toBe(403);
+  });
+});
