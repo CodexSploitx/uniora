@@ -14,9 +14,10 @@ import type { Permission } from "../permission/types.js";
 import type { PermissionRepository, RegisterPermissionInput } from "../permission/repository.js";
 import { PermissionError } from "../permission/repository.js";
 import { assertValidPermissionKey, sanitizePermissionName } from "../permission/key.js";
-import type { Feature, FeatureDefinition } from "../feature/types.js";
+import type { EffectiveFeature, Feature, FeatureChangeMeta, FeatureDefinition } from "../feature/types.js";
 import type { FeatureRepository, FeatureUsage, RegisterFeatureInput } from "../feature/repository.js";
-import { FeatureError } from "../feature/repository.js";
+import { FeatureError, sanitizeFeatureChangeReason } from "../feature/repository.js";
+import { assertValidFeatureParent, resolveEffectiveFeatures } from "../feature/effective.js";
 import { resolveFeatureKey, sanitizeFeatureName } from "../feature/key.js";
 import type { AuditLogEntry } from "../audit-log/types.js";
 import type {
@@ -683,25 +684,61 @@ export function createMemoryStorage(): UnioraStorage {
 
   function assertFeatureRegistered(key: string): void {
     if (!featureDefinitions.has(key)) {
-      throw new FeatureError(`Feature "${key}" is not registered. Call features.register() first.`);
+      throw new FeatureError(`Feature "${key}" is not registered. Call features.register() first.`, "feature_unknown");
     }
+  }
+
+  function overridesOf(organizationId: string): Feature[] {
+    return [...features.values()].filter((f) => f.organizationId === organizationId);
+  }
+
+  function effectiveFor(organizationId: string): EffectiveFeature[] {
+    return resolveEffectiveFeatures([...featureDefinitions.values()], overridesOf(organizationId));
+  }
+
+  function writeOverride(organizationId: string, key: string, enabled: boolean, meta?: FeatureChangeMeta): void {
+    features.set(`${organizationId}:${key}`, {
+      organizationId,
+      key,
+      enabled,
+      updatedAt: new Date(),
+      ...(meta?.actor ? { updatedBy: { ...meta.actor } } : {}),
+      ...(sanitizeFeatureChangeReason(meta?.reason) !== undefined ? { reason: sanitizeFeatureChangeReason(meta?.reason) } : {}),
+    });
   }
 
   function matchingFeatures(options?: { query?: string; enabledIn?: string }): FeatureDefinition[] {
     const query = options?.query?.trim().toLowerCase();
     const enabledIn = options?.enabledIn;
+    const effectiveKeys = enabledIn === undefined ? undefined : new Set(effectiveFor(enabledIn).filter((f) => f.enabled).map((f) => f.key));
     return [...featureDefinitions.values()].filter(
       (definition) =>
-        (enabledIn === undefined || (features.get(`${enabledIn}:${definition.key}`)?.enabled ?? false)) &&
+        (effectiveKeys === undefined || effectiveKeys.has(definition.key)) &&
         (!query || definition.key.toLowerCase().includes(query) || definition.name.toLowerCase().includes(query)),
     );
+  }
+
+  /** Organizations where `key` is effectively on, ordered by id — the in-memory twin of the SQL used by the adapters. */
+  function organizationsWithEffective(key: string): string[] {
+    // Organizations that exist, plus any that only have an override (the in-memory backend doesn't enforce the FK).
+    const known = new Set([...organizations.keys(), ...[...features.values()].map((f) => f.organizationId)]);
+    return [...known]
+      .filter((organizationId) => effectiveFor(organizationId).some((f) => f.key === key && f.enabled))
+      .sort();
   }
 
   const featureRepository: FeatureRepository = {
     async register(input: RegisterFeatureInput) {
       const name = sanitizeFeatureName(input.name);
       const key = resolveFeatureKey(name, input.key);
-      const definition: FeatureDefinition = { key, name, description: input.description };
+      assertValidFeatureParent(featureDefinitions, key, input.parentKey);
+      const definition: FeatureDefinition = {
+        key,
+        name,
+        description: input.description,
+        defaultEnabled: input.defaultEnabled === true,
+        ...(input.parentKey !== undefined ? { parentKey: input.parentKey } : {}),
+      };
       featureDefinitions.set(key, definition);
       return definition;
     },
@@ -718,48 +755,71 @@ export function createMemoryStorage(): UnioraStorage {
       return matchingFeatures(options).length;
     },
     async enabledKeys(organizationId, keys) {
-      return keys.filter((key) => features.get(`${organizationId}:${key}`)?.enabled ?? false);
+      const on = new Set(effectiveFor(organizationId).filter((f) => f.enabled).map((f) => f.key));
+      return keys.filter((key) => on.has(key));
     },
     async countEnabledByOrganization(organizationIds) {
-      return tally(
-        organizationIds,
-        [...features.values()].filter((f) => f.enabled).map((f) => f.organizationId),
+      return Object.fromEntries(
+        organizationIds.map((organizationId) => [organizationId, effectiveFor(organizationId).filter((f) => f.enabled).length]),
       );
     },
     async summarizeUsage(keys, sampleSize) {
-      const usage: Record<string, FeatureUsage> = Object.fromEntries(
-        keys.map((key) => [key, { enabledCount: 0, sampleOrganizationIds: [] as string[] }]),
-      );
-      const enabled = [...features.values()].filter((f) => f.enabled && f.key in usage).sort((a, b) => (a.organizationId < b.organizationId ? -1 : 1));
-      for (const feature of enabled) {
-        const entry = usage[feature.key]!;
-        entry.enabledCount += 1;
-        if (entry.sampleOrganizationIds.length < sampleSize) entry.sampleOrganizationIds.push(feature.organizationId);
+      const usage: Record<string, FeatureUsage> = {};
+      for (const key of keys) {
+        const enabledIn = featureDefinitions.has(key) ? organizationsWithEffective(key) : [];
+        usage[key] = { enabledCount: enabledIn.length, sampleOrganizationIds: enabledIn.slice(0, Math.max(0, sampleSize)) };
       }
       return usage;
     },
-    async enable(organizationId, key) {
+    async enable(organizationId, key, meta) {
       assertFeatureRegistered(key);
-      features.set(`${organizationId}:${key}`, { organizationId, key, enabled: true });
+      writeOverride(organizationId, key, true, meta);
     },
-    async disable(organizationId, key) {
+    async disable(organizationId, key, meta) {
       assertFeatureRegistered(key);
-      features.set(`${organizationId}:${key}`, { organizationId, key, enabled: false });
+      writeOverride(organizationId, key, false, meta);
+    },
+    async setMany(organizationId, changes, meta) {
+      const entries = Object.entries(changes);
+      for (const [key] of entries) assertFeatureRegistered(key);
+      for (const [key, enabled] of entries) writeOverride(organizationId, key, enabled, meta);
+    },
+    async disableEverywhere(key, meta) {
+      assertFeatureRegistered(key);
+      const definition = featureDefinitions.get(key)!;
+      let disabledOverrides = 0;
+      for (const feature of [...features.values()]) {
+        if (feature.key !== key || !feature.enabled) continue;
+        writeOverride(feature.organizationId, key, false, meta);
+        disabledOverrides += 1;
+      }
+      featureDefinitions.set(key, { ...definition, defaultEnabled: false });
+      return { disabledOverrides, defaultWasEnabled: definition.defaultEnabled };
     },
     async isEnabled(organizationId, key) {
-      return features.get(`${organizationId}:${key}`)?.enabled ?? false;
+      return effectiveFor(organizationId).some((f) => f.key === key && f.enabled);
+    },
+    async listEffective(organizationId, options) {
+      const all = effectiveFor(organizationId).sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+      return options?.keys ? all.filter((f) => options.keys!.includes(f.key)) : all;
     },
     async listByOrganization(organizationId) {
-      return [...features.values()].filter((f) => f.organizationId === organizationId);
+      return overridesOf(organizationId);
     },
     async unregister(key) {
       if (!featureDefinitions.has(key)) {
-        throw new FeatureError(`Feature "${key}" is not registered.`);
+        throw new FeatureError(`Feature "${key}" is not registered.`, "feature_unknown");
       }
-      const stillEnabled = [...features.values()].some((f) => f.key === key && f.enabled);
-      if (stillEnabled) {
+      if ([...featureDefinitions.values()].some((definition) => definition.parentKey === key)) {
+        throw new FeatureError(
+          `Cannot unregister feature "${key}": other features depend on it. Unregister or detach them first.`,
+          "feature_has_children",
+        );
+      }
+      if (organizationsWithEffective(key).length > 0) {
         throw new FeatureError(
           `Cannot unregister feature "${key}": it is still enabled for at least one organization. Disable it everywhere first.`,
+          "feature_in_use",
         );
       }
       featureDefinitions.delete(key);

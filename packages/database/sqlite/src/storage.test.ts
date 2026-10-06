@@ -27,6 +27,7 @@ const harness: StorageHarness = {
       delete from uniora_memberships;
       delete from uniora_roles;
       delete from uniora_features;
+      update uniora_feature_definitions set parent_key = null;
       delete from uniora_feature_definitions;
       delete from uniora_permissions;
       drop trigger if exists uniora_audit_logs_no_delete;

@@ -1,5 +1,6 @@
 import type { Identity } from "../identity/types.js";
 import { randomId } from "../invitation/token.js";
+import type { FeatureChangeMeta } from "../feature/types.js";
 import type { UnioraStorage, UnioraTransaction } from "./types.js";
 
 export interface AuditedStorageOptions {
@@ -29,6 +30,15 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
     metadata?: Record<string, unknown>,
   ): Promise<void> {
     await scope.auditLogs.record({ id: `audit:${randomId()}`, organizationId, actor, action, target, metadata });
+  }
+
+  /** The change's own context (who asked, why) as audit metadata — secrets never belong here. */
+  function changeMetadata(meta?: FeatureChangeMeta): Record<string, unknown> | undefined {
+    if (!meta) return undefined;
+    return {
+      ...(meta.reason ? { reason: meta.reason } : {}),
+      ...(meta.actor ? { requestedBy: `${meta.actor.provider}:${meta.actor.subject}` } : {}),
+    };
   }
 
   /** Runs `change` and its audit record atomically. */
@@ -160,15 +170,29 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
             await tx.features.unregister(key);
             await record(tx, "feature.unregistered", undefined, { type: "feature", id: key });
           }),
-        enable: (organizationId, key) =>
+        enable: (organizationId, key, meta) =>
           run(async (tx) => {
-            await tx.features.enable(organizationId, key);
-            await record(tx, "feature.enabled", organizationId, { type: "feature", id: key });
+            await tx.features.enable(organizationId, key, meta);
+            await record(tx, "feature.enabled", organizationId, { type: "feature", id: key }, changeMetadata(meta));
           }),
-        disable: (organizationId, key) =>
+        disable: (organizationId, key, meta) =>
           run(async (tx) => {
-            await tx.features.disable(organizationId, key);
-            await record(tx, "feature.disabled", organizationId, { type: "feature", id: key });
+            await tx.features.disable(organizationId, key, meta);
+            await record(tx, "feature.disabled", organizationId, { type: "feature", id: key }, changeMetadata(meta));
+          }),
+        setMany: (organizationId, changes, meta) =>
+          run(async (tx) => {
+            await tx.features.setMany(organizationId, changes, meta);
+            await record(tx, "feature.bulk_changed", organizationId, { type: "organization", id: organizationId }, {
+              changes,
+              ...changeMetadata(meta),
+            });
+          }),
+        disableEverywhere: (key, meta) =>
+          run(async (tx) => {
+            const result = await tx.features.disableEverywhere(key, meta);
+            await record(tx, "feature.disabled_everywhere", undefined, { type: "feature", id: key }, { ...result, ...changeMetadata(meta) });
+            return result;
           }),
       },
     };

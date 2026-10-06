@@ -8,7 +8,7 @@ describe("FeatureRepository", () => {
 
     const definition = await storage.features.register({ name: "Advanced Reports" });
 
-    expect(definition).toEqual({ key: "advanced_reports", name: "Advanced Reports", description: undefined });
+    expect(definition).toEqual({ key: "advanced_reports", name: "Advanced Reports", description: undefined, defaultEnabled: false });
   });
 
   it("register() acepta un key explícito distinto del derivado del nombre", async () => {
@@ -34,7 +34,7 @@ describe("FeatureRepository", () => {
     await storage.features.register({ key: "advanced_reports", name: "Advanced Reports v2", description: "..." });
 
     const [definition] = await storage.features.listCatalog();
-    expect(definition).toEqual({ key: "advanced_reports", name: "Advanced Reports v2", description: "..." });
+    expect(definition).toEqual({ key: "advanced_reports", name: "Advanced Reports v2", description: "...", defaultEnabled: false });
   });
 
   it("rechaza enable()/disable() de un key nunca registrado (fail-closed)", async () => {

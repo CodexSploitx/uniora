@@ -6,8 +6,6 @@ const COUNT_BY_ORGANIZATION = {
                 from uniora.memberships where organization_id = any($1::text[]) group by organization_id`,
   roles: `select organization_id, count(*)::text as count
           from uniora.roles where organization_id = any($1::text[]) group by organization_id`,
-  enabledFeatures: `select organization_id, count(*)::text as count
-                    from uniora.features where enabled and organization_id = any($1::text[]) group by organization_id`,
 } as const;
 
 /**
