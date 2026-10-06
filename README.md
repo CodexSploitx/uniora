@@ -35,7 +35,7 @@ Auth Provider                    UNIORA
 ## Why
 
 - **Provider-agnostic.** Swap Supabase for Clerk, or add Auth0 alongside it, without rewriting your authorization logic. `IdentityLinkRepository` even lets a user migrate providers without losing their org, roles or permissions.
-- **Your database, your rules.** No central UNIORA service holds your data. Everything lives in Postgres, under a dedicated `uniora.*` schema that won't collide with your app's own tables.
+- **Your database, your rules.** No central UNIORA service holds your data. Everything lives in Postgres (or SQLite, for local and single-node setups), under a dedicated `uniora.*` schema (`uniora_*` tables in SQLite) that won't collide with your app's own tables.
 - **Deny-by-default.** The `AuthorizationEngine` never grants access it can't confidently justify — unknown permission, missing membership, wrong organization: always `DENY`, never a silent fallback to `ALLOW`.
 - **Organizations can't be orphaned.** Every organization is born with a protected Owner, and `MembershipRepository` refuses to unassign the Owner role or delete a membership if it's the last one holding it — enforced with a real database constraint, not just application code.
 - **Organizations *and* entitlements.** Permissions answer "what can this user do"; features answer "what has this organization unlocked." Two different questions, modeled separately, so you don't have to fake one with the other.
@@ -45,7 +45,7 @@ Auth Provider                    UNIORA
 
 ```ts
 import { createAuthorizationEngine, createMemoryStorage } from "@uniora/core";
-// swap createMemoryStorage() for @uniora/postgres in production
+// swap createMemoryStorage() for @uniora/postgres (or @uniora/sqlite) in production
 
 const storage = createMemoryStorage();
 const uniora = createAuthorizationEngine(storage);
@@ -143,6 +143,7 @@ if (denied) return denied;
 | --- | --- |
 | [`@uniora/core`](packages/core) | Framework-independent domain model: Organizations (with a protected Owner role, created atomically), Custom Roles, Permissions, Features, Audit Logs, cross-provider Identity Linking, and the deny-by-default `AuthorizationEngine`. |
 | [`@uniora/postgres`](packages/database/postgres) | PostgreSQL storage adapter (dedicated `uniora.*` schema) + migrations. |
+| [`@uniora/sqlite`](packages/database/sqlite) | SQLite storage adapter over [`better-sqlite3`](https://github.com/WiseLibs/better-sqlite3) (`uniora_*` tables) + migrations. |
 | [`@uniora/supabase`](packages/adapters/supabase) | Identity adapter for Supabase Auth. |
 | [`@uniora/clerk`](packages/adapters/clerk) | Identity adapter for Clerk. |
 | [`@uniora/better-auth`](packages/adapters/better-auth) | Identity adapter for Better Auth. |
@@ -151,6 +152,31 @@ if (denied) return denied;
 | [`@uniora/next`](packages/next) | Next.js glue: request-scoped memoization (`react.cache()`) plus `assertCan`/`assertAccess`/`authorizeRoute` guards for Server Actions and Route Handlers. |
 | [`@uniora/cli`](packages/cli) | `npx uniora init / check / migrate / doctor / studio` — with a migration ledger, `--json` output and CI-friendly exit codes. |
 | [`@uniora/studio`](apps/studio) | UNIORA Studio: a local-first admin UI (Next.js + shadcn/ui + ReUI) to browse and manage organizations, members, roles, permissions, features and the audit log. Launched with `npx uniora studio`. |
+
+### Using SQLite
+
+`@uniora/sqlite` implements the same `UnioraStorage` as `@uniora/postgres` — and is held to the same behavioural test suite, including the concurrency and security regressions — for local development, tests, and small self-hosted or single-node apps.
+
+```bash
+npm install @uniora/sqlite better-sqlite3
+npm install -D @types/better-sqlite3   # TypeScript only
+```
+
+```ts
+import Database from "better-sqlite3";
+import { applyMigrations, createSqliteStorage } from "@uniora/sqlite";
+
+const db = new Database("app.db");
+db.pragma("journal_mode = WAL"); // recommended for a file shared by several processes
+applyMigrations(db);             // synchronous and idempotent — safe on every start
+const storage = createSqliteStorage(db);
+```
+
+Things worth knowing:
+
+- **Bring one connection per process.** The adapter serializes every operation on it and runs each multi-statement operation (last-Owner guard, identity linking, ...) in a `begin immediate` transaction, so another process on the same file waits its turn instead of racing it. Foreign keys are switched on — and verified — for the connection.
+- Timestamps are ISO-8601 text with millisecond precision, and `ILIKE`-style searches fold Unicode case, matching the Postgres adapter.
+- The CLI and Studio still target Postgres only; SQLite support there is not wired up yet.
 
 ## Getting started
 
@@ -166,7 +192,7 @@ cp .env.example .env        # set DATABASE_URL if you changed the defaults
 
 pnpm build       # build every package
 pnpm typecheck   # typecheck the whole monorepo
-pnpm test        # run every test suite, including real Postgres integration tests
+pnpm test        # run every test suite, including real Postgres and SQLite integration tests
 ```
 
 ## CLI
