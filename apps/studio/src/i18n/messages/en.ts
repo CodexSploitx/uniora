@@ -76,6 +76,10 @@ export const en = {
   "orgs.ownerUserId": "Owner user id",
   "orgs.ownerHint":
     "The owner is identified by the auth provider and user id your app already uses (e.g. supabase + the user's UUID).",
+  "orgs.rename": "Rename organization",
+  "orgs.renameDescription": "Change the display name. The slug (URL handle) stays the same.",
+  "orgs.renamedToast": "Organization renamed",
+  "orgs.renaming": "Renaming…",
   "orgs.creating": "Creating…",
   "orgs.create": "Create organization",
   "orgs.createdToast": "Organization created",
