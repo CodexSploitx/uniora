@@ -1,9 +1,11 @@
+import { UnioraError, inferErrorCode } from "../shared/errors.js";
+import type { IdentityLinkErrorCode } from "../shared/errors.js";
 import type { Identity } from "../identity/types.js";
 import type { IdentityLink } from "./types.js";
 
-export class IdentityLinkError extends Error {
-  constructor(message: string) {
-    super(message);
+export class IdentityLinkError extends UnioraError {
+  constructor(message: string, code?: IdentityLinkErrorCode) {
+    super(message, code ?? inferErrorCode("identity_link", message));
     this.name = "IdentityLinkError";
   }
 }

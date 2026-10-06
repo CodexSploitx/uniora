@@ -1,8 +1,10 @@
+import { UnioraError, inferErrorCode } from "../shared/errors.js";
+import type { PermissionErrorCode } from "../shared/errors.js";
 import type { Permission } from "./types.js";
 
-export class PermissionError extends Error {
-  constructor(message: string) {
-    super(message);
+export class PermissionError extends UnioraError {
+  constructor(message: string, code?: PermissionErrorCode) {
+    super(message, code ?? inferErrorCode("permission", message));
     this.name = "PermissionError";
   }
 }

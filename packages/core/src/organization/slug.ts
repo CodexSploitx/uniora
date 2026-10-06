@@ -1,8 +1,10 @@
+import { UnioraError, inferErrorCode } from "../shared/errors.js";
+import type { OrganizationErrorCode } from "../shared/errors.js";
 import { deriveSlug, matchesSlugPattern, MAX_SLUG_LENGTH } from "../shared/slug.js";
 
-export class OrganizationError extends Error {
-  constructor(message: string) {
-    super(message);
+export class OrganizationError extends UnioraError {
+  constructor(message: string, code?: OrganizationErrorCode) {
+    super(message, code ?? inferErrorCode("organization", message));
     this.name = "OrganizationError";
   }
 }
