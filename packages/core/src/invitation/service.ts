@@ -430,6 +430,7 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
               organizationId: invitation.organizationId,
               identity: input.identity,
               roleIds: usable.map((role) => role.id),
+              invitedBy: invitation.invitedBy,
             });
           }
 

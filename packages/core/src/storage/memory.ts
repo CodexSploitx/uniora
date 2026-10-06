@@ -3,9 +3,9 @@ import { sameIdentity } from "../identity/types.js";
 import type { Organization } from "../organization/types.js";
 import type { CreateOrganizationInput, OrganizationRepository } from "../organization/repository.js";
 import { OrganizationError, resolveOrganizationSlug, sanitizeOrganizationName } from "../organization/slug.js";
-import type { Membership } from "../membership/types.js";
+import type { Membership, MembershipStatus } from "../membership/types.js";
 import type { CreateMembershipInput, MembershipListing, MembershipRepository, SearchMembershipsOptions } from "../membership/repository.js";
-import { MembershipError } from "../membership/repository.js";
+import { MembershipError, sanitizeBlockReason } from "../membership/repository.js";
 import type { Role } from "../role/types.js";
 import type { CreateOwnerRoleInput, CreateRoleInput, RoleRepository, RoleSummary } from "../role/repository.js";
 import { RoleError } from "../role/repository.js";
@@ -236,12 +236,17 @@ export function createMemoryStorage(): UnioraStorage {
     return ![...memberships.values()].some((m) => m.id !== excludeMembershipId && m.roleIds.includes(roleId));
   }
 
-  function matchingMemberships(options?: { organizationId?: string; query?: string; identity?: Identity }): Membership[] {
+  function touch(membership: Membership): void {
+    Object.assign(membership, { updatedAt: new Date() });
+  }
+
+  function matchingMemberships(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus }): Membership[] {
     const query = options?.query?.trim().toLowerCase();
     return [...memberships.values()].filter(
       (m) =>
         (options?.organizationId === undefined || m.organizationId === options.organizationId) &&
         (options?.identity === undefined || sameIdentity(m.identity, options.identity)) &&
+        (options?.status === undefined || m.status === options.status) &&
         (!query || m.identity.subject.toLowerCase().includes(query) || m.identity.provider.toLowerCase().includes(query)),
     );
   }
@@ -312,11 +317,16 @@ export function createMemoryStorage(): UnioraStorage {
           );
         }
       }
+      const createdAt = input.createdAt ?? new Date();
       const membership: Membership = {
         id: input.id,
         organizationId: input.organizationId,
         identity: input.identity,
         roleIds,
+        status: "active",
+        createdAt,
+        updatedAt: createdAt,
+        ...(input.invitedBy ? { invitedBy: { ...input.invitedBy } } : {}),
       };
       memberships.set(membership.id, membership);
       return membership;
@@ -353,6 +363,10 @@ export function createMemoryStorage(): UnioraStorage {
           organizationId: m.organizationId,
           identity: m.identity,
           roleCount: held.length,
+          status: m.status,
+          createdAt: m.createdAt,
+          ...(m.invitedBy ? { invitedBy: m.invitedBy } : {}),
+          ...(m.lastActiveAt ? { lastActiveAt: m.lastActiveAt } : {}),
           roles: held.slice(0, options.rolesPerMember).map(toRoleSummary),
         };
       });
@@ -391,7 +405,10 @@ export function createMemoryStorage(): UnioraStorage {
           `Cannot assign the protected Owner role "${roleId}" via assignRole() — use assignOwnerRole() instead.`,
         );
       }
-      if (!membership.roleIds.includes(roleId)) membership.roleIds.push(roleId);
+      if (!membership.roleIds.includes(roleId)) {
+        membership.roleIds.push(roleId);
+        touch(membership);
+      }
     },
     async assignOwnerRole(membershipId, roleId) {
       const membership = memberships.get(membershipId);
@@ -406,7 +423,10 @@ export function createMemoryStorage(): UnioraStorage {
       if (!role.isOwnerRole) {
         throw new MembershipError(`Role "${roleId}" is not the protected Owner role — use assignRole() instead.`);
       }
-      if (!membership.roleIds.includes(roleId)) membership.roleIds.push(roleId);
+      if (!membership.roleIds.includes(roleId)) {
+        membership.roleIds.push(roleId);
+        touch(membership);
+      }
     },
     async unassignRole(membershipId, roleId) {
       const membership = memberships.get(membershipId);
@@ -429,6 +449,7 @@ export function createMemoryStorage(): UnioraStorage {
 
       const index = membership.roleIds.indexOf(roleId);
       membership.roleIds.splice(index, 1);
+      touch(membership);
     },
     async unassignOwnerRole(membershipId, roleId) {
       const membership = memberships.get(membershipId);
@@ -449,6 +470,42 @@ export function createMemoryStorage(): UnioraStorage {
 
       const index = membership.roleIds.indexOf(roleId);
       membership.roleIds.splice(index, 1);
+      touch(membership);
+    },
+    async block(membershipId, input) {
+      const membership = memberships.get(membershipId);
+      if (!membership) throw new MembershipError(`Membership not found: ${membershipId}`);
+      if (membership.status === "blocked") return membership;
+      // The Owner who is blocked must not be the only ACTIVE one left: the organization would have nobody who can act.
+      const ownerRoleIds = membership.roleIds.filter((roleId) => roles.get(roleId)?.isOwnerRole);
+      for (const roleId of ownerRoleIds) {
+        const otherActiveOwner = [...memberships.values()].some(
+          (other) => other.id !== membershipId && other.status === "active" && other.roleIds.includes(roleId),
+        );
+        if (!otherActiveOwner) {
+          throw new MembershipError("Cannot block the organization's last active Owner — every organization must keep at least one.", "last_owner");
+        }
+      }
+      const at = new Date();
+      Object.assign(membership, {
+        status: "blocked" as const,
+        updatedAt: at,
+        blocked: { at, by: { ...input.actor }, ...(sanitizeBlockReason(input.reason) !== undefined ? { reason: sanitizeBlockReason(input.reason) } : {}) },
+      });
+      return membership;
+    },
+    async unblock(membershipId, _input) {
+      const membership = memberships.get(membershipId);
+      if (!membership) throw new MembershipError(`Membership not found: ${membershipId}`);
+      if (membership.status === "active") return membership;
+      const { blocked: _blocked, ...rest } = membership;
+      memberships.set(membershipId, { ...rest, status: "active", updatedAt: new Date() });
+      return memberships.get(membershipId)!;
+    },
+    async recordActivity(membershipId, at = new Date()) {
+      const membership = memberships.get(membershipId);
+      if (!membership) return;
+      if (!membership.lastActiveAt || membership.lastActiveAt < at) Object.assign(membership, { lastActiveAt: at });
     },
     async delete(membershipId) {
       const membership = memberships.get(membershipId);

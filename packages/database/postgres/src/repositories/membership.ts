@@ -1,6 +1,16 @@
 import type { Pool } from "pg";
-import type { CreateMembershipInput, Identity, Membership, MembershipListing, MembershipRepository, SearchMembershipsOptions } from "@uniora/core";
-import { MembershipError } from "@uniora/core";
+import type {
+  BlockMembershipInput,
+  CreateMembershipInput,
+  Identity,
+  Membership,
+  MembershipListing,
+  MembershipRepository,
+  MembershipStatus,
+  SearchMembershipsOptions,
+  UnblockMembershipInput,
+} from "@uniora/core";
+import { MembershipError, sanitizeBlockReason } from "@uniora/core";
 import type { Queryable } from "../queryable.js";
 import { countByOrganization } from "../pg-counts.js";
 import { toLikePattern } from "../pg-like.js";
@@ -19,19 +29,55 @@ interface MembershipRow {
   provider: string;
   subject: string;
   role_ids: string[];
+  status: MembershipStatus;
+  created_at: Date;
+  updated_at: Date;
+  invited_by_provider: string | null;
+  invited_by_subject: string | null;
+  last_active_at: Date | null;
+  blocked_at: Date | null;
+  blocked_by_provider: string | null;
+  blocked_by_subject: string | null;
+  block_reason: string | null;
+}
+
+/** Columns of `uniora.memberships` a `Membership` needs, qualified with the alias `m`. */
+const MEMBERSHIP_COLUMNS = `m.id, m.organization_id, m.provider, m.subject, m.status, m.created_at, m.updated_at,
+  m.invited_by_provider, m.invited_by_subject, m.last_active_at,
+  m.blocked_at, m.blocked_by_provider, m.blocked_by_subject, m.block_reason`;
+
+function invitedByOf(row: Pick<MembershipRow, "invited_by_provider" | "invited_by_subject">): Identity | undefined {
+  return row.invited_by_provider !== null && row.invited_by_subject !== null
+    ? { provider: row.invited_by_provider, subject: row.invited_by_subject }
+    : undefined;
 }
 
 function toMembership(row: MembershipRow): Membership {
+  const invitedBy = invitedByOf(row);
   return {
     id: row.id,
     organizationId: row.organization_id,
     identity: { provider: row.provider, subject: row.subject },
     roleIds: row.role_ids,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    ...(invitedBy ? { invitedBy } : {}),
+    ...(row.last_active_at ? { lastActiveAt: row.last_active_at } : {}),
+    ...(row.status === "blocked" && row.blocked_at && row.blocked_by_provider !== null && row.blocked_by_subject !== null
+      ? {
+          blocked: {
+            at: row.blocked_at,
+            by: { provider: row.blocked_by_provider, subject: row.blocked_by_subject },
+            ...(row.block_reason !== null ? { reason: row.block_reason } : {}),
+          },
+        }
+      : {}),
   };
 }
 
 const SELECT_MEMBERSHIP_WITH_ROLES = `
-  select m.id, m.organization_id, m.provider, m.subject,
+  select ${MEMBERSHIP_COLUMNS},
          coalesce(array_agg(mr.role_id) filter (where mr.role_id is not null), '{}') as role_ids
   from uniora.memberships m
   left join uniora.membership_roles mr on mr.membership_id = m.id
@@ -95,13 +141,22 @@ async function performCreate(db: Queryable, input: CreateMembershipInput): Promi
   let result;
   try {
     result = await db.query(
-      `insert into uniora.memberships (id, organization_id, provider, subject)
-       select $1, $2, $3, $4
+      `insert into uniora.memberships (id, organization_id, provider, subject, invited_by_provider, invited_by_subject, created_at, updated_at)
+       select $1, $2, $3, $4, $5, $6, coalesce($7::timestamptz, date_trunc('milliseconds', now())), coalesce($7::timestamptz, date_trunc('milliseconds', now()))
        where not exists (
          select 1 from uniora.identity_links
          where from_provider = $3 and from_subject = $4
-       )`,
-      [input.id, input.organizationId, input.identity.provider, input.identity.subject],
+       )
+       returning created_at`,
+      [
+        input.id,
+        input.organizationId,
+        input.identity.provider,
+        input.identity.subject,
+        input.invitedBy?.provider ?? null,
+        input.invitedBy?.subject ?? null,
+        input.createdAt ?? null,
+      ],
     );
   } catch (error) {
     if (isUniqueViolation(error)) {
@@ -139,7 +194,22 @@ async function performCreate(db: Queryable, input: CreateMembershipInput): Promi
     );
   }
 
-  return { id: input.id, organizationId: input.organizationId, identity: input.identity, roleIds: [...roleIds] };
+  const createdAt = (result.rows[0] as { created_at: Date }).created_at;
+  return {
+    id: input.id,
+    organizationId: input.organizationId,
+    identity: input.identity,
+    roleIds: [...roleIds],
+    status: "active",
+    createdAt,
+    updatedAt: createdAt,
+    ...(input.invitedBy ? { invitedBy: input.invitedBy } : {}),
+  };
+}
+
+/** Bumps `updated_at` after a role change. Kept out of the concurrency-guarded statements on purpose. */
+async function touch(db: Queryable, membershipId: string): Promise<void> {
+  await db.query(`update uniora.memberships set updated_at = date_trunc('milliseconds', now()) where id = $1`, [membershipId]);
 }
 
 /**
@@ -151,7 +221,7 @@ async function performCreate(db: Queryable, input: CreateMembershipInput): Promi
  * `identity-link.ts`'s `link()` uses, needed for the same class of reason.
  */
 export function createMembershipRepository(db: Queryable, pool?: Pool): MembershipRepository {
-  return {
+  const repository: MembershipRepository = {
     async create(input: CreateMembershipInput) {
       if (!pool) return performCreate(db, input);
 
@@ -244,22 +314,25 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
       // then join/aggregate their roles — so the cost is one page of rows,
       // not "every matching member joined to its roles".
       const result = await db.query<MembershipRow>(
-        `select m.id, m.organization_id, m.provider, m.subject,
+        `select ${MEMBERSHIP_COLUMNS},
                 coalesce(array_agg(mr.role_id) filter (where mr.role_id is not null), '{}') as role_ids
          from (
-           select id, organization_id, provider, subject
+           select *
            from uniora.memberships
            where ($1::text is null or organization_id = $1)
              and ($2::text is null or provider ilike $2 or subject ilike $2)
              and ($3::text is null or id > $3)
              and ($5::text is null or (provider = $5 and subject = $6))
+             and ($7::text is null or status = $7)
            order by id asc
            limit $4
          ) m
          left join uniora.membership_roles mr on mr.membership_id = m.id
-         group by m.id, m.organization_id, m.provider, m.subject
+         group by m.id, m.organization_id, m.provider, m.subject, m.status, m.created_at, m.updated_at,
+                  m.invited_by_provider, m.invited_by_subject, m.last_active_at,
+                  m.blocked_at, m.blocked_by_provider, m.blocked_by_subject, m.block_reason
          order by m.id asc`,
-        [options?.organizationId ?? null, query ? toLikePattern(query) : null, options?.after ?? null, options?.limit ?? null, options?.identity?.provider ?? null, options?.identity?.subject ?? null],
+        [options?.organizationId ?? null, query ? toLikePattern(query) : null, options?.after ?? null, options?.limit ?? null, options?.identity?.provider ?? null, options?.identity?.subject ?? null, options?.status ?? null],
       );
       return result.rows.map(toMembership);
     },
@@ -271,6 +344,11 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
         organization_id: string;
         provider: string;
         subject: string;
+        status: MembershipStatus;
+        created_at: Date;
+        invited_by_provider: string | null;
+        invited_by_subject: string | null;
+        last_active_at: Date | null;
         role_count: number;
         roles: { id: string; organization_id: string; name: string; key: string; is_owner_role: boolean }[];
       }
@@ -278,7 +356,8 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
       // only a bounded preview (Owner first, then by name) — so a member with
       // hundreds of roles costs the same as one with three.
       const result = await db.query<ListingRow>(
-        `select m.id, m.organization_id, m.provider, m.subject,
+        `select m.id, m.organization_id, m.provider, m.subject, m.status, m.created_at,
+                m.invited_by_provider, m.invited_by_subject, m.last_active_at,
                 (select count(*) from uniora.membership_roles mr where mr.membership_id = m.id)::int as role_count,
                 coalesce((
                   select json_agg(json_build_object('id', p.id, 'organization_id', p.organization_id, 'name', p.name,
@@ -294,17 +373,18 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
                   ) p
                 ), '[]'::json) as roles
          from (
-           select id, organization_id, provider, subject
+           select id, organization_id, provider, subject, status, created_at, invited_by_provider, invited_by_subject, last_active_at
            from uniora.memberships
            where ($1::text is null or organization_id = $1)
              and ($2::text is null or provider ilike $2 or subject ilike $2)
              and ($3::text is null or id > $3)
              and ($6::text is null or (provider = $6 and subject = $7))
+             and ($8::text is null or status = $8)
            order by id asc
            limit $4
          ) m
          order by m.id asc`,
-        [options.organizationId ?? null, query ? toLikePattern(query) : null, options.after ?? null, options.limit ?? null, options.rolesPerMember, options.identity?.provider ?? null, options.identity?.subject ?? null],
+        [options.organizationId ?? null, query ? toLikePattern(query) : null, options.after ?? null, options.limit ?? null, options.rolesPerMember, options.identity?.provider ?? null, options.identity?.subject ?? null, options.status ?? null],
       );
       return result.rows.map(
         (row): MembershipListing => ({
@@ -312,6 +392,10 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
           organizationId: row.organization_id,
           identity: { provider: row.provider, subject: row.subject },
           roleCount: row.role_count,
+          status: row.status,
+          createdAt: row.created_at,
+          ...(invitedByOf(row) ? { invitedBy: invitedByOf(row)! } : {}),
+          ...(row.last_active_at ? { lastActiveAt: row.last_active_at } : {}),
           roles: row.roles.map((role) => ({
             id: role.id,
             organizationId: role.organization_id,
@@ -323,15 +407,16 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
       );
     },
 
-    async count(options?: { organizationId?: string; query?: string; identity?: Identity }) {
+    async count(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus }) {
       const query = options?.query?.trim();
       const result = await db.query<{ count: string }>(
         `select count(*)::text as count
          from uniora.memberships
          where ($1::text is null or organization_id = $1)
            and ($2::text is null or provider ilike $2 or subject ilike $2)
-           and ($3::text is null or (provider = $3 and subject = $4))`,
-        [options?.organizationId ?? null, query ? toLikePattern(query) : null, options?.identity?.provider ?? null, options?.identity?.subject ?? null],
+           and ($3::text is null or (provider = $3 and subject = $4))
+           and ($5::text is null or status = $5)`,
+        [options?.organizationId ?? null, query ? toLikePattern(query) : null, options?.identity?.provider ?? null, options?.identity?.subject ?? null, options?.status ?? null],
       );
       return Number(result.rows[0]!.count);
     },
@@ -399,7 +484,10 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
          on conflict do nothing`,
         [membershipId, roleId],
       );
-      if ((result.rowCount ?? 0) > 0) return; // newly assigned
+      if ((result.rowCount ?? 0) > 0) {
+        await touch(db, membershipId); // newly assigned
+        return;
+      }
 
       const alreadyAssigned = await db.query(
         `select 1 from uniora.membership_roles where membership_id = $1 and role_id = $2`,
@@ -435,7 +523,10 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
          on conflict do nothing`,
         [membershipId, roleId, roleRow.organization_id],
       );
-      if ((result.rowCount ?? 0) > 0) return;
+      if ((result.rowCount ?? 0) > 0) {
+        await touch(db, membershipId);
+        return;
+      }
 
       const alreadyAssigned = await db.query(
         `select 1 from uniora.membership_roles where membership_id = $1 and role_id = $2`,
@@ -468,7 +559,8 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
         );
       }
 
-      await db.query(`delete from uniora.membership_roles where membership_id = $1 and role_id = $2`, [membershipId, roleId]);
+      const removed = await db.query(`delete from uniora.membership_roles where membership_id = $1 and role_id = $2`, [membershipId, roleId]);
+      if ((removed.rowCount ?? 0) > 0) await touch(db, membershipId);
     },
 
     async unassignOwnerRole(membershipId: string, roleId: string) {
@@ -517,7 +609,10 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
            and (select count(*) from locked) > 1`,
         [membershipId, roleId],
       );
-      if ((result.rowCount ?? 0) > 0) return;
+      if ((result.rowCount ?? 0) > 0) {
+        await touch(db, membershipId);
+        return;
+      }
 
       const stillAssigned = await db.query(
         `select 1 from uniora.membership_roles where membership_id = $1 and role_id = $2`,
@@ -527,6 +622,66 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
 
       throw new MembershipError(
         "Cannot remove the organization's last Owner — every organization must keep at least one.",
+      );
+    },
+
+    async block(membershipId: string, input: BlockMembershipInput) {
+      // Same write-skew defence as `unassignOwnerRole`: lock every membership holding one of this member's Owner
+      // roles (ordered, so two concurrent blockers contend in the same order) BEFORE counting the ACTIVE ones, so
+      // two Owners blocking each other at the same instant can't leave nobody able to act.
+      await db.query(
+        `with owner_role_ids as (
+           select mr.role_id
+           from uniora.membership_roles mr
+           join uniora.roles r on r.id = mr.role_id
+           where mr.membership_id = $1 and r.is_owner_role
+         ),
+         locked as (
+           select mr.membership_id, mr.role_id, m.status
+           from uniora.membership_roles mr
+           join uniora.memberships m on m.id = mr.membership_id
+           where mr.role_id in (select role_id from owner_role_ids)
+           order by mr.role_id, mr.membership_id
+           for update of mr, m
+         )
+         update uniora.memberships m
+         set status = 'blocked', blocked_at = date_trunc('milliseconds', now()), blocked_by_provider = $2,
+             blocked_by_subject = $3, block_reason = $4, updated_at = date_trunc('milliseconds', now())
+         where m.id = $1 and m.status = 'active'
+           and not exists (
+             select 1 from owner_role_ids o
+             where (select count(*) from locked l where l.role_id = o.role_id and l.status = 'active' and l.membership_id <> $1) < 1
+           )
+         returning m.id`,
+        [membershipId, input.actor.provider, input.actor.subject, sanitizeBlockReason(input.reason) ?? null],
+      );
+      const current = await repository.findById(membershipId);
+      if (!current) throw new MembershipError(`Membership not found: ${membershipId}`);
+      if (current.status === "blocked") return current; // changed now, or was already blocked (idempotent)
+      throw new MembershipError(
+        "Cannot block the organization's last active Owner — every organization must keep at least one.",
+        "last_owner",
+      );
+    },
+
+    async unblock(membershipId: string, _input: UnblockMembershipInput) {
+      await db.query(
+        `update uniora.memberships
+         set status = 'active', blocked_at = null, blocked_by_provider = null, blocked_by_subject = null,
+             block_reason = null, updated_at = date_trunc('milliseconds', now())
+         where id = $1 and status = 'blocked'`,
+        [membershipId],
+      );
+      const current = await repository.findById(membershipId);
+      if (!current) throw new MembershipError(`Membership not found: ${membershipId}`);
+      return current;
+    },
+
+    async recordActivity(membershipId: string, at: Date = new Date()) {
+      await db.query(
+        `update uniora.memberships set last_active_at = $2
+         where id = $1 and (last_active_at is null or last_active_at < $2)`,
+        [membershipId, at],
       );
     },
 
@@ -573,4 +728,5 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
       throw new MembershipError(`Membership not found: ${membershipId}`);
     },
   };
+  return repository;
 }

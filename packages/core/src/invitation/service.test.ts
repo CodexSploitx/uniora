@@ -199,6 +199,7 @@ describe("accept", () => {
     expect(result.alreadyMember).toBe(false);
     expect(result.membership.roleIds.sort()).toEqual(["role-editor", "role-viewer"]);
     expect(result.invitation).toMatchObject({ status: "accepted", acceptedBy: invitee });
+    expect(result.membership).toMatchObject({ status: "active", invitedBy: owner });
     expect(await storage.memberships.findByIdentity("org-1", invitee)).not.toBeNull();
     expect((await storage.auditLogs.listByOrganization("org-1")).map((e) => e.action)).toContain("invitation.accepted");
   });

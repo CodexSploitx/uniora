@@ -119,7 +119,7 @@ async function applyOverrides(
 }
 
 export function createFeatureRepository(db: SqliteExecutor): FeatureRepository {
-  return {
+  const repository: FeatureRepository = {
     async register(input: RegisterFeatureInput) {
       const name = sanitizeFeatureName(input.name);
       const key = resolveFeatureKey(name, input.key);
@@ -169,7 +169,7 @@ export function createFeatureRepository(db: SqliteExecutor): FeatureRepository {
         );
         return Number(result.rows[0]!.count);
       }
-      return (await this.search({ query: options.query, enabledIn: options.enabledIn })).length;
+      return (await repository.search({ query: options.query, enabledIn: options.enabledIn })).length;
     },
 
     async enabledKeys(organizationId: string, keys: string[]) {
@@ -298,4 +298,5 @@ export function createFeatureRepository(db: SqliteExecutor): FeatureRepository {
       );
     },
   };
+  return repository;
 }

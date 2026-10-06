@@ -117,6 +117,8 @@ export function createAuthorizationEngine(
     if (!isWellFormedPermissionKey(input.permission)) return false;
     const membership = await storage.memberships.findByIdentity(input.organizationId, input.identity);
     if (!membership || membership.roleIds.length === 0) return false;
+    // A blocked member keeps their roles but is denied everything, Owner included.
+    if (membership.status !== "active") return false;
 
     const roles = (await storage.roles.findByIds(membership.roleIds)).filter(
       (role) => role.organizationId === input.organizationId,
@@ -188,7 +190,7 @@ export function createAuthorizationEngine(
       // anywhere (INV-002) and a legitimate member of a *different*
       // organization asking about this one (INV-001).
       const membership = await storage.memberships.findByIdentity(input.organizationId, input.identity);
-      if (!membership) return false;
+      if (!membership || membership.status !== "active") return false;
     }
 
     return true;
