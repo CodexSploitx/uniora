@@ -1,7 +1,7 @@
 {
   "name": "@uniora/cli",
   "version": "0.2.0",
-  "description": "CLI oficial de UNIORA (docs/PROYECT.md \u00a719): init/migrate/studio/check/doctor",
+  "description": "Official UNIORA CLI: init, check, migrate, doctor and studio",
   "license": "PolyForm-Shield-1.0.0",
   "keywords": [
     "uniora",

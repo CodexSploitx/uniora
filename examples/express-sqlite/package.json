@@ -1,0 +1,19 @@
+{
+  "name": "@uniora/example-express-sqlite",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Express + SQLite: organizations, roles, invitations and route guards in one file",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test src/app.test.js",
+    "typecheck": "echo \"plain JavaScript: nothing to typecheck\""
+  },
+  "dependencies": {
+    "@uniora/core": "workspace:^",
+    "@uniora/express": "workspace:^",
+    "@uniora/sqlite": "workspace:^",
+    "better-sqlite3": "^13.0.3",
+    "express": "^5.1.0"
+  }
+}

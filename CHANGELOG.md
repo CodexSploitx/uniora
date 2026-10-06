@@ -1,0 +1,25 @@
+# Changelog
+
+All notable changes to UNIORA. Packages are released in lockstep, so one version number covers all of them. The format follows [Keep a Changelog](https://keepachangelog.com/).
+
+## Unreleased
+
+### Added
+
+- **Invitations in Studio**: an *Invitations* tab per organization to invite, send again and revoke, with the delivery status and the link shown once (`UNIORA_INVITE_URL`; e-mail through `@uniora/mailer-smtp` when `UNIORA_SMTP_*` is set).
+- **Accept routes for invitations**: `invitationPreview` / `acceptInvitation` in `@uniora/express` and `previewInvitationRoute` / `acceptInvitationRoute` in `@uniora/next`, backed by `invitationErrorToHttp` in `@uniora/core` (one generic `400` for every way an accept can fail).
+- `transferOwnership` and `leaveOrganization` in `@uniora/core`: atomic, audited, and the last Owner can never leave.
+- `uniora doctor` validates `UNIORA_SMTP_*` (never connects, never prints credentials).
+- `examples/express-sqlite`: a runnable app with tests, and a README for every package.
+- `SECURITY.md`, `CONTRIBUTING.md`, `guides/hardening.md` and `guides/roadmap.md`.
+
+### Fixed
+
+- `docs/` was git-ignored, so the hardening guide linked from the README never shipped. It now lives in `guides/` (with the least-privilege SQL roles).
+- npm descriptions no longer point at a private local file.
+
+## 0.2.0
+
+- SQLite storage adapter, CLI and Studio support for SQLite.
+- `@uniora/express` route guards, organization renaming in Studio, invitations with `@uniora/mailer-smtp`.
+- Security hardening from the audit: append-only hash-chained audit log, fail-closed guards, Owner protection options, least-privilege roles, supply-chain controls in CI.

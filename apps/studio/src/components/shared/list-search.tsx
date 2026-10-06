@@ -32,10 +32,13 @@ export function ListSearch({ basePath, queryParam = "q", cursorParam = "after", 
   const { t } = useI18n();
   const router = useRouter();
   const [value, setValue] = useState(initialQuery);
-
-  useEffect(() => {
+  // Follow the URL when it changes underneath us (back/forward, "clear"): adjusting state during render
+  // instead of in an effect avoids a second, cascading render.
+  const [seenQuery, setSeenQuery] = useState(initialQuery);
+  if (seenQuery !== initialQuery) {
+    setSeenQuery(initialQuery);
     setValue(initialQuery);
-  }, [initialQuery]);
+  }
 
   useEffect(() => {
     const trimmed = value.trim();

@@ -69,6 +69,7 @@ jobs:
       # build antes de typecheck/test: los paquetes se consumen entre sí a través de dist/.
       - run: pnpm -r build
       - run: pnpm -r typecheck
+      - run: pnpm lint
       - run: pnpm -r test
 
   packages:
@@ -89,5 +90,7 @@ jobs:
       # build antes del ensayo: `publish` omite (sin correr su prepack) los paquetes cuya versión ya está en
       # npm, así que un paquete nuevo (p. ej. @uniora/sqlite) no encontraría el dist/ de @uniora/core.
       - run: pnpm -r build
+      # publint + Are The Types Wrong sobre cada librería: exports, tipos y archivos publicados coherentes.
+      - run: pnpm check:packages
       # Ensayo de publicación: arma (prepack = build fresco) y valida cada tarball sin subir nada.
       - run: pnpm -r publish --dry-run --no-git-checks
