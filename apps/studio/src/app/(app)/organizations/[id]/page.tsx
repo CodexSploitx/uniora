@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { MembersTable } from "@/components/organizations/members-table";
 import { OrgFeaturesList } from "@/components/organizations/org-features-list";
 import { OrgTabs, parseOrgTab } from "@/components/organizations/org-tabs";
+import { RenameOrganizationDialog } from "@/components/organizations/rename-organization-dialog";
 import { RolesTab } from "@/components/organizations/roles-tab";
 import { ActivityFeed } from "@/components/shared/activity-feed";
 import { CopyButton } from "@/components/shared/copy-button";
@@ -60,6 +61,7 @@ export default async function OrganizationPage(props: PageProps<"/organizations/
         description={t("orgs.created", { date: formatDate(organization.createdAt, locale) })}
         actions={
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            {!readOnly && <RenameOrganizationDialog organizationId={organization.id} name={organization.name} />}
             <Badge variant="outline">{organization.slug}</Badge>
             <span className="hidden font-mono sm:inline">{organization.id}</span>
             <CopyButton value={organization.id} label={t("orgs.copyId")} />

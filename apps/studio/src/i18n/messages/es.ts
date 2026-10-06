@@ -73,6 +73,10 @@ export const es: Record<keyof typeof en, string> = {
   "orgs.ownerUserId": "Id de usuario del owner",
   "orgs.ownerHint":
     "El owner se identifica con el proveedor de autenticación y el id de usuario que tu app ya utiliza (p. ej. supabase + el UUID del usuario).",
+  "orgs.rename": "Renombrar organización",
+  "orgs.renameDescription": "Cambia el nombre visible. El slug (identificador en URLs) no cambia.",
+  "orgs.renamedToast": "Organización renombrada",
+  "orgs.renaming": "Renombrando…",
   "orgs.creating": "Creando…",
   "orgs.create": "Crear organización",
   "orgs.createdToast": "Organización creada",

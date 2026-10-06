@@ -145,6 +145,13 @@ export function createMemoryStorage(): UnioraStorage {
     async findById(id) {
       return organizations.get(id) ?? null;
     },
+    async rename(id, name) {
+      const existing = organizations.get(id);
+      if (!existing) return null;
+      const updated: Organization = { ...existing, name: sanitizeOrganizationName(name) };
+      organizations.set(id, updated);
+      return updated;
+    },
     async findByIds(ids) {
       return ids.flatMap((id) => organizations.get(id) ?? []);
     },

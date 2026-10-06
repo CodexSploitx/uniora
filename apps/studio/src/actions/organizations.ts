@@ -1,7 +1,7 @@
 "use server";
 
-import { createOrganizationWithOwner, type UnioraStorage } from "@uniora/core";
-import { audit, mutate, newId, text, type ActionResult } from "@/actions/mutate";
+import { createOrganizationWithOwner, OrganizationError, type UnioraStorage } from "@uniora/core";
+import { audit, mutate, mutateInOrg, newId, text, type ActionResult } from "@/actions/mutate";
 
 export interface CreateOrganizationArgs {
   name: string;
@@ -36,4 +36,21 @@ export async function createOrganization(args: CreateOrganizationArgs): Promise<
     });
     return { id: organization.id };
   });
+}
+
+export async function renameOrganization(args: { organizationId: string; name: string }): Promise<ActionResult> {
+  return mutateInOrg(
+    args?.organizationId,
+    (organizationId) => ["/", "/organizations", `/organizations/${organizationId}`],
+    async (tx, organizationId) => {
+      const name = text(args?.name, "field.organizationName", { max: 255 });
+      const previous = await tx.organizations.findById(organizationId);
+      const updated = await tx.organizations.rename(organizationId, name);
+      if (!previous || !updated) throw new OrganizationError("Organization not found.");
+      await audit(tx, organizationId, "organization.renamed", { type: "organization", id: organizationId }, {
+        from: previous.name,
+        to: updated.name,
+      });
+    },
+  );
 }
