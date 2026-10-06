@@ -126,3 +126,18 @@ export interface OverviewData {
   roleCount: number;
   recentActivity: ActivityItem[];
 }
+
+export type InvitationViewStatus = "pending" | "accepted" | "revoked" | "expired";
+
+/** An invitation as Studio lists it. Never carries the token or the link (neither is stored). */
+export interface InvitationRow {
+  id: string;
+  email: string;
+  /** `pending` past its expiry is shown as `expired`. */
+  status: InvitationViewStatus;
+  roles: RoleRef[];
+  invitedBy: IdentityView;
+  createdAt: string;
+  expiresAt: string;
+  delivery: { status: "pending" | "sent" | "failed"; sends: number; lastError?: string };
+}

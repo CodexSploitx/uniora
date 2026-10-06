@@ -3,7 +3,8 @@
 const nextConfig = {
   // `pg` uses Node-only APIs (net/tls) and `better-sqlite3` is a native addon: neither can be bundled.
   // `@uniora/sqlite` stays external too, so it resolves `better-sqlite3` from its own location at runtime.
-  serverExternalPackages: ["pg", "better-sqlite3", "@uniora/sqlite"],
+  // `@uniora/mailer-smtp` is an optional peer (only needed to e-mail invitations), so it must resolve at runtime, not be bundled.
+  serverExternalPackages: ["pg", "better-sqlite3", "@uniora/sqlite", "@uniora/mailer-smtp", "nodemailer"],
   async headers() {
     return [
       {
