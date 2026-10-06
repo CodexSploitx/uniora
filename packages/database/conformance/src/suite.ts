@@ -1481,6 +1481,187 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
       });
     });
 
+    describe("support grants — acceso temporal de un operador que no es miembro", () => {
+      const ops = { provider: "supabase", subject: "ops" };
+      const other = { provider: "supabase", subject: "other-ops" };
+      const staff = { provider: "supabase", subject: "staff" };
+      // El reloj de la prueba: la expiración debe estar en el futuro real, así que se mide desde ahora.
+      const inHours = (hours: number) => new Date(Date.now() + hours * 3600 * 1000);
+
+      async function seed() {
+        const storage = harness.storage();
+        await createOrganizationWithOwner(storage, {
+          organizationId: "org-1",
+          organizationName: "Acme",
+          ownerRoleId: "role-owner",
+          membershipId: "m-owner",
+          ownerIdentity: identity,
+        });
+        await storage.organizations.create({ id: "org-2", name: "Otra" });
+        for (const key of ["reports.read", "reports.write", "billing.read"]) await storage.permissions.register({ key });
+        await storage.permissions.register({ key: "reports.admin", implies: ["reports.write"] });
+        await storage.features.register({ key: "agenda", name: "Agenda", defaultEnabled: true });
+        return storage;
+      }
+
+      const grant = (storage: Awaited<ReturnType<typeof seed>>, overrides: Record<string, unknown> = {}) =>
+        storage.supportGrants.create({
+          id: "g1",
+          organizationId: "org-1",
+          operator: ops,
+          grantedBy: identity,
+          reason: "  Ticket 4821: el cliente no ve sus informes  ",
+          permissions: ["reports.write", "reports.read", "reports.read"],
+          expiresAt: inHours(2),
+          ...overrides,
+        });
+
+      it("crea la concesión con permisos ordenados y sin duplicados, y la encuentra", async () => {
+        const storage = await seed();
+        const created = await grant(storage);
+        expect(created).toMatchObject({
+          id: "g1",
+          organizationId: "org-1",
+          operator: ops,
+          grantedBy: identity,
+          reason: "Ticket 4821: el cliente no ve sus informes",
+          permissions: ["reports.read", "reports.write"],
+        });
+        expect(created.revokedAt).toBeUndefined();
+        expect(await storage.supportGrants.findById("g1")).toMatchObject({ id: "g1", permissions: ["reports.read", "reports.write"] });
+        expect(await storage.supportGrants.findById("nope")).toBeNull();
+      });
+
+      it("rechaza lo que no es válido: motivo, permisos, expiración, organización, id repetido", async () => {
+        const storage = await seed();
+        await expect(grant(storage, { reason: "  " })).rejects.toMatchObject({ code: "support_grant_reason_invalid" });
+        await expect(grant(storage, { reason: "x".repeat(501) })).rejects.toMatchObject({ code: "support_grant_reason_invalid" });
+        await expect(grant(storage, { permissions: [] })).rejects.toMatchObject({ code: "support_grant_permission_invalid" });
+        await expect(grant(storage, { permissions: ["not a key"] })).rejects.toMatchObject({ code: "support_grant_permission_invalid" });
+        await expect(grant(storage, { permissions: ["reports.read", "never.registered"] })).rejects.toMatchObject({ code: "support_grant_permission_invalid" });
+        await expect(grant(storage, { expiresAt: inHours(-1) })).rejects.toMatchObject({ code: "support_grant_expiry_invalid" });
+        await expect(grant(storage, { expiresAt: inHours(31 * 24) })).rejects.toMatchObject({ code: "support_grant_expiry_invalid" });
+        await expect(grant(storage, { expiresAt: new Date("nope") })).rejects.toMatchObject({ code: "support_grant_expiry_invalid" });
+        await expect(grant(storage, { organizationId: "ghost" })).rejects.toMatchObject({ code: "support_grant_organization_unknown" });
+        await grant(storage);
+        await expect(grant(storage)).rejects.toMatchObject({ code: "support_grant_exists" });
+        expect(await storage.supportGrants.count()).toBe(1);
+      });
+
+      it("el operador sin membresía puede lo que la concesión dice (y lo que implica), nada más, y solo en esa organización", async () => {
+        const storage = await seed();
+        const engine = createAuthorizationEngine(storage);
+        const can = (who: typeof ops, organizationId: string, permission: string) => engine.can({ identity: who, organizationId, permission });
+        expect(await can(ops, "org-1", "reports.read")).toBe(false);
+        await grant(storage, { permissions: ["reports.admin"] });
+        expect(await can(ops, "org-1", "reports.admin")).toBe(true);
+        expect(await can(ops, "org-1", "reports.write")).toBe(true);
+        expect(await can(ops, "org-1", "reports.read")).toBe(false);
+        expect(await can(ops, "org-1", "billing.read")).toBe(false);
+        expect(await can(ops, "org-1", "anything.at_all")).toBe(false);
+        expect(await can(ops, "org-2", "reports.admin")).toBe(false);
+        expect(await can(other, "org-1", "reports.admin")).toBe(false);
+        expect(await engine.access.check({ identity: ops, organizationId: "org-1" })).toBe(true);
+        expect(await engine.access.check({ identity: ops, organizationId: "org-1", feature: "agenda" })).toBe(true);
+        expect(await engine.access.check({ identity: ops, organizationId: "org-1", permission: "reports.write", feature: "agenda" })).toBe(true);
+        expect(await engine.access.check({ identity: ops, organizationId: "org-2" })).toBe(false);
+        expect(await engine.access.check({ identity: other, organizationId: "org-1" })).toBe(false);
+      });
+
+      it("deja de valer al revocarla (idempotente), al expirar, y no sobrevive a una organización suspendida", async () => {
+        const storage = await seed();
+        const engine = createAuthorizationEngine(storage);
+        const can = () => engine.can({ identity: ops, organizationId: "org-1", permission: "reports.read" });
+        await grant(storage, { id: "g-short", expiresAt: new Date(Date.now() + 400) });
+        await grant(storage);
+        expect(await can()).toBe(true);
+        await storage.organizations.setStatus("org-1", { status: "suspended", actor: identity });
+        expect(await can()).toBe(false);
+        expect(await engine.access.check({ identity: ops, organizationId: "org-1" })).toBe(false);
+        await storage.organizations.setStatus("org-1", { status: "active", actor: identity });
+        expect(await can()).toBe(true);
+
+        const revoked = await storage.supportGrants.revoke("g1", { by: identity });
+        expect(revoked).toMatchObject({ id: "g1", revokedBy: identity });
+        expect(revoked?.revokedAt).toBeInstanceOf(Date);
+        const again = await storage.supportGrants.revoke("g1", { by: staff });
+        expect(again?.revokedBy).toEqual(identity);
+        expect(await storage.supportGrants.revoke("nope", { by: identity })).toBeNull();
+        await new Promise((resolve) => setTimeout(resolve, 450));
+        expect(await can()).toBe(false);
+      });
+
+      it("un miembro bloqueado no se salta el bloqueo con una concesión; un miembro normal suma lo suyo y lo concedido", async () => {
+        const storage = await seed();
+        await storage.roles.create({ id: "r-staff", organizationId: "org-1", name: "Staff", permissionKeys: ["reports.read"] });
+        await storage.memberships.create({ id: "m-staff", organizationId: "org-1", identity: staff, roleIds: ["r-staff"] });
+        await grant(storage, { id: "g-staff", operator: staff, permissions: ["billing.read"] });
+        const engine = createAuthorizationEngine(storage);
+        const can = (permission: string) => engine.can({ identity: staff, organizationId: "org-1", permission });
+        expect(await can("reports.read")).toBe(true);
+        expect(await can("billing.read")).toBe(true);
+        await storage.memberships.block("m-staff", { actor: identity, reason: "test" });
+        expect(await can("reports.read")).toBe(false);
+        expect(await can("billing.read")).toBe(false);
+        expect(await engine.access.check({ identity: staff, organizationId: "org-1" })).toBe(false);
+      });
+
+      it("search y count filtran por organización, operador y estado, con cursor por id", async () => {
+        const storage = await seed();
+        await grant(storage, { id: "g1" });
+        await grant(storage, { id: "g2", operator: other });
+        await grant(storage, { id: "g3", organizationId: "org-2" });
+        await grant(storage, { id: "g4", expiresAt: new Date(Date.now() + 300) });
+        await storage.supportGrants.revoke("g2", { by: identity });
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        const ids = async (options: Record<string, unknown>) => (await storage.supportGrants.search(options)).map((entry) => entry.id);
+        expect(await ids({})).toEqual(["g1", "g2", "g3", "g4"]);
+        expect(await ids({ organizationId: "org-2" })).toEqual(["g3"]);
+        expect(await ids({ operator: other })).toEqual(["g2"]);
+        expect(await ids({ status: "active" })).toEqual(["g1", "g3"]);
+        expect(await ids({ status: "expired" })).toEqual(["g4"]);
+        expect(await ids({ status: "revoked" })).toEqual(["g2"]);
+        expect(await ids({ limit: 2 })).toEqual(["g1", "g2"]);
+        expect(await ids({ limit: 2, after: "g2" })).toEqual(["g3", "g4"]);
+        expect(await storage.supportGrants.count({ status: "active", organizationId: "org-1" })).toBe(1);
+      });
+
+      it("activePermissions une las concesiones activas de las identidades dadas en esa organización", async () => {
+        const storage = await seed();
+        await grant(storage, { id: "g1", permissions: ["reports.read"] });
+        await grant(storage, { id: "g2", operator: other, permissions: ["billing.read"] });
+        await grant(storage, { id: "g3", organizationId: "org-2", permissions: ["reports.write"] });
+        const { supportGrants } = storage;
+        expect(await supportGrants.activePermissions("org-1", [ops])).toEqual(["reports.read"]);
+        expect(await supportGrants.activePermissions("org-1", [ops, other])).toEqual(["billing.read", "reports.read"]);
+        expect(await supportGrants.activePermissions("org-1", [staff])).toEqual([]);
+        expect(await supportGrants.activePermissions("org-1", [])).toEqual([]);
+        expect(await supportGrants.activePermissions("org-1", [ops], new Date(Date.now() + 3 * 3600 * 1000))).toEqual([]);
+      });
+
+      it("una identidad enlazada usa la concesión de su identidad destino", async () => {
+        const storage = await seed();
+        const alias = { provider: "clerk", subject: "ops-alias" };
+        await storage.identityLinks.link({ from: alias, to: ops, actor: identity });
+        await grant(storage, { permissions: ["reports.read"] });
+        const engine = createAuthorizationEngine(storage);
+        expect(await engine.can({ identity: alias, organizationId: "org-1", permission: "reports.read" })).toBe(true);
+      });
+
+      it("un storage auditado deja rastro al crear y al revocar (una sola vez)", async () => {
+        const raw = await seed();
+        const audited = createAuditedStorage(raw, { actor: identity });
+        await audited.supportGrants.create({
+          id: "g-a", organizationId: "org-1", operator: ops, grantedBy: identity, reason: "ticket 7", permissions: ["reports.read"], expiresAt: inHours(1),
+        });
+        await audited.supportGrants.revoke("g-a", { by: identity });
+        await audited.supportGrants.revoke("g-a", { by: identity });
+        const entries = await raw.auditLogs.search({ actionPrefix: "support_grant." });
+        expect(entries.map((entry) => entry.action).sort()).toEqual(["support_grant.created", "support_grant.revoked"]);
+        expect(entries.find((entry) => entry.action === "support_grant.created")?.metadata).toMatchObject({ operator: ops, permissions: ["reports.read"], reason: "ticket 7" });
+      });
+    });
+
     describe("audit log — search por acción, actor, objetivo y rango; actor obligatorio", () => {
       const ana = { provider: "supabase", subject: "ana" };
       const luis = { provider: "supabase", subject: "luis" };

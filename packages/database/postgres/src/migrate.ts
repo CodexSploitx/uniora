@@ -27,6 +27,7 @@ import { MIGRATION_0024_ROLE_SYSTEM_DESCRIPTION } from "./migrations/0024_role_s
 import { MIGRATION_0025_PERMISSION_GROUPS_IMPLICATIONS } from "./migrations/0025_permission_groups_implications.js";
 import { MIGRATION_0026_OUTBOX } from "./migrations/0026_outbox.js";
 import { MIGRATION_0027_ENTITLEMENTS } from "./migrations/0027_entitlements.js";
+import { MIGRATION_0028_SUPPORT_GRANTS } from "./migrations/0028_support_grants.js";
 
 interface Migration {
   readonly id: string;
@@ -62,6 +63,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0025_permission_groups_implications", sql: MIGRATION_0025_PERMISSION_GROUPS_IMPLICATIONS },
   { id: "0026_outbox", sql: MIGRATION_0026_OUTBOX },
   { id: "0027_entitlements", sql: MIGRATION_0027_ENTITLEMENTS },
+  { id: "0028_support_grants", sql: MIGRATION_0028_SUPPORT_GRANTS },
 ];
 
 /**
