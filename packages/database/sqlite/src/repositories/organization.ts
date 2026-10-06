@@ -51,6 +51,15 @@ export function createOrganizationRepository(db: SqliteExecutor): OrganizationRe
       return result.rows[0] ? toOrganization(result.rows[0]) : null;
     },
 
+    async rename(id: string, name: string) {
+      const sanitized = sanitizeOrganizationName(name);
+      const result = await db.query<OrganizationRow>(
+        `update uniora_organizations set name = ?2 where id = ?1 returning id, name, slug, created_at`,
+        [id, sanitized],
+      );
+      return result.rows[0] ? toOrganization(result.rows[0]) : null;
+    },
+
     async findByIds(ids: string[]) {
       if (ids.length === 0) return [];
       const result = await db.query<OrganizationRow>(

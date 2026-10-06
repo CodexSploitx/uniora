@@ -28,6 +28,16 @@ export interface SearchOrganizationsOptions {
 export interface OrganizationRepository {
   create(input: CreateOrganizationInput): Promise<Organization>;
   findById(id: string): Promise<Organization | null>;
+  /**
+   * Changes the display `name` of an existing organization and returns the
+   * updated record, or `null` if no organization has that id. The name is
+   * sanitized like on `create` (`OrganizationError` if empty/oversized).
+   * The `slug` is deliberately left untouched — it is a URL handle that
+   * other systems may have stored, so renaming never breaks existing links.
+   * Authorization is the caller's job (the protected Owner role passes
+   * every permission check).
+   */
+  rename(id: string, name: string): Promise<Organization | null>;
   /** Batch lookup — unknown ids are simply absent from the result (no error, no ordering guarantee). */
   findByIds(ids: string[]): Promise<Organization[]>;
   /**

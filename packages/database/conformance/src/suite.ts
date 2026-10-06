@@ -47,6 +47,18 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
       expect(await storage.organizations.list()).toHaveLength(1);
     });
 
+    it("renombra una organización sin tocar su slug, sanitiza el nombre y devuelve null si no existe", async () => {
+      const storage = harness.storage();
+      await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+
+      const renamed = await storage.organizations.rename("org-1", "  Acme   Global ");
+      expect(renamed).toMatchObject({ id: "org-1", name: "Acme Global", slug: "acme-motors" });
+      expect((await storage.organizations.findById("org-1"))?.name).toBe("Acme Global");
+
+      await expect(storage.organizations.rename("org-1", "   ")).rejects.toThrow(OrganizationError);
+      expect(await storage.organizations.rename("missing", "Nope")).toBeNull();
+    });
+
     it("rechaza un slug duplicado (constraint real) y distingue el mensaje de un id duplicado", async () => {
       const storage = harness.storage();
       await storage.organizations.create({ id: "org-1", name: "Acme Motors" });

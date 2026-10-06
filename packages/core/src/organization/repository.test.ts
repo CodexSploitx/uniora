@@ -17,6 +17,18 @@ describe("OrganizationRepository", () => {
     expect(org.slug).toBe("acme");
   });
 
+  it("renombra una organización conservando el slug", async () => {
+    const storage = createMemoryStorage();
+    await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+
+    const renamed = await storage.organizations.rename("org-1", "  Acme   Global ");
+
+    expect(renamed).toMatchObject({ id: "org-1", name: "Acme Global", slug: "acme-motors" });
+    expect((await storage.organizations.findById("org-1"))?.name).toBe("Acme Global");
+    await expect(storage.organizations.rename("org-1", "  ")).rejects.toThrow(OrganizationError);
+    expect(await storage.organizations.rename("missing", "Nope")).toBeNull();
+  });
+
   it("rechaza un nombre vacío", async () => {
     const storage = createMemoryStorage();
     await expect(storage.organizations.create({ id: "org-1", name: "   " })).rejects.toThrow(OrganizationError);
