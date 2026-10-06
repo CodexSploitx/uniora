@@ -269,7 +269,7 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
   // concurrent calls all see "under the limit" and all succeed (audit F-06). This serializes them
   // in-process; across several processes the check still runs inside the same database transaction
   // as the insert, but only a serializable isolation level (or a database-side counter) closes the
-  // window completely — see docs/hardening.md.
+  // window completely — see guides/hardening.md.
   let inviteQueue: Promise<unknown> = Promise.resolve();
   function serialized<T>(work: () => Promise<T>): Promise<T> {
     const run = inviteQueue.then(work, work);

@@ -1,7 +1,7 @@
 {
   "name": "@uniora/cli",
   "version": "0.2.0",
-  "description": "CLI oficial de UNIORA (docs/PROYECT.md §19): init/migrate/studio/check/doctor",
+  "description": "CLI oficial de UNIORA (docs/PROYECT.md \u00a719): init/migrate/studio/check/doctor",
   "license": "PolyForm-Shield-1.0.0",
   "keywords": [
     "uniora",
@@ -56,6 +56,15 @@
     "@types/better-sqlite3": "^9.6.0",
     "@types/pg": "^8.11.10",
     "typescript": "^5.6.3",
-    "vitest": "^2.1.4"
+    "vitest": "^2.1.4",
+    "@uniora/mailer-smtp": "workspace:^"
+  },
+  "peerDependencies": {
+    "@uniora/mailer-smtp": "workspace:^"
+  },
+  "peerDependenciesMeta": {
+    "@uniora/mailer-smtp": {
+      "optional": true
+    }
   }
 }

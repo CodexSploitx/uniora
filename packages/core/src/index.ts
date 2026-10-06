@@ -86,6 +86,8 @@ export type {
   InviteResult,
 } from "./invitation/service.js";
 export { createInvitationService, normalizeInvitationEmail } from "./invitation/service.js";
+export type { InvitationHttpError } from "./invitation/http.js";
+export { invitationErrorToHttp } from "./invitation/http.js";
 export { generateInvitationToken, hashInvitationToken, INVITATION_TOKEN_PREFIX } from "./invitation/token.js";
 
 export type { UnioraStorage, UnioraTransaction } from "./storage/types.js";

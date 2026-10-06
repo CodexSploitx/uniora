@@ -5,7 +5,47 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { applyMigrations } from "@uniora/postgres";
 import pg from "pg";
 import { ensureDatabase, resetUnioraSchema, testDatabaseUrl } from "../test-database.js";
-import { checkGitignore, checkNodeRuntime, checkStudio, runDoctor } from "./doctor.js";
+import { checkGitignore, checkNodeRuntime, checkSmtp, checkStudio, runDoctor } from "./doctor.js";
+
+describe("checkSmtp", () => {
+  const valid = {
+    UNIORA_SMTP_HOST: "smtp.example.com",
+    UNIORA_SMTP_PORT: "587",
+    UNIORA_SMTP_FROM: "Acme <no-reply@example.com>",
+    UNIORA_SMTP_USER: "mailer-user",
+    UNIORA_SMTP_PASS: "s3cret-pass",
+  };
+
+  it("es opcional: sin variables UNIORA_SMTP_* reporta ok", async () => {
+    expect(await checkSmtp({ PATH: "/bin" })).toMatchObject({ severity: "ok" });
+  });
+
+  it("valida la configuración y no imprime credenciales", async () => {
+    const result = await checkSmtp(valid);
+    expect(result).toMatchObject({ severity: "ok" });
+    expect(result.message).toContain("smtp.example.com:587");
+    expect(result.message).not.toContain("s3cret-pass");
+    expect(result.message).not.toContain("mailer-user");
+  });
+
+  it("falla con una configuración inválida y lista el problema", async () => {
+    const result = await checkSmtp({ UNIORA_SMTP_HOST: "smtp.example.com" });
+    expect(result.severity).toBe("fail");
+    expect(result.message).toContain("UNIORA_SMTP_FROM");
+  });
+
+  it("avisa si se desactiva la verificación del certificado o el cifrado", async () => {
+    expect(await checkSmtp({ ...valid, UNIORA_SMTP_TLS_REJECT_UNAUTHORIZED: "false" })).toMatchObject({ severity: "warn" });
+    expect(await checkSmtp({ ...valid, UNIORA_SMTP_REQUIRE_TLS: "false" })).toMatchObject({ severity: "warn" });
+  });
+
+  it("avisa si el paquete del mailer no está instalado", async () => {
+    const result = await checkSmtp(valid, async () => {
+      throw new Error("Cannot find package");
+    });
+    expect(result).toMatchObject({ severity: "warn" });
+  });
+});
 
 describe("checkNodeRuntime", () => {
   it("reporta ok en el runtime actual (expone process.loadEnvFile, ya usado en todo el paquete)", () => {

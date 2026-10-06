@@ -131,11 +131,49 @@ export function checkStudio(): CheckResult {
   }
 }
 
+type SmtpModule = { loadSmtpConfig(env: Record<string, string | undefined>): { host: string; port: number; secure: boolean; requireTLS: boolean; rejectUnauthorized: boolean } };
+
+/**
+ * Configuración SMTP de las invitaciones (`UNIORA_SMTP_*`). Es opcional: sin ninguna variable las
+ * invitaciones se crean igual y el enlace se entrega por otro medio. Solo valida la configuración
+ * (no abre conexiones) y nunca imprime usuario ni contraseña.
+ */
+export async function checkSmtp(
+  env: Record<string, string | undefined> = process.env,
+  load: () => Promise<SmtpModule> = () => import("@uniora/mailer-smtp") as Promise<SmtpModule>,
+): Promise<CheckResult> {
+  const name = "SMTP (invitaciones)";
+  if (!Object.keys(env).some((key) => key.startsWith("UNIORA_SMTP_") && env[key]?.trim())) {
+    return { name, severity: "ok", message: "no configurado (opcional: sin él las invitaciones no se envían por e-mail)" };
+  }
+
+  let mailer: SmtpModule;
+  try {
+    mailer = await load();
+  } catch {
+    return { name, severity: "warn", message: 'hay variables UNIORA_SMTP_* pero falta el paquete "@uniora/mailer-smtp". Instálalo para enviar invitaciones.' };
+  }
+
+  try {
+    const config = mailer.loadSmtpConfig(env);
+    const tls = config.secure ? "TLS implícito" : config.requireTLS ? "STARTTLS obligatorio" : "STARTTLS opcional";
+    if (!config.rejectUnauthorized) {
+      return { name, severity: "warn", message: `${config.host}:${config.port} (${tls}), pero UNIORA_SMTP_TLS_REJECT_UNAUTHORIZED=false desactiva la verificación del certificado.` };
+    }
+    if (!config.secure && !config.requireTLS) {
+      return { name, severity: "warn", message: `${config.host}:${config.port} permite enviar sin cifrar (UNIORA_SMTP_REQUIRE_TLS=false).` };
+    }
+    return { name, severity: "ok", message: `${config.host}:${config.port} (${tls}, certificado verificado)` };
+  } catch (error) {
+    return { name, severity: "fail", message: error instanceof Error ? error.message.replace(/\s*\n\s*/g, " ") : String(error) };
+  }
+}
+
 /**
  * `npx uniora doctor` (docs/PROYECT.md §19): diagnóstico de solo lectura,
  * más profundo que `check`: runtime de Node, higiene de `.gitignore`,
  * configuración, conexión, versión del motor (PostgreSQL o SQLite), estado de las migraciones,
- * invariante de owners y disponibilidad de Studio. Nunca modifica nada.
+ * invariante de owners, SMTP de las invitaciones y disponibilidad de Studio. Nunca modifica nada.
  */
 export async function runDoctor(cwd: string = process.cwd(), options: CommonOptions = {}): Promise<void> {
   const checks: CheckResult[] = [checkNodeRuntime(), checkGitignore(cwd, options.envName)];
@@ -155,6 +193,7 @@ export async function runDoctor(cwd: string = process.cwd(), options: CommonOpti
   if (config) {
     checks.push(...(await checkDatabase(config, cwd)));
   }
+  checks.push(await checkSmtp());
   checks.push(checkStudio());
 
   emit({ command: "doctor", checks }, options.json === true);
