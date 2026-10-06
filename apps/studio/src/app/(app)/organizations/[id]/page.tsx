@@ -1,6 +1,7 @@
 import { IconArrowRight, IconBuildingSkyscraper } from "@tabler/icons-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { InvitationsTab, type InvitationMailKey } from "@/components/organizations/invitations-tab";
 import { MembersTable } from "@/components/organizations/members-table";
 import { OrgFeaturesList } from "@/components/organizations/org-features-list";
 import { OrgTabs, parseOrgTab } from "@/components/organizations/org-tabs";
@@ -18,10 +19,12 @@ import {
   getOrgActivityPage,
   getOrgFeaturesPage,
   getOrgHeader,
+  getOrgInvitationsPage,
   getOrgMembersPage,
   getOrgRolesPage,
   getRolePermissionsPage,
 } from "@/lib/queries";
+import { getInvitationSetup, type MailStatus } from "@/lib/invitations";
 import { getDefaultAuthProvider, isReadOnly } from "@/lib/session";
 
 /** Reads one query-string value (the first, if repeated) as a plain string. */
@@ -96,6 +99,9 @@ export default async function OrganizationPage(props: PageProps<"/organizations/
           after={after}
           enabledOnly={param(searchParams.show) === "enabled"}
         />
+      )}
+      {tab === "invitations" && (
+        <InvitationsSection organizationId={organization.id} orgPath={orgPath} readOnly={readOnly} after={after} />
       )}
       {tab === "activity" && (
         <ActivitySection organizationId={organization.id} organizationName={organization.name} orgPath={orgPath} after={after} />
@@ -182,6 +188,27 @@ async function FeaturesSection(props: { organizationId: string; orgPath: string;
       enabledOnly={props.enabledOnly}
       nextCursor={page.nextCursor}
       readOnly={props.readOnly}
+    />
+  );
+}
+
+const MAIL_KEYS: Record<MailStatus, InvitationMailKey> = {
+  sending: "invitations.mailSending",
+  "no-smtp": "invitations.mailNoSmtp",
+  "package-missing": "invitations.mailPackageMissing",
+  "invalid-smtp": "invitations.mailInvalid",
+};
+
+async function InvitationsSection({ organizationId, orgPath, readOnly, after }: { organizationId: string; orgPath: string; readOnly: boolean; after?: string }) {
+  const [page, setup] = await Promise.all([getOrgInvitationsPage(organizationId, { cursor: after }), getInvitationSetup()]);
+  return (
+    <InvitationsTab
+      organizationId={organizationId}
+      invitations={page.items}
+      nextHref={page.nextCursor ? tabHref(orgPath, "invitations", { after: page.nextCursor }) : null}
+      readOnly={readOnly}
+      inviteConfigured={setup.service !== null}
+      mailKey={MAIL_KEYS[setup.mail]}
     />
   );
 }

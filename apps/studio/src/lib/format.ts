@@ -60,6 +60,20 @@ export function describeActivity(
       return { title: t("activity.featureEnabled"), detail: item.target?.id, tone: "success" };
     case "feature.disabled":
       return { title: t("activity.featureDisabled"), detail: item.target?.id, tone: "warning" };
+    case "invitation.created":
+      return { title: t("activity.invitationCreated"), tone: "success" };
+    case "invitation.resent":
+      return { title: t("activity.invitationResent"), tone: "info" };
+    case "invitation.revoked":
+      return { title: t("activity.invitationRevoked"), tone: "warning" };
+    case "invitation.accepted":
+      return { title: t("activity.invitationAccepted"), tone: "success" };
+    case "invitation.delivery_failed":
+      return { title: t("activity.invitationDeliveryFailed"), detail: meta(item, "error"), tone: "warning" };
+    case "organization.ownership_transferred":
+      return { title: t("activity.ownershipTransferred"), tone: "warning" };
+    case "membership.left":
+      return { title: t("activity.memberLeft"), detail: who, tone: "warning" };
     case "identity_link.created": {
       // Global entry (docs/security-pentest-2026-09-24.md Hallazgo 5) — no
       // `role`/`identity` string metadata like the others, just the two

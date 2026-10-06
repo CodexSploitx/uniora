@@ -1,7 +1,7 @@
 {
   "name": "@uniora/supabase",
   "version": "0.2.0",
-  "description": "Supabase Auth adapter for @uniora/core — traduce la sesión de Supabase a Identity (docs/PROYECT.md §13-14)",
+  "description": "Supabase Auth adapter for @uniora/core: turns a Supabase session into an Identity",
   "license": "PolyForm-Shield-1.0.0",
   "keywords": [
     "uniora",

@@ -5,6 +5,7 @@ import { requireSession } from "@/lib/session";
 import type {
   ActivityItem,
   FeatureView,
+  InvitationRow,
   MemberHeader,
   MemberPermissionRow,
   MemberRow,
@@ -184,6 +185,7 @@ export async function getOverview(organizationLimit: number): Promise<OverviewDa
 
 const MEMBERS_PAGE_SIZE = 25;
 const ROLES_PAGE_SIZE = 20;
+const INVITATIONS_PAGE_SIZE = 20;
 const ROLE_PERMISSIONS_PAGE_SIZE = 30;
 const ORG_FEATURES_PAGE_SIZE = 25;
 const ORG_ACTIVITY_PAGE_SIZE = 25;
@@ -777,5 +779,37 @@ export async function getFeaturesPage(options?: { query?: string; cursor?: strin
     nextCursor: hasMore ? page[page.length - 1]!.key : null,
     total,
     totalOrganizations,
+  };
+}
+
+export interface OrgInvitationsPage {
+  items: InvitationRow[];
+  nextCursor: string | null;
+}
+
+/** An organization's invitations, newest first, one bounded keyset page. */
+export async function getOrgInvitationsPage(organizationId: string, options?: { cursor?: string }): Promise<OrgInvitationsPage> {
+  await requireSession();
+  const storage = getStorage();
+  const rows = await storage.invitations.search(organizationId, {
+    limit: INVITATIONS_PAGE_SIZE + 1,
+    after: cleanCursor(options?.cursor),
+  });
+  const { page, hasMore } = splitPage(rows, INVITATIONS_PAGE_SIZE);
+  const roles = await storage.roles.findSummariesByIds([...new Set(page.flatMap((invitation) => invitation.roleIds))]);
+  const roleById = new Map(roles.map((role) => [role.id, { id: role.id, name: role.name, isOwnerRole: role.isOwnerRole }]));
+  const now = Date.now();
+  return {
+    items: page.map((invitation) => ({
+      id: invitation.id,
+      email: invitation.email,
+      status: invitation.status === "pending" && invitation.expiresAt.getTime() <= now ? "expired" : invitation.status,
+      roles: invitation.roleIds.flatMap((id) => roleById.get(id) ?? []),
+      invitedBy: { provider: invitation.invitedBy.provider, subject: invitation.invitedBy.subject },
+      createdAt: invitation.createdAt.toISOString(),
+      expiresAt: invitation.expiresAt.toISOString(),
+      delivery: { status: invitation.delivery.status, sends: invitation.delivery.sends, lastError: invitation.delivery.lastError },
+    })),
+    nextCursor: hasMore ? page[page.length - 1]!.id : null,
   };
 }

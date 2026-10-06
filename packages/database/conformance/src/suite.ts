@@ -10,6 +10,8 @@ import {
   OrganizationError,
   PermissionError,
   RoleError,
+  leaveOrganization,
+  transferOwnership,
 } from "@uniora/core";
 import type { StorageHarness } from "./harness.js";
 
@@ -1459,6 +1461,66 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
           }),
         ).rejects.toThrow("membership step failed");
         expect((await storage.invitations.findById("inv-1"))?.status).toBe("pending");
+      });
+    });
+
+    describe("ownership transfer and leaving", () => {
+      const alice = { provider: "supabase", subject: "alice" };
+      const bob = { provider: "supabase", subject: "bob" };
+
+      async function seedTeam() {
+        const storage = harness.storage();
+        await createOrganizationWithOwner(storage, {
+          organizationId: "org-1",
+          organizationName: "Acme",
+          ownerRoleId: "role-owner",
+          membershipId: "m-alice",
+          ownerIdentity: alice,
+        });
+        await storage.memberships.create({ id: "m-bob", organizationId: "org-1", identity: bob });
+        await createOrganizationWithOwner(storage, {
+          organizationId: "org-2",
+          organizationName: "Other",
+          ownerRoleId: "role-owner-2",
+          membershipId: "m-eve",
+          ownerIdentity: { provider: "supabase", subject: "eve" },
+        });
+        return storage;
+      }
+
+      it("hands the Owner role over atomically and audits it", async () => {
+        const storage = await seedTeam();
+        await transferOwnership(storage, { organizationId: "org-1", fromMembershipId: "m-alice", toMembershipId: "m-bob", actor: alice });
+        expect((await storage.memberships.findById("m-bob"))?.roleIds).toEqual(["role-owner"]);
+        expect((await storage.memberships.findById("m-alice"))?.roleIds).toEqual([]);
+        expect(await harness.probe.countAuditEntries("organization.ownership_transferred")).toBe(1);
+      });
+
+      it("can keep the previous owner as a second Owner", async () => {
+        const storage = await seedTeam();
+        await transferOwnership(storage, { organizationId: "org-1", fromMembershipId: "m-alice", toMembershipId: "m-bob", actor: alice, keepPreviousOwner: true });
+        expect((await storage.memberships.findById("m-alice"))?.roleIds).toEqual(["role-owner"]);
+        expect((await storage.memberships.findById("m-bob"))?.roleIds).toEqual(["role-owner"]);
+      });
+
+      it("refuses members of another organization, a non-owner giver and a transfer to oneself", async () => {
+        const storage = await seedTeam();
+        const base = { organizationId: "org-1", actor: alice };
+        await expect(transferOwnership(storage, { ...base, fromMembershipId: "m-alice", toMembershipId: "m-eve" })).rejects.toThrow(MembershipError);
+        await expect(transferOwnership(storage, { ...base, fromMembershipId: "m-bob", toMembershipId: "m-alice" })).rejects.toThrow(MembershipError);
+        await expect(transferOwnership(storage, { ...base, fromMembershipId: "m-alice", toMembershipId: "m-alice" })).rejects.toThrow(MembershipError);
+        expect((await storage.memberships.findById("m-alice"))?.roleIds).toEqual(["role-owner"]);
+        expect((await storage.memberships.findById("m-eve"))?.roleIds).toEqual(["role-owner-2"]);
+      });
+
+      it("lets a member leave, but never the last Owner", async () => {
+        const storage = await seedTeam();
+        expect(await leaveOrganization(storage, { organizationId: "org-1", identity: bob })).toBe(true);
+        expect(await storage.memberships.findByIdentity("org-1", bob)).toBeNull();
+        expect(await leaveOrganization(storage, { organizationId: "org-1", identity: bob })).toBe(false);
+        await expect(leaveOrganization(storage, { organizationId: "org-1", identity: alice })).rejects.toThrow(MembershipError);
+        expect(await storage.memberships.findByIdentity("org-1", alice)).not.toBeNull();
+        expect(await harness.probe.countAuditEntries("membership.left")).toBe(1);
       });
     });
   });

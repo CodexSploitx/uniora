@@ -168,8 +168,8 @@ app.delete(
 | [`@uniora/better-auth`](packages/adapters/better-auth) | Adapter de identidad para Better Auth. |
 | [`@uniora/auth0`](packages/adapters/auth0) | Adapter de identidad para Auth0. |
 | [`@uniora/react`](packages/react) | Helpers headless de React (`<Can>`, `<Feature>`, `useCan`, `useFeature`) sobre un `AuthorizationSnapshot` calculado en servidor. |
-| [`@uniora/next`](packages/next) | Pegamento de Next.js: memoización por request (`react.cache()`) más los guards `assertCan`/`assertAccess`/`authorizeRoute` para Server Actions y Route Handlers. |
-| [`@uniora/express`](packages/express) | Middleware de Express (`requirePermission`, `requireFeature`, `authorize`): guards de ruta deny-by-default que responden 401/403 y fallan cerrado ante cualquier error. |
+| [`@uniora/next`](packages/next) | Pegamento de Next.js: memoización por request (`react.cache()`) más los guards `assertCan`/`assertAccess`/`authorizeRoute` para Server Actions y Route Handlers, y los helpers de rutas de invitación. |
+| [`@uniora/express`](packages/express) | Middleware de Express (`requirePermission`, `requireFeature`, `authorize`): guards de ruta deny-by-default que responden 401/403 y fallan cerrado ante cualquier error, más las rutas de vista previa y aceptación de invitaciones. |
 | [`@uniora/cli`](packages/cli) | `npx uniora init / check / migrate / doctor / studio` — con ledger de migraciones, salida `--json` y códigos de salida aptos para CI. |
 | [`@uniora/studio`](apps/studio) | UNIORA Studio: una interfaz de administración local (Next.js + shadcn/ui + ReUI) para explorar y administrar organizaciones, miembros, roles, permisos, features y el audit log. Se abre con `npx uniora studio`. |
 
@@ -198,7 +198,23 @@ const { membership } = await invitations.accept({ token, identity, verifiedEmail
 
 La entrega nunca hace fallar la petición: los errores SMTP transitorios se reintentan con backoff y jitter, cada intento tiene su timeout, el resultado queda registrado en la invitación y una fallida se puede `resend` (emite un enlace nuevo e invalida el anterior). El role Owner no se puede otorgar por invitación. Sin sender la invitación igual se crea y se devuelve el enlace para que lo entregues tú. `resend` y `revoke` reciben `{ organizationId, invitationId, actor }` y tratan la invitación de otra organización como inexistente; `accept` exige un email verificado por el proveedor (`toVerifiedEmail` en cada adaptador de identidad).
 
-**Hardening:** el audit log es solo-anexar y está encadenado con hashes (`auditLogs.verifyIntegrity()`, `npx uniora doctor`), y el motor puede informar cada decisión con `onDecision`. Consulta [docs/hardening.md](docs/hardening.md) para los controles que viven fuera del código (roles de base de datos, anclar la cabeza del audit log, ajustes de publicación).
+Las dos páginas públicas del flujo vienen listas. En Express (`@uniora/express`):
+
+```ts
+import { acceptInvitation, invitationPreview } from "@uniora/express";
+
+app.get("/invite/:token", invitationPreview(invitations, { token: (req) => req.params.token }));
+app.post("/invite/:token/accept", acceptInvitation(invitations, {
+  token: (req) => req.params.token,
+  resolve: async (req) => req.user && { identity: req.identity, verifiedEmail: req.user.verifiedEmail },
+}));
+```
+
+En Next.js, `previewInvitationRoute(invitations, token)` y `acceptInvitationRoute(invitations, { token, caller })` (`@uniora/next`) devuelven un `Response` para tus Route Handlers. Cualquier fallo al aceptar responde el mismo `400 invalid_invitation` genérico, así que el endpoint no sirve para averiguar qué enlaces o e-mails existen. Studio tiene una pestaña **Invitaciones** para invitar, reenviar y revocar (define `UNIORA_INVITE_URL`), y `npx uniora doctor` valida tus `UNIORA_SMTP_*`.
+
+La propiedad tiene dos helpers atómicos y auditados: `transferOwnership(storage, { organizationId, fromMembershipId, toMembershipId, actor })` y `leaveOrganization(storage, { organizationId, identity })` (el último Owner nunca puede salir). Ninguno autoriza a quien llama: protégelos tú.
+
+**Hardening:** el audit log es solo-anexar y está encadenado con hashes (`auditLogs.verifyIntegrity()`, `npx uniora doctor`), y el motor puede informar cada decisión con `onDecision`. Consulta [guides/hardening.md](guides/hardening.md) para los controles que viven fuera del código (roles de base de datos, anclar la cabeza del audit log, ajustes de publicación).
 
 ```bash
 # .env
@@ -304,7 +320,7 @@ UNIORA está en desarrollo activo (Roadmap V1.x). Publicado en npm bajo el scope
 
 ## Contribuir
 
-Issues y pull requests son bienvenidos. El proyecto está en una etapa temprana, así que para cualquier cambio que exceda una corrección menor, se recomienda abrir primero una discusión.
+Issues y pull requests son bienvenidos. El proyecto está en una etapa temprana, así que para cualquier cambio que exceda una corrección menor, se recomienda abrir primero una discusión. Consulta [CONTRIBUTING.md](CONTRIBUTING.md), la [hoja de ruta](guides/roadmap.md), el [changelog](CHANGELOG.md) y [SECURITY.md](SECURITY.md) (reporta vulnerabilidades en privado). Hay una app ejecutable en [`examples/express-sqlite`](examples/express-sqlite).
 
 ## Licencia
 

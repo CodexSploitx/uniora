@@ -1,7 +1,7 @@
 {
   "name": "@uniora/studio",
   "version": "0.2.0",
-  "description": "UNIORA Studio — local-first admin UI for UNIORA data (docs/PROYECT.md §21-22). Launched via `npx uniora studio`.",
+  "description": "UNIORA Studio: local-first admin UI for UNIORA data. Launched via `npx uniora studio`.",
   "license": "PolyForm-Shield-1.0.0",
   "keywords": [
     "uniora",
@@ -60,6 +60,7 @@
     "@types/pg": "^8.11.10",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@uniora/mailer-smtp": "workspace:^",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.4.0",
     "eslint": "^9",
@@ -73,5 +74,13 @@
     "typescript": "^5",
     "vitest": "^2.1.4"
   },
-  "packageManager": "pnpm@11.22.0"
+  "packageManager": "pnpm@11.22.0",
+  "peerDependencies": {
+    "@uniora/mailer-smtp": "workspace:^"
+  },
+  "peerDependenciesMeta": {
+    "@uniora/mailer-smtp": {
+      "optional": true
+    }
+  }
 }

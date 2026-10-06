@@ -1,7 +1,7 @@
 {
   "name": "@uniora/postgres",
   "version": "0.2.0",
-  "description": "PostgreSQL storage adapter for @uniora/core (docs/PROYECT.md \u00a718)",
+  "description": "PostgreSQL storage adapter for @uniora/core",
   "license": "PolyForm-Shield-1.0.0",
   "keywords": [
     "uniora",

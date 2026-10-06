@@ -167,8 +167,8 @@ app.delete(
 | [`@uniora/better-auth`](packages/adapters/better-auth) | Identity adapter for Better Auth. |
 | [`@uniora/auth0`](packages/adapters/auth0) | Identity adapter for Auth0. |
 | [`@uniora/react`](packages/react) | Headless React helpers (`<Can>`, `<Feature>`, `useCan`, `useFeature`) over a server-computed `AuthorizationSnapshot`. |
-| [`@uniora/next`](packages/next) | Next.js glue: request-scoped memoization (`react.cache()`) plus `assertCan`/`assertAccess`/`authorizeRoute` guards for Server Actions and Route Handlers. |
-| [`@uniora/express`](packages/express) | Express middleware (`requirePermission`, `requireFeature`, `authorize`): deny-by-default route guards that answer 401/403 and fail closed on any error. |
+| [`@uniora/next`](packages/next) | Next.js glue: request-scoped memoization (`react.cache()`) plus `assertCan`/`assertAccess`/`authorizeRoute` guards for Server Actions and Route Handlers and the invitation route helpers. |
+| [`@uniora/express`](packages/express) | Express middleware (`requirePermission`, `requireFeature`, `authorize`): deny-by-default route guards that answer 401/403 and fail closed on any error, plus the invitation preview/accept routes. |
 | [`@uniora/cli`](packages/cli) | `npx uniora init / check / migrate / doctor / studio` — with a migration ledger, `--json` output and CI-friendly exit codes. |
 | [`@uniora/studio`](apps/studio) | UNIORA Studio: a local-first admin UI (Next.js + shadcn/ui + ReUI) to browse and manage organizations, members, roles, permissions, features and the audit log. Launched with `npx uniora studio`. |
 
@@ -197,7 +197,23 @@ const { membership } = await invitations.accept({ token, identity, verifiedEmail
 
 Delivery never fails the request: transient SMTP errors are retried with jittered backoff and each attempt has a timeout; the outcome is recorded on the invitation and a failed one can be `resend`-ed (which issues a new link and invalidates the old one). The Owner role can't be granted by invitation. Without a sender the invitation is still created and the link is returned for you to deliver. `resend` and `revoke` take `{ organizationId, invitationId, actor }` and treat another organization's invitation as missing; `accept` needs a provider-verified address (`toVerifiedEmail` in each identity adapter).
 
-**Hardening:** the audit log is append-only and hash-chained (`auditLogs.verifyIntegrity()`, `npx uniora doctor`), and the engine can report every decision through `onDecision`. See [docs/hardening.md](docs/hardening.md) for the controls that live outside the code (database roles, anchoring the audit head, release settings).
+The two public pages of the flow come ready-made. In Express (`@uniora/express`):
+
+```ts
+import { acceptInvitation, invitationPreview } from "@uniora/express";
+
+app.get("/invite/:token", invitationPreview(invitations, { token: (req) => req.params.token }));
+app.post("/invite/:token/accept", acceptInvitation(invitations, {
+  token: (req) => req.params.token,
+  resolve: async (req) => req.user && { identity: req.identity, verifiedEmail: req.user.verifiedEmail },
+}));
+```
+
+In Next.js, `previewInvitationRoute(invitations, token)` and `acceptInvitationRoute(invitations, { token, caller })` (`@uniora/next`) return a `Response` for your Route Handlers. Every way an accept can fail answers the same generic `400 invalid_invitation`, so the endpoint can't be used to probe which links or e-mails exist. Studio has an **Invitations** tab to invite, resend and revoke (set `UNIORA_INVITE_URL`), and `npx uniora doctor` validates your `UNIORA_SMTP_*`.
+
+Ownership has two audited, atomic helpers: `transferOwnership(storage, { organizationId, fromMembershipId, toMembershipId, actor })` and `leaveOrganization(storage, { organizationId, identity })` (the last Owner can never leave). Neither authorizes its caller: guard them yourself.
+
+**Hardening:** the audit log is append-only and hash-chained (`auditLogs.verifyIntegrity()`, `npx uniora doctor`), and the engine can report every decision through `onDecision`. See [guides/hardening.md](guides/hardening.md) for the controls that live outside the code (database roles, anchoring the audit head, release settings).
 
 ```bash
 # .env
@@ -303,7 +319,7 @@ UNIORA is under active development (V1.x). Published on npm under the [`@uniora`
 
 ## Contributing
 
-Issues and pull requests are welcome — this is early-stage, so open a discussion first for anything beyond a small fix.
+Issues and pull requests are welcome — this is early-stage, so open a discussion first for anything beyond a small fix. See [CONTRIBUTING.md](CONTRIBUTING.md), the [roadmap](guides/roadmap.md), the [changelog](CHANGELOG.md) and [SECURITY.md](SECURITY.md) (report vulnerabilities privately). A runnable app lives in [`examples/express-sqlite`](examples/express-sqlite).
 
 ## License
 

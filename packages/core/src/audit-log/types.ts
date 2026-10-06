@@ -41,7 +41,7 @@ export interface AuditLogEntry {
  * (each one commits to the previous entry's hash), so editing or deleting a
  * row in the middle of the log is detectable. Truncating the END of the log
  * is not: keep `head` somewhere the database owner can't rewrite (a WORM
- * bucket, another system) and compare it later — see docs/hardening.md.
+ * bucket, another system) and compare it later — see guides/hardening.md.
  */
 export interface AuditIntegrityOptions {
   /** A `head` exported by an earlier run and stored out of the database owner's reach. */

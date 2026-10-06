@@ -18,6 +18,8 @@ export { OrganizationError, assertValidSlug, resolveOrganizationSlug, sanitizeOr
 export type { Membership } from "./membership/types.js";
 export type { CreateMembershipInput, MembershipListing, MembershipRepository, SearchMembershipsOptions } from "./membership/repository.js";
 export { MembershipError } from "./membership/repository.js";
+export type { LeaveOrganizationInput, TransferOwnershipInput } from "./membership/ownership.js";
+export { leaveOrganization, transferOwnership } from "./membership/ownership.js";
 
 export type { Role } from "./role/types.js";
 export type { CreateOwnerRoleInput, CreateRoleInput, RoleRepository, RoleSummary, SearchRolesOptions } from "./role/repository.js";
@@ -86,6 +88,8 @@ export type {
   InviteResult,
 } from "./invitation/service.js";
 export { createInvitationService, normalizeInvitationEmail } from "./invitation/service.js";
+export type { InvitationHttpError } from "./invitation/http.js";
+export { invitationErrorToHttp } from "./invitation/http.js";
 export { generateInvitationToken, hashInvitationToken, INVITATION_TOKEN_PREFIX } from "./invitation/token.js";
 
 export type { UnioraStorage, UnioraTransaction } from "./storage/types.js";

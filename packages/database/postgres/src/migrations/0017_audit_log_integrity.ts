@@ -4,7 +4,7 @@
  * 1. Append-only IN THE DATABASE: any `UPDATE` or `DELETE` of an audit row
  *    raises an error, whoever issues it (the application, a script, a DBA at
  *    a psql prompt). `TRUNCATE` is not blocked — it needs table ownership,
- *    and the application's role should never have it (see docs/hardening.md).
+ *    and the application's role should never have it (see guides/hardening.md).
  * 2. A hash chain: a BEFORE INSERT trigger numbers each entry (`seq`) and
  *    stores `hash = sha256(prev_hash || the entry's content)`. The advisory
  *    lock makes numbering and linking one serial step, so concurrent writers

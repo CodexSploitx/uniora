@@ -2,3 +2,5 @@ export { createCachedAuthorizationSnapshot, createCachedIdentity } from "./reque
 export { AuthorizationDeniedError, assertCan, assertAccess } from "./guard.js";
 export type { AuthorizeRouteOptions } from "./route.js";
 export { authorizeRoute } from "./route.js";
+export type { AcceptInvitationRouteInput } from "./invitations.js";
+export { acceptInvitationRoute, previewInvitationRoute } from "./invitations.js";

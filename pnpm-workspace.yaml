@@ -4,6 +4,7 @@ packages:
   - "packages/database/*"
   - "apps/*"
   - "test/integration"
+  - "examples/*"
 allowBuilds:
   better-sqlite3: true
   esbuild: true

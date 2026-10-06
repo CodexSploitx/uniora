@@ -7,10 +7,14 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "release:check": "node scripts/check-release.mjs"
+    "release:check": "node scripts/check-release.mjs",
+    "lint": "pnpm -r --if-present lint",
+    "check:packages": "node scripts/check-packages.mjs"
   },
   "devDependencies": {
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "publint": "^0.3.12",
+    "@arethetypeswrong/cli": "^0.18.2"
   },
   "license": "PolyForm-Shield-1.0.0"
 }
