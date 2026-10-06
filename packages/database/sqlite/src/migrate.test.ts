@@ -53,6 +53,8 @@ describe("migration ledger", () => {
         "uniora_feature_definitions",
         "uniora_features",
         "uniora_identity_links",
+        "uniora_invitation_roles",
+        "uniora_invitations",
         "uniora_membership_roles",
         "uniora_memberships",
         "uniora_organizations",

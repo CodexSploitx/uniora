@@ -5,6 +5,7 @@ import type { PermissionRepository } from "../permission/repository.js";
 import type { FeatureRepository } from "../feature/repository.js";
 import type { AuditLogRepository } from "../audit-log/repository.js";
 import type { IdentityLinkRepository } from "../identity-link/repository.js";
+import type { InvitationRepository } from "../invitation/repository.js";
 
 export interface UnioraTransaction {
   organizations: OrganizationRepository;
@@ -14,6 +15,7 @@ export interface UnioraTransaction {
   features: FeatureRepository;
   auditLogs: AuditLogRepository;
   identityLinks: IdentityLinkRepository;
+  invitations: InvitationRepository;
 }
 
 /**
@@ -28,5 +30,6 @@ export interface UnioraStorage {
   readonly features: FeatureRepository;
   readonly auditLogs: AuditLogRepository;
   readonly identityLinks: IdentityLinkRepository;
+  readonly invitations: InvitationRepository;
   transaction<T>(callback: (tx: UnioraTransaction) => Promise<T>): Promise<T>;
 }

@@ -18,7 +18,7 @@ const harness: StorageHarness = {
   },
   async reset() {
     await pool.query(
-      `truncate table uniora.membership_roles, uniora.role_permissions, uniora.memberships,
+      `truncate table uniora.invitation_roles, uniora.invitations, uniora.membership_roles, uniora.role_permissions, uniora.memberships,
               uniora.roles, uniora.features, uniora.feature_definitions, uniora.permissions,
               uniora.audit_logs, uniora.identity_links, uniora.organizations cascade`,
     );
