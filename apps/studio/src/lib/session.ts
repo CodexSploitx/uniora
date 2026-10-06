@@ -2,7 +2,7 @@ import "server-only";
 import { cookies } from "next/headers";
 import { connection } from "next/server";
 import { getStudioEnv } from "@/lib/env";
-import { SESSION_COOKIE, tokensMatch } from "@/lib/token";
+import { SESSION_COOKIE, sessionMatches } from "@/lib/token";
 
 export class StudioAuthError extends Error {
   constructor(message = "invalid session") {
@@ -29,7 +29,7 @@ export async function requireSession(): Promise<void> {
   await connection();
   const { token } = getStudioEnv();
   const cookie = (await cookies()).get(SESSION_COOKIE)?.value;
-  if (!cookie || !tokensMatch(cookie, token)) throw new StudioAuthError();
+  if (!cookie || !sessionMatches(cookie, token)) throw new StudioAuthError();
 }
 
 export async function requireWrite(): Promise<void> {

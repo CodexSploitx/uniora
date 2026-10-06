@@ -1239,6 +1239,35 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         });
     });
 
+    describe("identity links — unlink (audit F-12)", () => {
+      const actor = { provider: "supabase", subject: "operator" };
+      const from = { provider: "clerk", subject: "user_new" };
+      const to = { provider: "supabase", subject: "user-old" };
+
+      it("unlink() quita el enlace, deja de resolver, audita y es idempotente", async () => {
+        const storage = harness.storage();
+        await storage.identityLinks.link({ from, to, actor });
+        expect(await storage.identityLinks.resolve(from)).toEqual(to);
+
+        expect(await storage.identityLinks.unlink({ from, actor })).toBe(true);
+        expect(await storage.identityLinks.resolve(from)).toEqual(from);
+        expect(await harness.probe.countIdentityLinks()).toBe(0);
+        expect(await harness.probe.countAuditEntries("identity_link.removed")).toBe(1);
+
+        expect(await storage.identityLinks.unlink({ from, actor })).toBe(false);
+        expect(await harness.probe.countAuditEntries("identity_link.removed")).toBe(1);
+        expect(await storage.auditLogs.verifyIntegrity()).toMatchObject({ ok: true });
+      });
+
+      it("un alias desenlazado puede volver a enlazarse a otro destino", async () => {
+        const storage = harness.storage();
+        await storage.identityLinks.link({ from, to, actor });
+        await storage.identityLinks.unlink({ from, actor });
+        const other = { provider: "supabase", subject: "user-other" };
+        await expect(storage.identityLinks.link({ from, to: other, actor })).resolves.toMatchObject({ to: other });
+      });
+    });
+
     describe("invitations", () => {
       const owner = { provider: "supabase", subject: "owner" };
       const newcomer = { provider: "supabase", subject: "newcomer" };

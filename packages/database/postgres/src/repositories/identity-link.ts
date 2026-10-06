@@ -224,6 +224,43 @@ export function createIdentityLinkRepository(db: Queryable, auditLogs: AuditLogR
       );
     },
 
+    async unlink(input: { from: Identity; actor: Identity }) {
+      // The delete and its audit entry commit together or not at all. Inside a caller's
+      // `storage.transaction()` (`pool` absent) they simply join it.
+      const run = async (conn: Queryable, audit: AuditLogRepository): Promise<boolean> => {
+        const removed = await conn.query<IdentityLinkRow>(
+          `delete from uniora.identity_links where from_provider = $1 and from_subject = $2
+           returning from_provider, from_subject, to_provider, to_subject, linked_at`,
+          [input.from.provider, input.from.subject],
+        );
+        const row = removed.rows[0];
+        if (!row) return false;
+        const link = toLink(row);
+        await audit.record({
+          id: `identity-link:${randomUUID()}`,
+          actor: input.actor,
+          action: "identity_link.removed",
+          target: { type: "identity_link", id: `${input.from.provider}:${input.from.subject}` },
+          metadata: { from: link.from, to: link.to },
+        });
+        return true;
+      };
+      if (!pool) return run(db, auditLogs);
+
+      const client = await pool.connect();
+      try {
+        await client.query("begin");
+        const result = await run(client, createAuditLogRepository(client));
+        await client.query("commit");
+        return result;
+      } catch (error) {
+        await client.query("rollback").catch(() => {});
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
     async resolve(identity: Identity) {
       const result = await db.query<IdentityLinkRow>(
         `select from_provider, from_subject, to_provider, to_subject, linked_at

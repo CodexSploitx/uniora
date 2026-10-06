@@ -133,7 +133,7 @@ export function createMemoryStorage(): UnioraStorage {
       // the host caller remembers to add one of its own. Global entry (no
       // `organizationId`): a link isn't scoped to any single organization.
       // Random id (audit F-11): a caller-chosen or guessable id could be pre-inserted into the audit
-  // table to make this self-audit collide and block the link with a misleading error.
+      // table to make this self-audit collide and block the link with a misleading error.
       await auditLogRepository.record({
         id: `identity-link:${randomId()}`,
         actor: input.actor,
@@ -143,6 +143,19 @@ export function createMemoryStorage(): UnioraStorage {
       });
 
       return link;
+    },
+    async unlink(input: { from: Identity; actor: Identity }) {
+      const existing = identityLinksByFromKey.get(identityKey(input.from));
+      if (!existing) return false;
+      identityLinksByFromKey.delete(identityKey(input.from));
+      await auditLogRepository.record({
+        id: `identity-link:${randomId()}`,
+        actor: input.actor,
+        action: "identity_link.removed",
+        target: { type: "identity_link", id: `${input.from.provider}:${input.from.subject}` },
+        metadata: { from: existing.from, to: existing.to },
+      });
+      return true;
     },
     async resolve(identity: Identity) {
       return identityLinksByFromKey.get(identityKey(identity))?.to ?? identity;

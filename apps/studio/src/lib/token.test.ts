@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAllowedHost, tokensMatch } from "./token";
+import { isAllowedHost, sessionCookieValue, sessionMatches, tokensMatch } from "./token";
 
 describe("isAllowedHost (DNS-rebinding defense)", () => {
   it.each(["127.0.0.1:4321", "localhost:4321", "[::1]:4321", "LOCALHOST:4321"])("accepts loopback host %s", (host) => {
@@ -35,5 +35,21 @@ describe("tokensMatch", () => {
     expect(tokensMatch("abc", "abd")).toBe(false);
     expect(tokensMatch("abc", "abcd")).toBe(false);
     expect(tokensMatch("", "abc")).toBe(false);
+  });
+});
+
+describe("session cookie (audit F-08)", () => {
+  it("is derived from the launch token, never the token itself", () => {
+    const value = sessionCookieValue("launch-token");
+    expect(value).not.toContain("launch-token");
+    expect(value).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("only validates for the token that produced it", () => {
+    const value = sessionCookieValue("launch-token");
+    expect(sessionMatches(value, "launch-token")).toBe(true);
+    expect(sessionMatches(value, "another-token")).toBe(false);
+    // the raw launch token is not a valid session cookie
+    expect(sessionMatches("launch-token", "launch-token")).toBe(false);
   });
 });

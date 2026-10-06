@@ -1,7 +1,9 @@
 import { createServer } from "node:net";
 import { describe, expect, it } from "vitest";
 import { resolve } from "node:path";
-import { buildStudioEnv, findFreePort, generateLaunchToken, parseStudioArgs, studioDatabaseUrl, studioLaunchUrl } from "./studio.js";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname } from "node:path";
+import { buildStudioEnv, writeLaunchPage, findFreePort, generateLaunchToken, parseStudioArgs, studioDatabaseUrl, studioLaunchUrl } from "./studio.js";
 
 describe("parseStudioArgs", () => {
   it("usa valores por defecto sin flags", () => {
@@ -87,5 +89,29 @@ describe("Studio con SQLite", () => {
     const cwd = resolve("/projects/app");
     expect(studioDatabaseUrl({ provider: "sqlite", url: "sqlite:./data/uniora.db" }, cwd)).toBe(`sqlite:${resolve(cwd, "data/uniora.db")}`);
     expect(studioDatabaseUrl({ provider: "postgresql", url: "postgresql://u:p@h/db" }, cwd)).toBe("postgresql://u:p@h/db");
+  });
+});
+
+describe("writeLaunchPage (audit F-08)", () => {
+  it("keeps the token out of the opener's argv: the page is private, forwards to the URL, and is removable", () => {
+    const url = "http://127.0.0.1:4321/?token=abc&x=1";
+    const page = writeLaunchPage(url);
+    try {
+      expect(page.path).not.toContain("abc");
+      if (process.platform !== "win32") {
+        expect(statSync(page.path).mode & 0o777).toBe(0o600);
+        expect(statSync(dirname(page.path)).mode & 0o777).toBe(0o700);
+      }
+      const html = readFileSync(page.path, "utf8");
+      expect(html).toContain("http://127.0.0.1:4321/?token=abc&amp;x=1");
+    } finally {
+      page.cleanup();
+    }
+    expect(existsSync(page.path)).toBe(false);
+  });
+
+  it("buildStudioEnv passes the operator through", () => {
+    const env = buildStudioEnv({}, { databaseUrl: "postgres://x", token: "t", port: 4321, readOnly: false, operator: "ana" });
+    expect(env.UNIORA_STUDIO_OPERATOR).toBe("ana");
   });
 });

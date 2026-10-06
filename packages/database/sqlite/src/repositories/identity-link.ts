@@ -97,7 +97,6 @@ async function performLink(db: SqliteExecutor, auditLogs: AuditLogRepository, in
   // The one Core primitive that self-audits (Hallazgo 5): merging two
   // identities' access is dangerous enough to need a forensic trail whether or
   // not the host remembers one. Global entry (no organizationId) with a
-  // deterministic id — `from`'s natural key — so Core needs no id generator.
   await auditLogs.record({
     id: `identity-link:${randomUUID()}`,
     actor: input.actor,
@@ -122,6 +121,27 @@ export function createIdentityLinkRepository(db: SqliteExecutor, auditLogs: Audi
         }
         throw error;
       }
+    },
+
+    async unlink(input: { from: Identity; actor: Identity }) {
+      return db.atomic(async () => {
+        const removed = await db.query<IdentityLinkRow>(
+          `delete from uniora_identity_links where from_provider = ?1 and from_subject = ?2
+           returning from_provider, from_subject, to_provider, to_subject, linked_at`,
+          [input.from.provider, input.from.subject],
+        );
+        const row = removed.rows[0];
+        if (!row) return false;
+        const link = toLink(row);
+        await auditLogs.record({
+          id: `identity-link:${randomUUID()}`,
+          actor: input.actor,
+          action: "identity_link.removed",
+          target: { type: "identity_link", id: `${input.from.provider}:${input.from.subject}` },
+          metadata: { from: link.from, to: link.to },
+        });
+        return true;
+      });
     },
 
     async resolve(identity: Identity) {

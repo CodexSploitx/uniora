@@ -9,6 +9,10 @@
  */
 export interface SupabaseUser {
   readonly id: string;
+  readonly email?: string;
+  /** Set by Supabase once the address is confirmed. */
+  readonly email_confirmed_at?: string | null;
+  readonly confirmed_at?: string | null;
 }
 
 export interface SupabaseAuthResponse {

@@ -7,6 +7,8 @@ export interface StudioEnv {
   databaseProvider: DatabaseProvider;
   token: string;
   readOnly: boolean;
+  /** Who is operating Studio (the OS user that launched it), recorded as the actor of audit entries. */
+  operator: string;
   /** From `auth.provider` in `uniora.config.mjs`, if set — pre-fills the "owner/member provider" fields. Never validated further: a host app may use more than one provider. */
   defaultAuthProvider?: string;
 }
@@ -23,6 +25,7 @@ export function getStudioEnv(): StudioEnv {
     databaseProvider: parseDatabaseProvider(process.env.UNIORA_STUDIO_DATABASE_PROVIDER),
     token,
     readOnly: process.env.UNIORA_STUDIO_READ_ONLY === "1",
+    operator: (process.env.UNIORA_STUDIO_OPERATOR ?? "").trim().slice(0, 128) || "local-admin",
     defaultAuthProvider: process.env.UNIORA_STUDIO_AUTH_PROVIDER || undefined,
   };
 }

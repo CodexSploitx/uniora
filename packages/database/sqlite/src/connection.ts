@@ -1,3 +1,4 @@
+import { closeSync, existsSync, openSync } from "node:fs";
 import { createRequire } from "node:module";
 import { isAbsolute, resolve } from "node:path";
 import type { Database } from "better-sqlite3";
@@ -101,6 +102,18 @@ export function openSqliteDatabase(path: string, options: OpenSqliteOptions = {}
       `No se pudo cargar better-sqlite3 (${error instanceof Error ? error.message : String(error)}). ` +
         "Instálalo junto a @uniora/sqlite: npm install better-sqlite3.",
     );
+  }
+
+  // A new database file is created private (0600): it holds memberships, identities and the audit
+  // log, and SQLite would otherwise create it with the process umask (typically world-readable
+  // 0644). Its `-wal`/`-shm` companions copy the main file's mode. An existing file is left alone.
+  // (audit F-09)
+  if (options.readonly !== true && options.fileMustExist !== true && path !== ":memory:" && path !== "" && !existsSync(path)) {
+    try {
+      closeSync(openSync(path, "wx", 0o600));
+    } catch {
+      /* raced with another creator, or unwritable: the driver reports the real problem below */
+    }
   }
 
   const db = new Driver(path, { fileMustExist: options.fileMustExist === true, readonly: options.readonly === true });

@@ -94,3 +94,19 @@ describe("IdentityLinkRepository", () => {
     expect(await engine.can({ identity: newIdentity, organizationId: "org-1", permission: "vehicles.delete" })).toBe(true);
   });
 });
+
+describe("unlink (audit F-12, memory)", () => {
+  it("removes the link, audits it and is idempotent", async () => {
+    const storage = createMemoryStorage();
+    const from = { provider: "clerk", subject: "u-new" };
+    const to = { provider: "supabase", subject: "u-old" };
+    const actor = { provider: "supabase", subject: "op" };
+    await storage.identityLinks.link({ from, to, actor });
+
+    expect(await storage.identityLinks.unlink({ from, actor })).toBe(true);
+    expect(await storage.identityLinks.resolve(from)).toEqual(from);
+    expect(await storage.identityLinks.unlink({ from, actor })).toBe(false);
+    const entries = await storage.auditLogs.listRecent();
+    expect(entries.filter((e) => e.action === "identity_link.removed")).toHaveLength(1);
+  });
+});

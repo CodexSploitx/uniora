@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -92,5 +92,25 @@ describe("openSqliteDatabase", () => {
     expect(hasUnioraSchema(db)).toBe(true);
     expect(() => db.exec("insert into uniora_organizations (id, name, slug) values ('x', 'X', 'x')")).toThrow(/readonly/i);
     db.close();
+  });
+});
+
+describe("new database files are private (audit F-09)", () => {
+  it.skipIf(process.platform === "win32")("creates the file 0600 and its WAL companions follow", () => {
+    const dir = mkdtempSync(join(tmpdir(), "uniora-sqlite-mode-"));
+    try {
+      const file = join(dir, "private.db");
+      const previous = process.umask(0o022); // a typical umask that would otherwise yield 0644
+      try {
+        const db = openSqliteDatabase(file, { wal: true });
+        applyMigrations(db);
+        db.close();
+      } finally {
+        process.umask(previous);
+      }
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

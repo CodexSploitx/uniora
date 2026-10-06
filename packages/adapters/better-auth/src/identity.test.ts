@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveIdentity, toIdentity } from "./identity.js";
+import { resolveIdentity, toIdentity, toVerifiedEmail } from "./identity.js";
 import type { BetterAuthClient, BetterAuthHeaders } from "./types.js";
 
 function fakeHeaders(values: Record<string, string> = {}): BetterAuthHeaders {
@@ -78,5 +78,25 @@ describe("resolveIdentity", () => {
     // @ts-expect-error — objeto sin `.get`, forma inválida deliberada.
     expect(await resolveIdentity(getSession, { cookie: "session=abc" })).toBeNull();
     expect(called).toBe(false);
+  });
+});
+
+describe("toVerifiedEmail (audit F-13)", () => {
+  it("returns the address only when the provider says it is verified", () => {
+    expect(toVerifiedEmail({ id: "a", email: "Ana@X.com", emailVerified: true })).toBe("Ana@X.com");
+  });
+
+  it.each([
+    ["flagged unverified", { id: "a", email: "ana@x.com", emailVerified: false }],
+    ["no verification flag at all", { id: "a", email: "ana@x.com" }],
+    ["no address", { id: "a" }],
+  ])("returns null when the address is %s", (_label, input) => {
+    expect(toVerifiedEmail(input)).toBeNull();
+  });
+
+  it("returns null for null/undefined and for non-string addresses", () => {
+    expect(toVerifiedEmail(null)).toBeNull();
+    expect(toVerifiedEmail(undefined)).toBeNull();
+    expect(toVerifiedEmail({ ...({ id: "a", email: "Ana@X.com", emailVerified: true }), email: 42 as unknown as string })).toBeNull();
   });
 });
