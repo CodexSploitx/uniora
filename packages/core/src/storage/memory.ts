@@ -53,6 +53,9 @@ import { InvitationError } from "../invitation/repository.js";
 import { randomId } from "../invitation/token.js";
 import { applyAnchor, computeAuditEntryHash, type ChainedAuditFields } from "../audit-log/chain.js";
 import type { AuditIntegrityOptions, AuditIntegrityReport } from "../audit-log/types.js";
+import type { OutboxEvent, OutboxStatus } from "../outbox/types.js";
+import type { OutboxRepository } from "../outbox/repository.js";
+import { OutboxError, assertValidOutboxEvent, resolveClaimOptions } from "../outbox/repository.js";
 import type { UnioraStorage, UnioraTransaction } from "./types.js";
 
 function identityKey(identity: Identity): string {
@@ -1312,6 +1315,104 @@ export function createMemoryStorage(): UnioraStorage {
     },
   };
 
+  const cloneOutboxEvent = (event: OutboxEvent): OutboxEvent => ({ ...event, payload: event.payload === undefined ? undefined : structuredClone(event.payload) });
+  const outboxEvents = new Map<string, OutboxEvent>();
+  const outboxLeases = new Map<string, number>(); // id -> lease expiry (ms)
+  let outboxSeq = 0;
+  const outboxMatches = (event: OutboxEvent, filter: { status?: OutboxStatus; organizationId?: string; type?: string }) =>
+    (filter.status === undefined || event.status === filter.status) &&
+    (filter.organizationId === undefined || event.organizationId === filter.organizationId) &&
+    (filter.type === undefined || event.type === filter.type);
+  const outboxRepository: OutboxRepository = {
+    async enqueue(input) {
+      assertValidOutboxEvent(input);
+      if (outboxEvents.has(input.id)) throw new OutboxError(`An event with id "${input.id}" already exists.`, "outbox_event_exists");
+      const now = new Date();
+      const event: OutboxEvent = {
+        id: input.id,
+        seq: (outboxSeq += 1),
+        organizationId: input.organizationId,
+        type: input.type,
+        payload: input.payload === undefined ? undefined : structuredClone(input.payload),
+        status: "pending",
+        attempts: 0,
+        createdAt: now,
+        availableAt: now,
+      };
+      outboxEvents.set(event.id, event);
+      return cloneOutboxEvent(event);
+    },
+    async claim(options) {
+      const { limit, leaseSeconds, now } = resolveClaimOptions(options);
+      const due = [...outboxEvents.values()]
+        .filter(
+          (event) =>
+            event.status === "pending" &&
+            event.availableAt.getTime() <= now.getTime() &&
+            (outboxLeases.get(event.id) ?? 0) <= now.getTime() &&
+            outboxMatches(event, { organizationId: options?.organizationId, type: options?.type }),
+        )
+        .sort((a, b) => a.seq - b.seq)
+        .slice(0, limit);
+      return due.map((event) => {
+        const claimed: OutboxEvent = { ...event, attempts: event.attempts + 1 };
+        outboxEvents.set(event.id, claimed);
+        outboxLeases.set(event.id, now.getTime() + leaseSeconds * 1000);
+        return cloneOutboxEvent(claimed);
+      });
+    },
+    async complete(ids, now = new Date()) {
+      let changed = 0;
+      for (const id of new Set(ids)) {
+        const event = outboxEvents.get(id);
+        if (event?.status !== "pending") continue;
+        outboxEvents.set(id, { ...event, status: "delivered", deliveredAt: now });
+        outboxLeases.delete(id);
+        changed += 1;
+      }
+      return changed;
+    },
+    async fail(id, input) {
+      const event = outboxEvents.get(id);
+      if (event?.status !== "pending") return null;
+      const status: OutboxStatus = event.attempts >= input.maxAttempts ? "dead" : "pending";
+      outboxEvents.set(id, { ...event, status, availableAt: input.retryAt, lastError: input.error });
+      outboxLeases.delete(id);
+      return status;
+    },
+    async requeue(id, now = new Date()) {
+      const event = outboxEvents.get(id);
+      if (event?.status !== "dead") return false;
+      outboxEvents.set(id, { ...event, status: "pending", attempts: 0, availableAt: now, lastError: undefined });
+      return true;
+    },
+    async findById(id) {
+      const event = outboxEvents.get(id);
+      return event ? cloneOutboxEvent(event) : null;
+    },
+    async search(options = {}) {
+      const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+      return [...outboxEvents.values()]
+        .filter((event) => outboxMatches(event, options) && event.seq > (options.afterSeq ?? 0))
+        .sort((a, b) => a.seq - b.seq)
+        .slice(0, limit)
+        .map(cloneOutboxEvent);
+    },
+    async count(options = {}) {
+      return [...outboxEvents.values()].filter((event) => outboxMatches(event, options)).length;
+    },
+    async pruneDelivered(before) {
+      let removed = 0;
+      for (const event of [...outboxEvents.values()]) {
+        if (event.status === "delivered" && event.deliveredAt && event.deliveredAt.getTime() < before.getTime()) {
+          outboxEvents.delete(event.id);
+          removed += 1;
+        }
+      }
+      return removed;
+    },
+  };
+
   return {
     organizations: organizationRepository,
     memberships: membershipRepository,
@@ -1321,6 +1422,7 @@ export function createMemoryStorage(): UnioraStorage {
     auditLogs: auditLogRepository,
     identityLinks: identityLinkRepository,
     invitations: invitationRepository,
+    outbox: outboxRepository,
     async transaction<T>(callback: (tx: UnioraTransaction) => Promise<T>): Promise<T> {
       // In-memory storage has no isolation to offer; adapters with a real
       // database (e.g. Postgres) must run `callback` inside a DB transaction.
@@ -1333,6 +1435,7 @@ export function createMemoryStorage(): UnioraStorage {
         auditLogs: auditLogRepository,
         identityLinks: identityLinkRepository,
         invitations: invitationRepository,
+        outbox: outboxRepository,
       });
     },
   };
