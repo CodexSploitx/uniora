@@ -1,14 +1,15 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import type { Database } from "better-sqlite3";
 import {
   applyMigrations,
+  createSqliteStorage,
   getMigrationStatus,
   listMigrationIds,
   openSqliteDatabase,
   sqlitePathFromUrl,
 } from "@uniora/sqlite";
 import type { CheckResult } from "../cli/output.js";
-import { ownerResult } from "./postgres.js";
+import { auditIntegrityResult, ownerResult } from "./postgres.js";
 import type { DatabaseDriver, DatabaseIntent, MigrationStatus } from "./types.js";
 
 const PRISTINE_STATUS: () => MigrationStatus = () => ({
@@ -80,6 +81,20 @@ export function createSqliteDriver(url: string, cwd: string, intent: DatabaseInt
             },
       );
 
+      // El archivo guarda membresías, identidades y el audit log: no debería ser legible por otros usuarios.
+      if (process.platform !== "win32") {
+        const mode = statSync(path).mode & 0o777;
+        checks.push(
+          (mode & 0o077) === 0
+            ? { name: "Permisos del archivo", severity: "ok", message: `${mode.toString(8)} (solo el propietario)` }
+            : {
+                name: "Permisos del archivo",
+                severity: "warn",
+                message: `${mode.toString(8)}: otros usuarios del sistema pueden leer la base. Corre "chmod 600 ${path}" (y sus -wal/-shm).`,
+              },
+        );
+      }
+
       const integrity = db.pragma("quick_check", { simple: true });
       checks.push(
         integrity === "ok"
@@ -103,6 +118,10 @@ export function createSqliteDriver(url: string, cwd: string, intent: DatabaseInt
         )
         .all() as { id: string; total: number }[];
       return ownerResult(rows.map((row) => row.id), Number(rows[0]?.total ?? 0));
+    },
+
+    async auditIntegrity(): Promise<CheckResult> {
+      return auditIntegrityResult(await createSqliteStorage(requireDatabase()).auditLogs.verifyIntegrity());
     },
 
     async close() {

@@ -33,6 +33,10 @@ function createTransactionScope(db: Queryable, pool?: Pool): UnioraTransaction {
     // `identity-link.ts` (docs/security-pentest-2026-09-24.md Hallazgo 9).
     identityLinks: createIdentityLinkRepository(db, auditLogs, pool),
     invitations: createInvitationRepository(db),
+    // Only meaningful inside `storage.transaction()` (xact-scoped lock); released on commit/rollback.
+    async lock(key: string): Promise<void> {
+      await db.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [key]);
+    },
   };
 }
 

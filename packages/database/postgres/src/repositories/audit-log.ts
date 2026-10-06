@@ -3,9 +3,12 @@ import type {
   AuditLogRepository,
   AuditLogTarget,
   ListAuditLogOptions,
+  AuditIntegrityOptions,
+  AuditIntegrityReport,
   ListRecentAuditLogOptions,
   RecordAuditLogInput,
 } from "@uniora/core";
+import { applyAnchor } from "@uniora/core";
 import type { Queryable } from "../queryable.js";
 
 interface AuditLogRow {
@@ -98,5 +101,34 @@ export function createAuditLogRepository(db: Queryable): AuditLogRepository {
       );
       return result.rows.map(toEntry);
     },
+
+    async verifyIntegrity(options?: AuditIntegrityOptions): Promise<AuditIntegrityReport> {
+      const report = await verifyChain();
+      return applyAnchor(report, options?.anchor, async (position) => {
+        const found = await db.query<{ hash: string }>("select hash from uniora.audit_logs where seq = $1", [position]);
+        return found.rows[0]?.hash ?? null;
+      });
+    },
   };
+
+  async function verifyChain(): Promise<AuditIntegrityReport> {
+      const result = await db.query<{
+        checked: string;
+        head_seq: string | null;
+        head_hash: string | null;
+        broken_id: string | null;
+        broken_reason: "content_mismatch" | "chain_broken" | null;
+      }>("select checked::text, head_seq::text, head_hash, broken_id, broken_reason from uniora.verify_audit_chain()");
+      const row = result.rows[0];
+      if (!row) throw new Error("uniora.verify_audit_chain() returned no row");
+      const checked = Number(row.checked);
+      if (row.broken_id !== null && row.broken_reason !== null) {
+        return { ok: false, checked, broken: { id: row.broken_id, reason: row.broken_reason } };
+      }
+      return {
+        ok: true,
+        checked,
+        head: row.head_hash !== null && row.head_seq !== null ? { position: Number(row.head_seq), hash: row.head_hash } : undefined,
+      };
+  }
 }

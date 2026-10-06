@@ -25,16 +25,19 @@ export async function setOrganizationFeature(args: {
 
 export async function registerFeature(args: { name: string; key?: string; description?: string }): Promise<ActionResult> {
   return mutate(["/features"], async (tx) => {
-    await tx.features.register({
+    const registered = await tx.features.register({
       name: text(args?.name, "field.featureName", { max: 100 }),
       key: text(args?.key, "field.featureKey", { max: 64, optional: true }),
       description: text(args?.description, "field.description", { max: 500, optional: true }),
     });
+    await audit(tx, undefined, "feature.registered", { type: "feature", id: registered.key });
   });
 }
 
 export async function unregisterFeature(args: { key: string }): Promise<ActionResult> {
   return mutate(["/features"], async (tx) => {
-    await tx.features.unregister(text(args?.key, "field.feature", { max: 128 }));
+    const key = text(args?.key, "field.feature", { max: 128 });
+    await tx.features.unregister(key);
+    await audit(tx, undefined, "feature.unregistered", { type: "feature", id: key });
   });
 }

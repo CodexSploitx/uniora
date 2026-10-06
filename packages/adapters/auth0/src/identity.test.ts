@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveIdentity, toIdentity } from "./identity.js";
+import { resolveIdentity, toIdentity, toVerifiedEmail } from "./identity.js";
 import type { Auth0VerifyTokenFn } from "./types.js";
 
 describe("toIdentity", () => {
@@ -66,5 +66,25 @@ describe("resolveIdentity", () => {
 
     expect(await resolveIdentity(verifyToken, "")).toBeNull();
     expect(called).toBe(false);
+  });
+});
+
+describe("toVerifiedEmail (audit F-13)", () => {
+  it("returns the address only when the provider says it is verified", () => {
+    expect(toVerifiedEmail({ sub: "a", email: "Ana@X.com", email_verified: true })).toBe("Ana@X.com");
+  });
+
+  it.each([
+    ["flagged unverified", { sub: "a", email: "ana@x.com", email_verified: false }],
+    ["no verification flag at all", { sub: "a", email: "ana@x.com" }],
+    ["no address", { sub: "a" }],
+  ])("returns null when the address is %s", (_label, input) => {
+    expect(toVerifiedEmail(input)).toBeNull();
+  });
+
+  it("returns null for null/undefined and for non-string addresses", () => {
+    expect(toVerifiedEmail(null)).toBeNull();
+    expect(toVerifiedEmail(undefined)).toBeNull();
+    expect(toVerifiedEmail({ ...({ sub: "a", email: "Ana@X.com", email_verified: true }), email: 42 as unknown as string })).toBeNull();
   });
 });

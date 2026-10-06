@@ -20,6 +20,14 @@ export interface StorageProbe {
   countIdentityLinks(): Promise<number>;
   /** Number of audit entries recorded with this exact `action`. */
   countAuditEntries(action: string): Promise<number>;
+  /** A plain `UPDATE` of an audit row's action, as any SQL client could issue it. Resolves `"rejected"` if the database refuses. */
+  attemptAuditUpdate(id: string): Promise<"rejected" | "applied">;
+  /** A plain `DELETE` of an audit row. Resolves `"rejected"` if the database refuses. */
+  attemptAuditDelete(id: string): Promise<"rejected" | "applied">;
+  /** Edits an audit row the way a privileged attacker would (protections switched off, then back on). */
+  tamperAuditAction(id: string, action: string): Promise<void>;
+  /** Removes an audit row the way a privileged attacker would (protections switched off, then back on). */
+  tamperAuditDelete(id: string): Promise<void>;
 }
 
 /**

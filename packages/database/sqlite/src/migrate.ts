@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Database } from "better-sqlite3";
 import { MIGRATION_0001_INIT } from "./migrations/0001_init.js";
 import { MIGRATION_0002_INVITATIONS } from "./migrations/0002_invitations.js";
+import { MIGRATION_0003_AUDIT_LOG_INTEGRITY } from "./migrations/0003_audit_log_integrity.js";
 
 interface Migration {
   readonly id: string;
@@ -12,6 +13,7 @@ interface Migration {
 const MIGRATIONS: readonly Migration[] = [
   { id: "0001_init", sql: MIGRATION_0001_INIT },
   { id: "0002_invitations", sql: MIGRATION_0002_INVITATIONS },
+  { id: "0003_audit_log_integrity", sql: MIGRATION_0003_AUDIT_LOG_INTEGRITY },
 ];
 
 const LEDGER_TABLE = "uniora_schema_migrations";

@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import { defineStorageConformance, type StorageHarness } from "@uniora/storage-conformance";
 import { createTestPool } from "./test-pool.js";
 import { applyMigrations } from "./migrate.js";
+import { createInvitationService, createOrganizationWithOwner } from "@uniora/core";
 import { createPostgresStorage } from "./storage.js";
 
 let pool: Pool;
@@ -49,8 +50,38 @@ const harness: StorageHarness = {
       );
       return Number(result.rows[0]!.count);
     },
+    async attemptAuditUpdate(id) {
+      return pool.query("update uniora.audit_logs set action = 'x' where id = $1", [id]).then(
+        () => "applied" as const,
+        () => "rejected" as const,
+      );
+    },
+    async attemptAuditDelete(id) {
+      return pool.query("delete from uniora.audit_logs where id = $1", [id]).then(
+        () => "applied" as const,
+        () => "rejected" as const,
+      );
+    },
+    async tamperAuditAction(id, action) {
+      await withoutAuditProtection(`update uniora.audit_logs set action = '${action.replace(/'/g, "''")}' where id = '${id.replace(/'/g, "''")}'`);
+    },
+    async tamperAuditDelete(id) {
+      await withoutAuditProtection(`delete from uniora.audit_logs where id = '${id.replace(/'/g, "''")}'`);
+    },
   },
 };
+
+/** What a superuser (or the table owner) could do: switch the append-only trigger off, edit, switch it back on. */
+async function withoutAuditProtection(statement: string): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("alter table uniora.audit_logs disable trigger audit_logs_append_only");
+    await client.query(statement);
+    await client.query("alter table uniora.audit_logs enable trigger audit_logs_append_only");
+  } finally {
+    client.release();
+  }
+}
 
 const identity = { provider: "supabase", subject: "user-1" };
 
@@ -114,5 +145,42 @@ defineStorageConformance(harness, () => {
     expect(result.rowCount).toBe(0);
 
     expect(await harness.probe.hasMembershipRole("m-2", roleId)).toBe(false);
+  });
+
+  it("el límite de invitaciones se respeta entre procesos distintos (audit F-06)", async () => {
+    const second = createTestPool();
+    try {
+      const storageA = createPostgresStorage(pool);
+      const storageB = createPostgresStorage(second);
+      await createOrganizationWithOwner(storageA, {
+        organizationId: "org-race",
+        organizationName: "Race",
+        ownerRoleId: "role-owner-race",
+        membershipId: "m-owner-race",
+        ownerIdentity: { provider: "supabase", subject: "owner-race" },
+      });
+      await storageA.roles.create({ id: "role-viewer-race", organizationId: "org-race", name: "Viewer", permissionKeys: [] });
+      const make = (storage: typeof storageA) =>
+        createInvitationService({
+          storage,
+          acceptUrl: (token) => `https://app.test/invite/${token}`,
+          rateLimits: { perOrganizationPerHour: 3 },
+        });
+      const services = [make(storageA), make(storageB)];
+
+      const results = await Promise.allSettled(
+        Array.from({ length: 12 }, (_, index) =>
+          services[index % 2]!.invite({
+            organizationId: "org-race",
+            email: `victim${index}@example.com`,
+            roleIds: ["role-viewer-race"],
+            invitedBy: { provider: "supabase", subject: "owner-race" },
+          }),
+        ),
+      );
+      expect(results.filter((r) => r.status === "fulfilled"), JSON.stringify(results.map((r) => (r.status === "rejected" ? String(r.reason) : "ok")))).toHaveLength(3);
+    } finally {
+      await second.end();
+    }
   });
 });

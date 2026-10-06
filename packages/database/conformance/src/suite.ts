@@ -583,6 +583,70 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
       expect(keys).not.toContain("delete");
     });
 
+    it("encadena las entradas con hash y verifyIntegrity() las valida, incluso con escrituras concurrentes (audit F-04)", async () => {
+      const storage = harness.storage();
+      await Promise.all(
+        Array.from({ length: 15 }, (_, n) =>
+          storage.auditLogs.record({ id: `chain-${n}`, actor: identity, action: "role.created", metadata: { n } }),
+        ),
+      );
+      const report = await storage.auditLogs.verifyIntegrity();
+      expect(report).toMatchObject({ ok: true, checked: 15 });
+      expect(report.head?.hash).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it("verifyIntegrity() de un log vacío es válido", async () => {
+      expect(await harness.storage().auditLogs.verifyIntegrity()).toMatchObject({ ok: true, checked: 0 });
+    });
+
+    it("la base rechaza UPDATE y DELETE directos sobre el audit log (audit F-04)", async () => {
+      const storage = harness.storage();
+      await storage.auditLogs.record({ id: "log-x", actor: identity, action: "role.created" });
+      expect(await harness.probe.attemptAuditUpdate("log-x")).toBe("rejected");
+      expect(await harness.probe.attemptAuditDelete("log-x")).toBe("rejected");
+      expect(await storage.auditLogs.verifyIntegrity()).toMatchObject({ ok: true, checked: 1 });
+    });
+
+    it("detecta una entrada editada o borrada por alguien con privilegios para saltarse la protección", async () => {
+      const storage = harness.storage();
+      for (const id of ["a", "b", "c", "d"]) await storage.auditLogs.record({ id, actor: identity, action: "role.created" });
+
+      await harness.probe.tamperAuditAction("b", "role.deleted");
+      expect(await storage.auditLogs.verifyIntegrity()).toMatchObject({
+        ok: false,
+        checked: 1,
+        broken: { id: "b", reason: "content_mismatch" },
+      });
+    });
+
+    it("detecta una entrada borrada del medio del log", async () => {
+      const storage = harness.storage();
+      for (const id of ["a", "b", "c", "d"]) await storage.auditLogs.record({ id, actor: identity, action: "role.created" });
+
+      await harness.probe.tamperAuditDelete("b");
+      expect(await storage.auditLogs.verifyIntegrity()).toMatchObject({
+        ok: false,
+        broken: { id: "c", reason: "chain_broken" },
+      });
+    });
+
+    it("el ancla externa detecta el truncado del final del log (audit F-04)", async () => {
+      const storage = harness.storage();
+      for (const id of ["a", "b", "c", "d"]) await storage.auditLogs.record({ id, actor: identity, action: "role.created" });
+      const { head } = await storage.auditLogs.verifyIntegrity();
+      expect(head).toBeDefined();
+
+      expect(await storage.auditLogs.verifyIntegrity({ anchor: head! })).toMatchObject({ ok: true, anchor: "valid" });
+      expect(await storage.auditLogs.verifyIntegrity({ anchor: { ...head!, hash: "0".repeat(64) } })).toMatchObject({
+        ok: false,
+        anchor: "mismatch",
+      });
+
+      await harness.probe.tamperAuditDelete("d");
+      expect(await storage.auditLogs.verifyIntegrity()).toMatchObject({ ok: true });
+      expect(await storage.auditLogs.verifyIntegrity({ anchor: head! })).toMatchObject({ ok: false, anchor: "missing" });
+    });
+
     it("listRecent mezcla entradas de todas las organizaciones y pagina con keyset (`before`), no offset", async () => {
       const storage = harness.storage();
       await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
@@ -1190,6 +1254,35 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
 
           expect(await harness.probe.countAuditEntries("identity_link.created")).toBe(succeededCount);
         });
+    });
+
+    describe("identity links — unlink (audit F-12)", () => {
+      const actor = { provider: "supabase", subject: "operator" };
+      const from = { provider: "clerk", subject: "user_new" };
+      const to = { provider: "supabase", subject: "user-old" };
+
+      it("unlink() quita el enlace, deja de resolver, audita y es idempotente", async () => {
+        const storage = harness.storage();
+        await storage.identityLinks.link({ from, to, actor });
+        expect(await storage.identityLinks.resolve(from)).toEqual(to);
+
+        expect(await storage.identityLinks.unlink({ from, actor })).toBe(true);
+        expect(await storage.identityLinks.resolve(from)).toEqual(from);
+        expect(await harness.probe.countIdentityLinks()).toBe(0);
+        expect(await harness.probe.countAuditEntries("identity_link.removed")).toBe(1);
+
+        expect(await storage.identityLinks.unlink({ from, actor })).toBe(false);
+        expect(await harness.probe.countAuditEntries("identity_link.removed")).toBe(1);
+        expect(await storage.auditLogs.verifyIntegrity()).toMatchObject({ ok: true });
+      });
+
+      it("un alias desenlazado puede volver a enlazarse a otro destino", async () => {
+        const storage = harness.storage();
+        await storage.identityLinks.link({ from, to, actor });
+        await storage.identityLinks.unlink({ from, actor });
+        const other = { provider: "supabase", subject: "user-other" };
+        await expect(storage.identityLinks.link({ from, to: other, actor })).resolves.toMatchObject({ to: other });
+      });
     });
 
     describe("invitations", () => {

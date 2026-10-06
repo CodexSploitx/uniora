@@ -6,6 +6,10 @@
  */
 export interface ClerkVerifiedTokenPayload {
   readonly sub: string;
+  /** Only present if your Clerk session token template adds the `email` claim. */
+  readonly email?: string;
+  /** Only present if your session token template adds `email_verified`. */
+  readonly email_verified?: boolean;
 }
 
 /**

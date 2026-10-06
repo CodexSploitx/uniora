@@ -25,6 +25,9 @@ export interface BetterAuthHeaders {
  */
 export interface BetterAuthUser {
   readonly id: string;
+  readonly email?: string;
+  /** Better Auth sets `emailVerified` once the address was confirmed. */
+  readonly emailVerified?: boolean;
 }
 
 /**

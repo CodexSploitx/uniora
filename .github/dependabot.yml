@@ -5,3 +5,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+
+  # Dependencias npm del monorepo: los avisos de seguridad llegan como PR sin esperar a un `pnpm audit` manual.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10

@@ -102,7 +102,7 @@ describe("invite", () => {
     const input = { organizationId: "org-1", email: "a@b.co", roleIds: ["role-editor"], invitedBy: owner };
     for (let n = 0; n < 2; n++) {
       const { invitation } = await service.invite(input);
-      await service.revoke(invitation.id, owner);
+      await service.revoke({ organizationId: "org-1", invitationId: invitation.id, actor: owner });
     }
     await expect(service.invite(input)).rejects.toMatchObject({ reason: "rate_limited" });
     clock.time += 61 * 60 * 1000;
@@ -163,9 +163,9 @@ describe("resend and revoke", () => {
   it("resend issues a new link, kills the old one, and honours the cooldown", async () => {
     const { service, clock, sent } = await setup();
     const first = await service.invite({ organizationId: "org-1", email: "a@b.co", roleIds: ["role-editor"], invitedBy: owner });
-    await expect(service.resend(first.invitation.id, owner)).rejects.toMatchObject({ reason: "cooldown" });
+    await expect(service.resend({ organizationId: "org-1", invitationId: first.invitation.id, actor: owner })).rejects.toMatchObject({ reason: "cooldown" });
     clock.time += 120_000;
-    const second = await service.resend(first.invitation.id, owner);
+    const second = await service.resend({ organizationId: "org-1", invitationId: first.invitation.id, actor: owner });
     expect(sent).toHaveLength(2);
     expect(second.acceptUrl).not.toBe(first.acceptUrl);
     expect(second.invitation.delivery.sends).toBe(2);
@@ -176,10 +176,10 @@ describe("resend and revoke", () => {
   it("revoke makes the link unusable and can't be applied twice", async () => {
     const { service } = await setup();
     const { invitation, acceptUrl } = await service.invite({ organizationId: "org-1", email: "a@b.co", roleIds: ["role-editor"], invitedBy: owner });
-    await service.revoke(invitation.id, owner);
+    await service.revoke({ organizationId: "org-1", invitationId: invitation.id, actor: owner });
     expect(await service.preview(tokenOf(acceptUrl))).toBeNull();
     await expect(service.accept({ token: tokenOf(acceptUrl), identity: invitee, verifiedEmail: "a@b.co" })).rejects.toMatchObject({ reason: "revoked" });
-    await expect(service.revoke(invitation.id, owner)).rejects.toThrow(InvitationError);
+    await expect(service.revoke({ organizationId: "org-1", invitationId: invitation.id, actor: owner })).rejects.toThrow(InvitationError);
   });
 });
 
@@ -247,5 +247,86 @@ describe("accept", () => {
     await second.storage.roles.delete("role-viewer");
     await expect(second.service.accept({ token: second.token, identity: invitee, verifiedEmail: "ana@example.com" })).rejects.toMatchObject({ reason: "roles_unavailable" });
     expect(await second.storage.memberships.findByIdentity("org-1", invitee)).toBeNull();
+  });
+});
+
+describe("organization binding (audit F-03)", () => {
+  it("resend and revoke treat another organization's invitation exactly like a missing one", async () => {
+    const { service, storage, clock } = await setup();
+    await createOrganizationWithOwner(storage, {
+      organizationId: "org-2",
+      organizationName: "Other Corp",
+      ownerRoleId: "role-owner-2",
+      membershipId: "m-owner-2",
+      ownerIdentity: { provider: "supabase", subject: "owner-2" },
+    });
+    const { invitation, acceptUrl } = await service.invite({ organizationId: "org-1", email: "a@b.co", roleIds: ["role-editor"], invitedBy: owner });
+    clock.time += 120_000;
+    const stranger = { organizationId: "org-2", invitationId: invitation.id, actor: { provider: "supabase", subject: "owner-2" } };
+
+    await expect(service.resend(stranger)).rejects.toMatchObject({ reason: "invalid" });
+    await expect(service.revoke(stranger)).rejects.toMatchObject({ reason: "invalid" });
+    // untouched: the original link still works and the invitation is still pending
+    expect(await service.preview(tokenOf(acceptUrl))).not.toBeNull();
+    expect((await storage.invitations.findById(invitation.id))?.status).toBe("pending");
+  });
+});
+
+describe("rate limits (audit F-06)", () => {
+  async function manyOrgs(storage: Awaited<ReturnType<typeof setup>>["storage"], n: number) {
+    for (let i = 0; i < n; i++) {
+      await createOrganizationWithOwner(storage, {
+        organizationId: `g${i}`,
+        organizationName: `Org ${i}`,
+        ownerRoleId: `go${i}`,
+        membershipId: `gm${i}`,
+        ownerIdentity: { provider: "x", subject: `g-owner-${i}` },
+      });
+      await storage.roles.create({ id: `gv${i}`, organizationId: `g${i}`, name: "Viewer", permissionKeys: [] });
+    }
+  }
+
+  it("organizations an attacker controls can't exhaust a victim's quota for everybody else", async () => {
+    const { service, storage } = await setup();
+    await manyOrgs(storage, 6);
+    for (let i = 0; i < 6; i++) {
+      await service.invite({ organizationId: `g${i}`, email: "ceo@target.com", roleIds: [`gv${i}`], invitedBy: owner });
+    }
+    await expect(
+      service.invite({ organizationId: "org-1", email: "ceo@target.com", roleIds: ["role-editor"], invitedBy: owner }),
+    ).resolves.toBeDefined();
+  });
+
+  it("still enforces a global ceiling per e-mail", async () => {
+    const { service, storage } = await setup({ rateLimits: { perEmailGlobalPerHour: 3 } });
+    await manyOrgs(storage, 4);
+    for (let i = 0; i < 3; i++) {
+      await service.invite({ organizationId: `g${i}`, email: "x@target.com", roleIds: [`gv${i}`], invitedBy: owner });
+    }
+    await expect(
+      service.invite({ organizationId: "g3", email: "x@target.com", roleIds: ["gv3"], invitedBy: owner }),
+    ).rejects.toMatchObject({ reason: "rate_limited" });
+  });
+
+  it("concurrent invites can't all slip under the limit", async () => {
+    const { service, storage } = await setup({ rateLimits: { perOrganizationPerHour: 5 } });
+    await manyOrgs(storage, 1);
+    const results = await Promise.allSettled(
+      Array.from({ length: 20 }, (_, n) =>
+        service.invite({ organizationId: "org-1", email: `p${n}@x.co`, roleIds: ["role-editor"], invitedBy: owner }),
+      ),
+    );
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(5);
+  });
+});
+
+describe("audit trail (audit F-10)", () => {
+  it("never stores the invitee's address in the append-only log, only a fingerprint", async () => {
+    const { service, storage } = await setup();
+    await service.invite({ organizationId: "org-1", email: "Ana@Example.com", roleIds: ["role-editor"], invitedBy: owner });
+    const entries = await storage.auditLogs.listByOrganization("org-1");
+    const created = entries.find((entry) => entry.action === "invitation.created")!;
+    expect(JSON.stringify(created.metadata)).not.toContain("ana@example.com");
+    expect(created.metadata?.emailFingerprint).toMatch(/^[0-9a-f]{32}$/);
   });
 });

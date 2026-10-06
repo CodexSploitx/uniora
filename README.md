@@ -195,7 +195,9 @@ const { acceptUrl, delivery } = await invitations.invite({
 const { membership } = await invitations.accept({ token, identity, verifiedEmail: user.email }); // provider-verified e-mail only
 ```
 
-Delivery never fails the request: transient SMTP errors are retried with jittered backoff and each attempt has a timeout; the outcome is recorded on the invitation and a failed one can be `resend`-ed (which issues a new link and invalidates the old one). The Owner role can't be granted by invitation. Without a sender the invitation is still created and the link is returned for you to deliver.
+Delivery never fails the request: transient SMTP errors are retried with jittered backoff and each attempt has a timeout; the outcome is recorded on the invitation and a failed one can be `resend`-ed (which issues a new link and invalidates the old one). The Owner role can't be granted by invitation. Without a sender the invitation is still created and the link is returned for you to deliver. `resend` and `revoke` take `{ organizationId, invitationId, actor }` and treat another organization's invitation as missing; `accept` needs a provider-verified address (`toVerifiedEmail` in each identity adapter).
+
+**Hardening:** the audit log is append-only and hash-chained (`auditLogs.verifyIntegrity()`, `npx uniora doctor`), and the engine can report every decision through `onDecision`. See [docs/hardening.md](docs/hardening.md) for the controls that live outside the code (database roles, anchoring the audit head, release settings).
 
 ```bash
 # .env

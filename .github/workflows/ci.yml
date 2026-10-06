@@ -61,6 +61,11 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Dependencias de producción con avisos conocidos de severidad alta o crítica rompen el CI
+      # (auditoría F-07/F-14). Los avisos sin versión corregida se ignoran explícitamente en
+      # pnpm-workspace.yaml (auditConfig), con el motivo al lado.
+      - run: pnpm audit --prod --audit-level=high
+
       # build antes de typecheck/test: los paquetes se consumen entre sí a través de dist/.
       - run: pnpm -r build
       - run: pnpm -r typecheck

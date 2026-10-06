@@ -40,7 +40,9 @@ export type { FeatureRepository, FeatureUsage, RegisterFeatureInput, SearchFeatu
 export { FeatureError } from "./feature/repository.js";
 export { assertValidFeatureKey, resolveFeatureKey, sanitizeFeatureName } from "./feature/key.js";
 
-export type { AuditLogEntry, AuditLogTarget } from "./audit-log/types.js";
+export type { AuditIntegrityOptions, AuditIntegrityReport, AuditLogEntry, AuditLogTarget } from "./audit-log/types.js";
+export { applyAnchor, computeAuditEntryHash } from "./audit-log/chain.js";
+export type { ChainedAuditFields } from "./audit-log/chain.js";
 export type {
   AuditLogCursor,
   AuditLogRepository,
@@ -77,6 +79,7 @@ export type {
   DeliveryOutcome,
   InvitationPreview,
   InvitationRateLimits,
+  InvitationRef,
   InvitationService,
   InvitationServiceOptions,
   InviteInput,
@@ -87,8 +90,15 @@ export { generateInvitationToken, hashInvitationToken, INVITATION_TOKEN_PREFIX }
 
 export type { UnioraStorage, UnioraTransaction } from "./storage/types.js";
 export { createMemoryStorage } from "./storage/memory.js";
+export { createAuditedStorage, type AuditedStorageOptions } from "./storage/audited.js";
 
-export type { AccessCheckInput, AuthorizationEngine, CanInput } from "./authorization/engine.js";
+export type {
+  AccessCheckInput,
+  AuthorizationDecision,
+  AuthorizationEngine,
+  AuthorizationEngineOptions,
+  CanInput,
+} from "./authorization/engine.js";
 export { createAuthorizationEngine } from "./authorization/engine.js";
 export type { AuthorizationSnapshot, ComputeAuthorizationSnapshotInput } from "./authorization/snapshot.js";
 export { computeAuthorizationSnapshot } from "./authorization/snapshot.js";

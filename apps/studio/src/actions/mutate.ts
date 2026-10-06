@@ -12,14 +12,21 @@ import {
   type UnioraTransaction,
 } from "@uniora/core";
 import { getStorage } from "@/lib/db";
+import { getStudioEnv } from "@/lib/env";
 import { StudioAuthError, StudioReadOnlyError, requireWrite } from "@/lib/session";
 import { getT } from "@/i18n/server";
 import { InputError, StudioError, text } from "@/lib/validate";
 
 export type ActionResult<T = undefined> = ({ ok: true } & (T extends undefined ? object : { data: T })) | { ok: false; error: string };
 
-/** Who audit entries created from Studio are attributed to. */
-export const STUDIO_ACTOR: Identity = { provider: "uniora-studio", subject: "local-admin" };
+/**
+ * Who audit entries created from Studio are attributed to: the OS user that launched it
+ * (`UNIORA_STUDIO_OPERATOR`, set by the CLI), so two people using Studio on different machines
+ * are told apart (audit F-05). Falls back to "local-admin" when launched by hand.
+ */
+export function studioActor(): Identity {
+  return { provider: "uniora-studio", subject: getStudioEnv().operator };
+}
 
 export { InputError, StudioError, text, textList } from "@/lib/validate";
 
@@ -29,12 +36,12 @@ export function newId(): string {
 
 export async function audit(
   tx: UnioraTransaction,
-  organizationId: string,
+  organizationId: string | undefined,
   action: string,
   target?: { type: string; id: string },
   metadata?: Record<string, unknown>,
 ): Promise<void> {
-  await tx.auditLogs.record({ id: newId(), organizationId, actor: STUDIO_ACTOR, action, target, metadata });
+  await tx.auditLogs.record({ id: newId(), organizationId, actor: studioActor(), action, target, metadata });
 }
 
 const DOMAIN_ERRORS = [FeatureError, IdentityLinkError, MembershipError, OrganizationError, PermissionError, RoleError];

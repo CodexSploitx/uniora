@@ -2,6 +2,10 @@ import { authorizeRoute } from "@uniora/next";
 import { getDemoAuthorization, isDemoRole } from "@/lib/demo-storage";
 
 /**
+ * DEMO ONLY: the caller picks their own role and permission through the query string, which a real
+ * route must never do — identity comes from a verified session and the permission is a constant of the
+ * route (see docs/hardening.md). Omitting both `permission` and `feature` only checks membership.
+ *
  * Demonstrates `@uniora/next`'s `authorizeRoute` helper for a Next.js Route
  * Handler (docs/PROYECT.md §25) — a plain Web `Request -> Response`
  * function, so `authorizeRoute` hands back a ready-to-return `Response`

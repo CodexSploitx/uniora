@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveIdentity, toIdentity } from "./identity.js";
+import { resolveIdentity, toIdentity, toVerifiedEmail } from "./identity.js";
 import type { SupabaseAuthClient } from "./types.js";
 
 function fakeClient(response: SupabaseAuthClient["auth"]["getUser"]): SupabaseAuthClient {
@@ -71,5 +71,25 @@ describe("resolveIdentity", () => {
 
     expect(await resolveIdentity(client, "")).toBeNull();
     expect(called).toBe(false);
+  });
+});
+
+describe("toVerifiedEmail (audit F-13)", () => {
+  it("returns the address only when the provider says it is verified", () => {
+    expect(toVerifiedEmail({ id: "a", email: "Ana@X.com", email_confirmed_at: "2026-01-01T00:00:00Z" })).toBe("Ana@X.com");
+  });
+
+  it.each([
+    ["flagged unverified", { id: "a", email: "ana@x.com", email_confirmed_at: null }],
+    ["no verification flag at all", { id: "a", email: "ana@x.com" }],
+    ["no address", { id: "a" }],
+  ])("returns null when the address is %s", (_label, input) => {
+    expect(toVerifiedEmail(input)).toBeNull();
+  });
+
+  it("returns null for null/undefined and for non-string addresses", () => {
+    expect(toVerifiedEmail(null)).toBeNull();
+    expect(toVerifiedEmail(undefined)).toBeNull();
+    expect(toVerifiedEmail({ ...({ id: "a", email: "Ana@X.com", email_confirmed_at: "2026-01-01T00:00:00Z" }), email: 42 as unknown as string })).toBeNull();
   });
 });

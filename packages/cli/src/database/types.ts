@@ -44,6 +44,8 @@ export interface DatabaseDriver {
   applyMigrations(): Promise<MigrationRunResult>;
   /** Chequeos propios del motor para `doctor` (versión, integridad...). Vacío si no hay conexión útil. */
   engineChecks(): Promise<CheckResult[]>;
+  /** Recalcula la cadena de hashes del audit log (auditoría F-04). Solo con el esquema completo. */
+  auditIntegrity(): Promise<CheckResult>;
   /** Invariante "toda organización tiene ≥ 1 owner". Solo tiene sentido con el esquema completo. */
   ownerInvariant(): Promise<CheckResult>;
   close(): Promise<void>;

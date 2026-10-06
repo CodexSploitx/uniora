@@ -82,6 +82,19 @@ export function authorize<Req = unknown>(
 
       const permissionKey = typeof permission === "function" ? permission(req) : permission;
       const featureKey = typeof feature === "function" ? feature(req) : feature;
+
+      // SECURITY FIX (audit F-01): a dynamic resolver can yield `undefined`, `null`, `""` or a
+      // non-string at request time (e.g. `PERMS[req.method]` for an unmapped method). Passing
+      // that on would drop the key and degrade to a membership-only check, so any key the
+      // middleware was configured to require but did not get as a non-empty string is a denial.
+      const missing = (configured: unknown, value: unknown) =>
+        configured !== undefined && (typeof value !== "string" || value.length === 0);
+      if (missing(permission, permissionKey) || missing(feature, featureKey)) {
+        if (onDenied) onDenied(req, res);
+        else res.status(403).json({ error: "forbidden" });
+        return;
+      }
+
       const allowed =
         featureKey === undefined && permissionKey !== undefined
           ? await engine.can({ ...context, permission: permissionKey })

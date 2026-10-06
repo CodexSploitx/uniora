@@ -72,3 +72,17 @@ export async function resolveIdentity(
     return null;
   }
 }
+
+/**
+ * The e-mail address the provider has VERIFIED for this user, or `null` (never the unverified
+ * one). This is what `InvitationService.accept({ verifiedEmail })` must receive: an invitation
+ * is bound to an address, and an address the user merely typed in proves nothing (audit F-13).
+ * Call it on the same already-verified user you built the identity from.
+ */
+export function toVerifiedEmail(user: BetterAuthUser | null | undefined): string | null {
+  if (typeof user?.email === "string" && user.emailVerified === true) {
+    const email = user.email.trim();
+    return email.length > 0 ? email : null;
+  }
+  return null;
+}

@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 export const SESSION_COOKIE = "uniora_studio_session";
 
@@ -8,6 +8,24 @@ export function tokensMatch(supplied: string, expected: string): boolean {
   const b = createHash("sha256").update(expected).digest();
   return timingSafeEqual(a, b);
 }
+
+/**
+ * What the session cookie holds. NOT the launch token itself (audit F-08): a cookie that is the
+ * secret would let anything that ever sees the cookie (a backup of the browser profile, a proxy
+ * log) replay the launch URL's authority. This is an HMAC of a fixed label keyed by the token, so
+ * the cookie proves knowledge of the token without revealing it.
+ */
+export function sessionCookieValue(token: string): string {
+  return createHmac("sha256", token).update("uniora-studio-session-v1").digest("hex");
+}
+
+/** Constant-time check of a presented session cookie against the launch token. */
+export function sessionMatches(cookie: string, token: string): boolean {
+  return tokensMatch(cookie, sessionCookieValue(token));
+}
+
+/** The session cookie dies after this long even if the browser stays open (seconds). */
+export const SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 

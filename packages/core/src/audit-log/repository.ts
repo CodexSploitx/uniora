@@ -1,5 +1,5 @@
 import type { Identity } from "../identity/types.js";
-import type { AuditLogEntry, AuditLogTarget } from "./types.js";
+import type { AuditIntegrityOptions, AuditIntegrityReport, AuditLogEntry, AuditLogTarget } from "./types.js";
 
 export interface RecordAuditLogInput {
   id: string;
@@ -54,4 +54,11 @@ export interface AuditLogRepository {
    * `AuditLogCursor`), not `offset`.
    */
   listRecent(options?: ListRecentAuditLogOptions): Promise<AuditLogEntry[]>;
+  /**
+   * Re-computes the hash chain over the whole log and reports the first entry that doesn't
+   * match. Read-only, and linear in the size of the log: run it from a scheduled job, not per
+   * request. Detects edited and deleted entries (not removal of the newest ones — see
+   * `AuditIntegrityReport`).
+   */
+  verifyIntegrity(options?: AuditIntegrityOptions): Promise<AuditIntegrityReport>;
 }

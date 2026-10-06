@@ -7,6 +7,10 @@
  */
 export interface Auth0VerifiedTokenPayload {
   readonly sub: string;
+  /** Present when the access token (or ID token) carries the `email` claim. */
+  readonly email?: string;
+  /** Auth0 sets `email_verified: true` only after the address was confirmed. */
+  readonly email_verified?: boolean;
 }
 
 /**

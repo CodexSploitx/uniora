@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { detectLocale } from "@/i18n/config";
-import { SESSION_COOKIE, isAllowedHost, tokensMatch } from "@/lib/token";
+import { SESSION_COOKIE, SESSION_MAX_AGE_SECONDS, isAllowedHost, sessionCookieValue, sessionMatches, tokensMatch } from "@/lib/token";
 
 const DENIALS = {
   notConfigured: { en: "not configured. Launch it with `npx uniora studio`.", es: "no está configurado. Ábrelo con `npx uniora studio`." },
@@ -43,16 +43,17 @@ export function proxy(request: NextRequest) {
     const clean = request.nextUrl.clone();
     clean.searchParams.delete("token");
     const response = NextResponse.redirect(clean);
-    response.cookies.set(SESSION_COOKIE, token, {
+    response.cookies.set(SESSION_COOKIE, sessionCookieValue(token), {
       httpOnly: true,
       sameSite: "strict",
       path: "/",
+      maxAge: SESSION_MAX_AGE_SECONDS,
     });
     return response;
   }
 
   const cookie = request.cookies.get(SESSION_COOKIE)?.value;
-  if (!cookie || !tokensMatch(cookie, token)) {
+  if (!cookie || !sessionMatches(cookie, token)) {
     return deny(request, 401, "locked");
   }
 

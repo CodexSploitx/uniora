@@ -57,6 +57,16 @@ export interface IdentityLinkRepository {
    * - `from` and `to` are the same identity.
    */
   link(input: LinkIdentityInput): Promise<IdentityLink>;
+  /**
+   * Removes the link whose `from` is `input.from`, so that identity no longer resolves to the
+   * `to` membership (audit F-12: a mistaken or abused link had no way back short of editing the
+   * database by hand). Idempotent: resolves `false` when there was no such link. Self-audits
+   * (`identity_link.removed`, global entry) in the same transaction, like `link()`.
+   *
+   * **Performs no authorization of its own** — same trust boundary as `link()`: the host decides
+   * who may unlink (an operator, or the owner of the `to` account after re-authenticating).
+   */
+  unlink(input: { from: Identity; actor: Identity }): Promise<boolean>;
   /** Follows at most one hop. Returns `identity` unchanged if it has no link. */
   resolve(identity: Identity): Promise<Identity>;
 }

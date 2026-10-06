@@ -104,3 +104,23 @@ describe("AuditLogRepository (createMemoryStorage)", () => {
     });
   });
 });
+
+describe("hash chain (audit F-04, memory)", () => {
+  it("verifies an intact log, even when entries are recorded concurrently", async () => {
+    const storage = createMemoryStorage();
+    await Promise.all(
+      Array.from({ length: 12 }, (_, n) => storage.auditLogs.record({ id: `l-${n}`, actor: identity, action: "x.y", metadata: { n } })),
+    );
+    const report = await storage.auditLogs.verifyIntegrity();
+    expect(report).toMatchObject({ ok: true, checked: 12 });
+    expect(report.head?.hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("detects an entry that was altered after the fact", async () => {
+    const storage = createMemoryStorage();
+    for (const id of ["a", "b", "c"]) await storage.auditLogs.record({ id, actor: identity, action: "role.created" });
+    const entries = await storage.auditLogs.listRecent();
+    (entries.find((entry) => entry.id === "b") as { action: string }).action = "role.deleted";
+    expect(await storage.auditLogs.verifyIntegrity()).toMatchObject({ ok: false, broken: { id: "b", reason: "content_mismatch" } });
+  });
+});

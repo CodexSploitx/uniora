@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir, userInfo } from "node:os";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
@@ -85,6 +86,8 @@ export function buildStudioEnv(
     port: number;
     readOnly: boolean;
     authProvider?: string;
+    /** OS user that launched Studio; recorded as the actor of the audit entries it writes. */
+    operator?: string;
   },
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
@@ -100,6 +103,7 @@ export function buildStudioEnv(
   // validated further, since a host app may still use more than one auth
   // provider even when `auth.provider` names its main one.
   if (options.authProvider) env.UNIORA_STUDIO_AUTH_PROVIDER = options.authProvider;
+  if (options.operator) env.UNIORA_STUDIO_OPERATOR = options.operator;
   return env;
 }
 
@@ -126,13 +130,52 @@ export function resolveStudio(): { dir: string; nextBin: string } {
   return { dir, nextBin };
 }
 
-function openBrowser(url: string): void {
+function operatorName(): string | undefined {
+  try {
+    return userInfo().username || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A tiny local page that forwards the browser to the launch URL. The browser is handed THIS file's
+ * path instead of the URL, because the opener's command line is readable by every local user
+ * (`ps`, `/proc/<pid>/cmdline`) and the URL carries the launch token (audit F-08). The page lives
+ * in a `0700` directory as a `0600` file and is removed shortly after (and on exit).
+ */
+export function writeLaunchPage(url: string): { path: string; cleanup: () => void } {
+  const dir = mkdtempSync(join(tmpdir(), "uniora-studio-"), { encoding: "utf8" });
+  const path = join(dir, "open.html");
+  const escaped = url.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+  writeFileSync(
+    path,
+    `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer">` +
+      `<meta http-equiv="refresh" content="0;url=${escaped}"><title>UNIORA Studio</title>` +
+      `<p>Opening UNIORA Studio…</p>`,
+    { mode: 0o600 },
+  );
+  return {
+    path,
+    cleanup: () => {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        /* best effort */
+      }
+    },
+  };
+}
+
+function openBrowser(url: string): () => void {
+  const page = writeLaunchPage(url);
+  const target = page.path;
   const [command, args] =
     process.platform === "darwin"
-      ? ["open", [url]]
+      ? ["open", [target]]
       : process.platform === "win32"
-        ? ["cmd", ["/c", "start", "", url]]
-        : ["xdg-open", [url]];
+        ? ["cmd", ["/c", "start", "", target]]
+        : ["xdg-open", [target]];
   try {
     const child = spawn(command, args, { stdio: "ignore", detached: true });
     child.on("error", () => undefined);
@@ -140,6 +183,9 @@ function openBrowser(url: string): void {
   } catch {
     /* sin navegador disponible: el usuario abre la URL impresa */
   }
+  const timer = setTimeout(page.cleanup, 30_000);
+  timer.unref();
+  return page.cleanup;
 }
 
 /**
@@ -186,6 +232,7 @@ export async function runStudio(
       port,
       readOnly: args.readOnly,
       authProvider: config.auth?.provider,
+      operator: operatorName(),
     }),
   });
 
@@ -196,10 +243,11 @@ export async function runStudio(
   console.log(`✓ UNIORA Studio en http://${STUDIO_HOST}:${port}${args.readOnly ? " (solo lectura)" : ""}`);
   console.log(`  Abre esta URL para desbloquearlo (el token cambia en cada ejecución):\n\n  ${url}\n`);
   console.log("  Ctrl+C para detenerlo.");
-  if (args.open) openBrowser(url);
+  const cleanupLaunchPage = args.open ? openBrowser(url) : () => undefined;
 
   await new Promise<void>((resolve) => {
     child.on("exit", (code) => {
+      cleanupLaunchPage();
       if (code && code !== 0 && code !== 143) process.exitCode = code;
       resolve();
     });
