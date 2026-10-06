@@ -1,6 +1,8 @@
 import { beforeAll, afterAll, beforeEach, describe, expect, it } from "vitest";
 import {
   createAuthorizationEngine,
+  createInvitationService,
+  InvitationError,
   createOrganizationWithOwner,
   FeatureError,
   IdentityLinkError,
@@ -1188,6 +1190,183 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
 
           expect(await harness.probe.countAuditEntries("identity_link.created")).toBe(succeededCount);
         });
+    });
+
+    describe("invitations", () => {
+      const owner = { provider: "supabase", subject: "owner" };
+      const newcomer = { provider: "supabase", subject: "newcomer" };
+      const expiresAt = () => new Date(Date.now() + 3_600_000);
+
+      async function seed() {
+        const storage = harness.storage();
+        await createOrganizationWithOwner(storage, {
+          organizationId: "org-1",
+          organizationName: "Acme",
+          ownerRoleId: "role-owner",
+          membershipId: "m-owner",
+          ownerIdentity: owner,
+        });
+        await storage.roles.create({ id: "role-editor", organizationId: "org-1", name: "Editor", permissionKeys: [] });
+        await storage.roles.create({ id: "role-viewer", organizationId: "org-1", name: "Viewer", permissionKeys: [] });
+        return storage;
+      }
+
+      const base = (overrides: Partial<Parameters<ReturnType<typeof harness.storage>["invitations"]["create"]>[0]> = {}) => ({
+        id: "inv-1",
+        organizationId: "org-1",
+        email: "ana@example.com",
+        roleIds: ["role-viewer", "role-editor"],
+        tokenHash: "hash-1",
+        invitedBy: owner,
+        createdAt: new Date(),
+        expiresAt: expiresAt(),
+        ...overrides,
+      });
+
+      it("round-trips an invitation, roles and delivery bookkeeping", async () => {
+        const storage = await seed();
+        const created = await storage.invitations.create(base());
+        expect(created).toMatchObject({
+          id: "inv-1",
+          email: "ana@example.com",
+          status: "pending",
+          invitedBy: owner,
+          delivery: { status: "pending", attempts: 0, sends: 0 },
+        });
+        expect([...created.roleIds].sort()).toEqual(["role-editor", "role-viewer"]);
+        expect((await storage.invitations.findByTokenHash("hash-1"))?.id).toBe("inv-1");
+        expect(await storage.invitations.findByTokenHash("nope")).toBeNull();
+
+        const at = new Date();
+        await storage.invitations.recordDelivery("inv-1", { status: "failed", attempts: 3, error: "boom", at });
+        await storage.invitations.recordDelivery("inv-1", { status: "sent", attempts: 1, at });
+        const after = await storage.invitations.findById("inv-1");
+        expect(after?.delivery).toMatchObject({ status: "sent", attempts: 4, sends: 2, lastError: undefined });
+        expect(after?.delivery.sentAt?.getTime()).toBe(at.getTime());
+      });
+
+      it("allows one pending invitation per organization + e-mail, enforced by the database", async () => {
+        const storage = await seed();
+        await storage.invitations.create(base());
+        await expect(storage.invitations.create(base({ id: "inv-2", tokenHash: "hash-2" }))).rejects.toMatchObject({
+          reason: "duplicate_pending",
+        });
+        await storage.invitations.revoke("inv-1", new Date());
+        await expect(storage.invitations.create(base({ id: "inv-3", tokenHash: "hash-3" }))).resolves.toBeDefined();
+      });
+
+      it("rejects unknown organizations and roles with an InvitationError", async () => {
+        const storage = await seed();
+        await expect(storage.invitations.create(base({ organizationId: "ghost" }))).rejects.toThrow(InvitationError);
+        await expect(storage.invitations.create(base({ roleIds: ["ghost-role"] }))).rejects.toThrow(InvitationError);
+      });
+
+      it("expireStale only retires pending invitations that are past their expiry", async () => {
+        const storage = await seed();
+        await storage.invitations.create(base({ expiresAt: new Date(Date.now() - 1000) }));
+        await storage.invitations.create(base({ id: "inv-b", tokenHash: "hash-b", email: "bob@example.com" }));
+        expect(await storage.invitations.expireStale("org-1", "ana@example.com", new Date())).toBe(1);
+        expect(await storage.invitations.expireStale("org-1", "bob@example.com", new Date())).toBe(0);
+        expect((await storage.invitations.findById("inv-1"))?.status).toBe("expired");
+      });
+
+      it("rotateToken swaps the hash and refuses anything that is not pending", async () => {
+        const storage = await seed();
+        await storage.invitations.create(base());
+        const rotated = await storage.invitations.rotateToken("inv-1", { tokenHash: "hash-new", expiresAt: expiresAt() });
+        expect(rotated?.status).toBe("pending");
+        expect(await storage.invitations.findByTokenHash("hash-1")).toBeNull();
+        expect((await storage.invitations.findByTokenHash("hash-new"))?.id).toBe("inv-1");
+        await storage.invitations.revoke("inv-1", new Date());
+        expect(await storage.invitations.rotateToken("inv-1", { tokenHash: "x", expiresAt: expiresAt() })).toBeNull();
+        expect(await storage.invitations.revoke("inv-1", new Date())).toBeNull();
+      });
+
+      it("markAccepted is a single-use claim: exactly one of many concurrent callers wins, and expiry is honoured", async () => {
+        const storage = await seed();
+        await storage.invitations.create(base());
+        const claims = await Promise.all(
+          Array.from({ length: 8 }, (_, n) =>
+            storage.invitations.markAccepted({ tokenHash: "hash-1", identity: { provider: "p", subject: `s${n}` }, now: new Date() }),
+          ),
+        );
+        expect(claims.filter((claim) => claim !== null)).toHaveLength(1);
+
+        await storage.invitations.create(base({ id: "inv-late", tokenHash: "hash-late", email: "late@example.com", expiresAt: new Date(Date.now() - 1) }));
+        expect(await storage.invitations.markAccepted({ tokenHash: "hash-late", identity: newcomer, now: new Date() })).toBeNull();
+      });
+
+      it("pages newest first with a keyset cursor, optionally by status", async () => {
+        const storage = await seed();
+        for (let n = 1; n <= 5; n++) {
+          await storage.invitations.create(
+            base({ id: `inv-${n}`, tokenHash: `h${n}`, email: `u${n}@example.com`, createdAt: new Date(Date.UTC(2026, 0, n)) }),
+          );
+        }
+        await storage.invitations.revoke("inv-2", new Date());
+        const first = await storage.invitations.search("org-1", { limit: 2 });
+        expect(first.map((i) => i.id)).toEqual(["inv-5", "inv-4"]);
+        const second = await storage.invitations.search("org-1", { limit: 2, after: "inv-4" });
+        expect(second.map((i) => i.id)).toEqual(["inv-3", "inv-2"]);
+        expect((await storage.invitations.search("org-1", { status: "revoked" })).map((i) => i.id)).toEqual(["inv-2"]);
+        expect(await storage.invitations.search("org-1", { after: "ghost" })).toEqual([]);
+      });
+
+      it("countCreatedSince filters by e-mail, organization and time", async () => {
+        const storage = await seed();
+        await storage.invitations.create(base({ createdAt: new Date("2026-01-01T00:00:00Z") }));
+        await storage.invitations.create(base({ id: "inv-b", tokenHash: "hb", email: "bob@example.com", createdAt: new Date("2026-01-02T00:00:00Z") }));
+        const since = new Date("2026-01-01T12:00:00Z");
+        expect(await storage.invitations.countCreatedSince({ since })).toBe(1);
+        expect(await storage.invitations.countCreatedSince({ since: new Date(0), email: "ana@example.com" })).toBe(1);
+        expect(await storage.invitations.countCreatedSince({ since: new Date(0), organizationId: "org-1" })).toBe(2);
+        expect(await storage.invitations.countCreatedSince({ since: new Date(0), organizationId: "other" })).toBe(0);
+      });
+
+      it("drops a deleted role from the invitation, and the invitations go with their organization", async () => {
+        const storage = await seed();
+        await storage.invitations.create(base());
+        await storage.roles.delete("role-editor");
+        expect((await storage.invitations.findById("inv-1"))?.roleIds).toEqual(["role-viewer"]);
+      });
+
+      it("runs the whole invitation flow through the service: invite, accept, then a replay fails", async () => {
+        const storage = await seed();
+        const sent: string[] = [];
+        const service = createInvitationService({
+          storage,
+          acceptUrl: (token) => `https://app.test/invite/${token}`,
+          sender: { send: async (message) => void sent.push(message.acceptUrl) },
+        });
+        const { acceptUrl, invitation } = await service.invite({
+          organizationId: "org-1",
+          email: "Ana@Example.com",
+          roleIds: ["role-editor"],
+          invitedBy: owner,
+        });
+        expect(sent).toEqual([acceptUrl]);
+        const token = acceptUrl.split("/invite/")[1]!;
+
+        const accepted = await service.accept({ token, identity: newcomer, verifiedEmail: "ana@example.com" });
+        expect(accepted.membership.roleIds).toEqual(["role-editor"]);
+        expect((await storage.invitations.findById(invitation.id))?.status).toBe("accepted");
+        await expect(service.accept({ token, identity: newcomer, verifiedEmail: "ana@example.com" })).rejects.toMatchObject({
+          reason: "already_accepted",
+        });
+        expect(await harness.probe.countAuditEntries("invitation.accepted")).toBe(1);
+      });
+
+      it("rolls the claim back when the membership step fails inside the transaction", async () => {
+        const storage = await seed();
+        await storage.invitations.create(base({ roleIds: ["role-viewer"] }));
+        await expect(
+          storage.transaction(async (tx) => {
+            await tx.invitations.markAccepted({ tokenHash: "hash-1", identity: newcomer, now: new Date() });
+            throw new Error("membership step failed");
+          }),
+        ).rejects.toThrow("membership step failed");
+        expect((await storage.invitations.findById("inv-1"))?.status).toBe("pending");
+      });
     });
   });
 }

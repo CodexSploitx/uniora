@@ -8,6 +8,7 @@ import { createPermissionRepository } from "./repositories/permission.js";
 import { createFeatureRepository } from "./repositories/feature.js";
 import { createAuditLogRepository } from "./repositories/audit-log.js";
 import { createIdentityLinkRepository } from "./repositories/identity-link.js";
+import { createInvitationRepository } from "./repositories/invitation.js";
 
 function createTransactionScope(db: Queryable, pool?: Pool): UnioraTransaction {
   // Built once and passed into `createIdentityLinkRepository` too: `link()`
@@ -31,6 +32,7 @@ function createTransactionScope(db: Queryable, pool?: Pool): UnioraTransaction {
     // transactional client) — see the SECURITY FIX comment on `link()` in
     // `identity-link.ts` (docs/security-pentest-2026-09-24.md Hallazgo 9).
     identityLinks: createIdentityLinkRepository(db, auditLogs, pool),
+    invitations: createInvitationRepository(db),
   };
 }
 

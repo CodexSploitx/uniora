@@ -158,9 +158,10 @@ app.delete(
 
 | Package | What it does |
 | --- | --- |
-| [`@uniora/core`](packages/core) | Framework-independent domain model: Organizations (with a protected Owner role, created atomically), Custom Roles, Permissions, Features, Audit Logs, cross-provider Identity Linking, and the deny-by-default `AuthorizationEngine`. |
+| [`@uniora/core`](packages/core) | Framework-independent domain model: Organizations (with a protected Owner role, created atomically), Custom Roles, Permissions, Features, Audit Logs, cross-provider Identity Linking, Invitations (single-use tokens, delivery engine with retries), and the deny-by-default `AuthorizationEngine`. |
 | [`@uniora/postgres`](packages/database/postgres) | PostgreSQL storage adapter (dedicated `uniora.*` schema) + migrations. |
 | [`@uniora/sqlite`](packages/database/sqlite) | SQLite storage adapter over [`better-sqlite3`](https://github.com/WiseLibs/better-sqlite3) (`uniora_*` tables) + migrations. |
+| [`@uniora/mailer-smtp`](packages/mailer-smtp) | SMTP sender for invitations: configured from `UNIORA_SMTP_*` in `.env`, with professional multilingual e-mail templates. |
 | [`@uniora/supabase`](packages/adapters/supabase) | Identity adapter for Supabase Auth. |
 | [`@uniora/clerk`](packages/adapters/clerk) | Identity adapter for Clerk. |
 | [`@uniora/better-auth`](packages/adapters/better-auth) | Identity adapter for Better Auth. |
@@ -170,6 +171,40 @@ app.delete(
 | [`@uniora/express`](packages/express) | Express middleware (`requirePermission`, `requireFeature`, `authorize`): deny-by-default route guards that answer 401/403 and fail closed on any error. |
 | [`@uniora/cli`](packages/cli) | `npx uniora init / check / migrate / doctor / studio` — with a migration ledger, `--json` output and CI-friendly exit codes. |
 | [`@uniora/studio`](apps/studio) | UNIORA Studio: a local-first admin UI (Next.js + shadcn/ui + ReUI) to browse and manage organizations, members, roles, permissions, features and the audit log. Launched with `npx uniora studio`. |
+
+### Inviting people to an organization
+
+UNIORA owns the invitation flow — a single-use token (only its SHA-256 is stored), role(s), expiry, resend/revoke, accept, rate limits and an audit trail — and hands delivery to a pluggable `InvitationSender`. Use `@uniora/mailer-smtp` for a ready-made SMTP sender with professional, multilingual (en/es/pt/fr/de/it), dark-mode-aware templates, or write your own sender for Resend, SES, a queue...
+
+```ts
+import { createInvitationService } from "@uniora/core";
+import { createSmtpInvitationSenderFromEnv } from "@uniora/mailer-smtp";
+
+const invitations = createInvitationService({
+  storage,
+  acceptUrl: (token) => `https://app.example.com/invite/${token}`,
+  sender: createSmtpInvitationSenderFromEnv(), // reads UNIORA_SMTP_* from .env, fails fast if incomplete
+});
+
+// Authorize first (e.g. engine.can(... "members.invite")) — the service does not.
+const { acceptUrl, delivery } = await invitations.invite({
+  organizationId, email: "ana@example.com", roleIds: [editorRoleId], invitedBy: identity, locale: "en",
+});
+
+// On your /invite/[token] page, after the person signs in:
+const { membership } = await invitations.accept({ token, identity, verifiedEmail: user.email }); // provider-verified e-mail only
+```
+
+Delivery never fails the request: transient SMTP errors are retried with jittered backoff and each attempt has a timeout; the outcome is recorded on the invitation and a failed one can be `resend`-ed (which issues a new link and invalidates the old one). The Owner role can't be granted by invitation. Without a sender the invitation is still created and the link is returned for you to deliver.
+
+```bash
+# .env
+UNIORA_SMTP_HOST=smtp.example.com
+UNIORA_SMTP_PORT=587
+UNIORA_SMTP_USER=...
+UNIORA_SMTP_PASS=...
+UNIORA_SMTP_FROM="Acme <no-reply@acme.com>"
+```
 
 ### Using SQLite
 

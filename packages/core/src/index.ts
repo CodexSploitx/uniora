@@ -53,6 +53,38 @@ export type { IdentityLink } from "./identity-link/types.js";
 export type { IdentityLinkRepository, LinkIdentityInput } from "./identity-link/repository.js";
 export { IdentityLinkError } from "./identity-link/repository.js";
 
+export type { Invitation, InvitationDelivery, InvitationDeliveryStatus, InvitationStatus } from "./invitation/types.js";
+export { isInvitationUsable } from "./invitation/types.js";
+export type {
+  CreateInvitationInput,
+  InvitationFailureReason,
+  InvitationRepository,
+  RecordDeliveryInput,
+  SearchInvitationsOptions,
+} from "./invitation/repository.js";
+export { InvitationError } from "./invitation/repository.js";
+export type {
+  DeliveryRetryOptions,
+  InvitationMessage,
+  InvitationSender,
+  SendContext,
+  SendOutcome,
+} from "./invitation/delivery.js";
+export { InvitationDeliveryError, sanitizeDeliveryError, sendWithRetry } from "./invitation/delivery.js";
+export type {
+  AcceptInvitationInput,
+  AcceptInvitationResult,
+  DeliveryOutcome,
+  InvitationPreview,
+  InvitationRateLimits,
+  InvitationService,
+  InvitationServiceOptions,
+  InviteInput,
+  InviteResult,
+} from "./invitation/service.js";
+export { createInvitationService, normalizeInvitationEmail } from "./invitation/service.js";
+export { generateInvitationToken, hashInvitationToken, INVITATION_TOKEN_PREFIX } from "./invitation/token.js";
+
 export type { UnioraStorage, UnioraTransaction } from "./storage/types.js";
 export { createMemoryStorage } from "./storage/memory.js";
 

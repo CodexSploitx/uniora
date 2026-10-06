@@ -159,9 +159,10 @@ app.delete(
 
 | Paquete | Qué hace |
 | --- | --- |
-| [`@uniora/core`](packages/core) | Modelo de dominio framework-independent: Organizations (con un role Owner protegido, creado de forma atómica), Custom Roles, Permissions, Features, Audit Logs, Identity Linking cross-provider, y el `AuthorizationEngine` deny-by-default. |
+| [`@uniora/core`](packages/core) | Modelo de dominio framework-independent: Organizations (con un role Owner protegido, creado de forma atómica), Custom Roles, Permissions, Features, Audit Logs, Identity Linking cross-provider, Invitations (tokens de un solo uso, motor de entrega con reintentos), y el `AuthorizationEngine` deny-by-default. |
 | [`@uniora/postgres`](packages/database/postgres) | Adapter de storage para PostgreSQL (schema dedicado `uniora.*`) + migraciones. |
 | [`@uniora/sqlite`](packages/database/sqlite) | Adapter de storage para SQLite sobre [`better-sqlite3`](https://github.com/WiseLibs/better-sqlite3) (tablas `uniora_*`) + migraciones. |
+| [`@uniora/mailer-smtp`](packages/mailer-smtp) | Sender SMTP para invitaciones: se configura con `UNIORA_SMTP_*` en `.env`, con plantillas de correo profesionales y multilingües. |
 | [`@uniora/supabase`](packages/adapters/supabase) | Adapter de identidad para Supabase Auth. |
 | [`@uniora/clerk`](packages/adapters/clerk) | Adapter de identidad para Clerk. |
 | [`@uniora/better-auth`](packages/adapters/better-auth) | Adapter de identidad para Better Auth. |
@@ -171,6 +172,40 @@ app.delete(
 | [`@uniora/express`](packages/express) | Middleware de Express (`requirePermission`, `requireFeature`, `authorize`): guards de ruta deny-by-default que responden 401/403 y fallan cerrado ante cualquier error. |
 | [`@uniora/cli`](packages/cli) | `npx uniora init / check / migrate / doctor / studio` — con ledger de migraciones, salida `--json` y códigos de salida aptos para CI. |
 | [`@uniora/studio`](apps/studio) | UNIORA Studio: una interfaz de administración local (Next.js + shadcn/ui + ReUI) para explorar y administrar organizaciones, miembros, roles, permisos, features y el audit log. Se abre con `npx uniora studio`. |
+
+### Invitar personas a una organización
+
+UNIORA es dueño del flujo de invitaciones — token de un solo uso (solo se guarda su SHA-256), rol(es), expiración, reenviar/revocar, aceptar, límites de frecuencia y rastro de auditoría — y delega la entrega a un `InvitationSender` conectable. Usa `@uniora/mailer-smtp` para un sender SMTP listo, con plantillas profesionales, multilingües (en/es/pt/fr/de/it) y compatibles con modo oscuro, o escribe el tuyo para Resend, SES, una cola...
+
+```ts
+import { createInvitationService } from "@uniora/core";
+import { createSmtpInvitationSenderFromEnv } from "@uniora/mailer-smtp";
+
+const invitations = createInvitationService({
+  storage,
+  acceptUrl: (token) => `https://app.example.com/invite/${token}`,
+  sender: createSmtpInvitationSenderFromEnv(), // lee UNIORA_SMTP_* del .env y falla al arrancar si falta algo
+});
+
+// Autoriza antes (p. ej. engine.can(... "members.invite")) — el servicio no lo hace.
+const { acceptUrl, delivery } = await invitations.invite({
+  organizationId, email: "ana@example.com", roleIds: [editorRoleId], invitedBy: identity, locale: "es",
+});
+
+// En tu página /invite/[token], después de que la persona inicie sesión:
+const { membership } = await invitations.accept({ token, identity, verifiedEmail: user.email }); // solo un e-mail verificado por el proveedor
+```
+
+La entrega nunca hace fallar la petición: los errores SMTP transitorios se reintentan con backoff y jitter, cada intento tiene su timeout, el resultado queda registrado en la invitación y una fallida se puede `resend` (emite un enlace nuevo e invalida el anterior). El role Owner no se puede otorgar por invitación. Sin sender la invitación igual se crea y se devuelve el enlace para que lo entregues tú.
+
+```bash
+# .env
+UNIORA_SMTP_HOST=smtp.example.com
+UNIORA_SMTP_PORT=587
+UNIORA_SMTP_USER=...
+UNIORA_SMTP_PASS=...
+UNIORA_SMTP_FROM="Acme <no-reply@acme.com>"
+```
 
 ### Usar SQLite
 

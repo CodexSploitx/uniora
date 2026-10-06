@@ -28,6 +28,14 @@ import type {
 import type { IdentityLink } from "../identity-link/types.js";
 import type { IdentityLinkRepository, LinkIdentityInput } from "../identity-link/repository.js";
 import { IdentityLinkError } from "../identity-link/repository.js";
+import type { Invitation } from "../invitation/types.js";
+import type {
+  CreateInvitationInput,
+  InvitationRepository,
+  RecordDeliveryInput,
+  SearchInvitationsOptions,
+} from "../invitation/repository.js";
+import { InvitationError } from "../invitation/repository.js";
 import type { UnioraStorage, UnioraTransaction } from "./types.js";
 
 function identityKey(identity: Identity): string {
@@ -49,6 +57,8 @@ export function createMemoryStorage(): UnioraStorage {
   const featureDefinitions = new Map<string, FeatureDefinition>();
   const auditLogs: AuditLogEntry[] = [];
   const identityLinksByFromKey = new Map<string, IdentityLink>();
+  const invitations = new Map<string, Invitation>();
+  const invitationTokenHashes = new Map<string, string>(); // id -> token hash
 
   // Defined before `membershipRepository` because `findByIdentity` calls
   // `resolve()` directly. `auditLogRepository` is referenced from `link()`
@@ -780,6 +790,118 @@ export function createMemoryStorage(): UnioraStorage {
     },
   };
 
+  const clone = (invitation: Invitation): Invitation => ({
+    ...invitation,
+    roleIds: [...invitation.roleIds],
+    delivery: { ...invitation.delivery },
+  });
+
+  const invitationRepository: InvitationRepository = {
+    async create(input: CreateInvitationInput) {
+      const duplicate = [...invitations.values()].some(
+        (i) => i.organizationId === input.organizationId && i.email === input.email && i.status === "pending",
+      );
+      if (duplicate) {
+        throw new InvitationError("This e-mail already has a pending invitation to this organization.", "duplicate_pending");
+      }
+      if (!organizations.has(input.organizationId)) {
+        throw new InvitationError("The organization does not exist.", "bad_request");
+      }
+      const invitation: Invitation = {
+        id: input.id,
+        organizationId: input.organizationId,
+        email: input.email,
+        roleIds: [...input.roleIds],
+        invitedBy: input.invitedBy,
+        status: "pending",
+        createdAt: input.createdAt,
+        expiresAt: input.expiresAt,
+        delivery: { status: "pending", attempts: 0, sends: 0 },
+      };
+      invitations.set(invitation.id, invitation);
+      invitationTokenHashes.set(invitation.id, input.tokenHash);
+      return clone(invitation);
+    },
+    async findById(id: string) {
+      const found = invitations.get(id);
+      return found ? clone(found) : null;
+    },
+    async findByTokenHash(tokenHash: string) {
+      for (const [id, hash] of invitationTokenHashes) {
+        if (hash === tokenHash) return clone(invitations.get(id)!);
+      }
+      return null;
+    },
+    async search(organizationId: string, options?: SearchInvitationsOptions) {
+      const matches = [...invitations.values()]
+        .filter((i) => i.organizationId === organizationId && (!options?.status || i.status === options.status))
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+      let page = matches;
+      if (options?.after !== undefined) {
+        const index = matches.findIndex((i) => i.id === options.after);
+        page = index === -1 ? [] : matches.slice(index + 1);
+      }
+      return (options?.limit !== undefined ? page.slice(0, options.limit) : page).map(clone);
+    },
+    async expireStale(organizationId: string, email: string, now: Date) {
+      let count = 0;
+      for (const i of invitations.values()) {
+        if (i.organizationId === organizationId && i.email === email && i.status === "pending" && i.expiresAt.getTime() <= now.getTime()) {
+          i.status = "expired";
+          count += 1;
+        }
+      }
+      return count;
+    },
+    async rotateToken(id: string, input: { tokenHash: string; expiresAt: Date }) {
+      const i = invitations.get(id);
+      if (!i || i.status !== "pending") return null;
+      invitationTokenHashes.set(id, input.tokenHash);
+      i.expiresAt = input.expiresAt;
+      i.delivery = { ...i.delivery, status: "pending", lastError: undefined };
+      return clone(i);
+    },
+    async revoke(id: string, now: Date) {
+      const i = invitations.get(id);
+      if (!i || i.status !== "pending") return null;
+      i.status = "revoked";
+      i.revokedAt = now;
+      return clone(i);
+    },
+    async markAccepted(input: { tokenHash: string; identity: Identity; now: Date }) {
+      for (const [id, hash] of invitationTokenHashes) {
+        if (hash !== input.tokenHash) continue;
+        const i = invitations.get(id)!;
+        if (i.status !== "pending" || i.expiresAt.getTime() <= input.now.getTime()) return null;
+        i.status = "accepted";
+        i.acceptedAt = input.now;
+        i.acceptedBy = input.identity;
+        return clone(i);
+      }
+      return null;
+    },
+    async recordDelivery(id: string, input: RecordDeliveryInput) {
+      const i = invitations.get(id);
+      if (!i) return;
+      i.delivery = {
+        status: input.status,
+        attempts: i.delivery.attempts + input.attempts,
+        sends: i.delivery.sends + 1,
+        lastAttemptAt: input.at,
+        sentAt: input.status === "sent" ? input.at : i.delivery.sentAt,
+        lastError: input.status === "failed" ? input.error : undefined,
+      };
+    },
+    async countCreatedSince(filter: { organizationId?: string; email?: string; since: Date }) {
+      return [...invitations.values()].filter(
+        (i) =>
+          i.createdAt.getTime() >= filter.since.getTime() &&
+          (filter.organizationId === undefined || i.organizationId === filter.organizationId) &&
+          (filter.email === undefined || i.email === filter.email),
+      ).length;
+    },
+  };
+
   return {
     organizations: organizationRepository,
     memberships: membershipRepository,
@@ -788,6 +910,7 @@ export function createMemoryStorage(): UnioraStorage {
     features: featureRepository,
     auditLogs: auditLogRepository,
     identityLinks: identityLinkRepository,
+    invitations: invitationRepository,
     async transaction<T>(callback: (tx: UnioraTransaction) => Promise<T>): Promise<T> {
       // In-memory storage has no isolation to offer; adapters with a real
       // database (e.g. Postgres) must run `callback` inside a DB transaction.
@@ -799,6 +922,7 @@ export function createMemoryStorage(): UnioraStorage {
         features: featureRepository,
         auditLogs: auditLogRepository,
         identityLinks: identityLinkRepository,
+        invitations: invitationRepository,
       });
     },
   };
