@@ -11,6 +11,7 @@ import {
   OrganizationError,
   PermissionError,
   RoleError,
+  applyRoleTemplates,
   leaveOrganization,
   transferOwnership,
 } from "@uniora/core";
@@ -698,6 +699,195 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
           expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1);
           expect(await storage.memberships.count({ organizationId: "org-1", status: "active" })).toBe(1);
         }
+      });
+    });
+
+    describe("roles — del sistema, descripción, clonar, reemplazar permisos y política al borrar", () => {
+      const operator = { provider: "supabase", subject: "operator" };
+
+      async function seed() {
+        const storage = harness.storage();
+        await createOrganizationWithOwner(storage, {
+          organizationId: "org-1",
+          organizationName: "Acme",
+          ownerRoleId: "role-owner",
+          membershipId: "m-owner",
+          ownerIdentity: identity,
+        });
+        await storage.organizations.create({ id: "org-2", name: "Otra" });
+        for (const key of ["a.read", "a.write", "b.read", "b.write"]) await storage.permissions.register({ key });
+        return storage;
+      }
+
+      it("un rol puede ser del sistema y llevar descripción; los roles normales y el Owner no lo son", async () => {
+        const storage = await seed();
+        const system = await storage.roles.create({
+          id: "r-sys", organizationId: "org-1", name: "Recepción", permissionKeys: ["a.read"], isSystem: true, description: "  Atiende la entrada  ",
+        });
+        expect(system).toMatchObject({ isSystem: true, description: "Atiende la entrada" });
+        const custom = await storage.roles.create({ id: "r-custom", organizationId: "org-1", name: "Custom" });
+        expect(custom.isSystem).toBe(false);
+        expect(custom.description).toBeUndefined();
+        const [owner] = await storage.roles.findByIds(["role-owner"]);
+        expect(owner).toMatchObject({ isOwnerRole: true, isSystem: false });
+
+        const [again] = await storage.roles.findByIds(["r-sys"]);
+        expect(again).toMatchObject({ isSystem: true, description: "Atiende la entrada", permissionKeys: ["a.read"] });
+        const summaries = await storage.roles.search({ organizationId: "org-1", isSystem: true });
+        expect(summaries.map((role) => role.id)).toEqual(["r-sys"]);
+        expect(await storage.roles.count({ organizationId: "org-1", isSystem: false })).toBe(2);
+        await expect(
+          storage.roles.create({ id: "r-big", organizationId: "org-1", name: "Big", description: "x".repeat(501) }),
+        ).rejects.toMatchObject({ code: "role_description_invalid" });
+      });
+
+      it("un rol del sistema no se renombra ni se borra, pero sí cambian sus permisos y su descripción", async () => {
+        const storage = await seed();
+        await storage.roles.create({ id: "r-sys", organizationId: "org-1", name: "Recepción", isSystem: true });
+        await expect(storage.roles.rename("r-sys", "Otro")).rejects.toMatchObject({ code: "role_system_protected" });
+        await expect(storage.roles.update("r-sys", { name: "Otro" })).rejects.toMatchObject({ code: "role_system_protected" });
+        await expect(storage.roles.delete("r-sys")).rejects.toMatchObject({ code: "role_system_protected" });
+        await expect(storage.roles.delete("r-sys", { members: "reject" })).rejects.toMatchObject({ code: "role_system_protected" });
+
+        await storage.roles.grantPermission("r-sys", "a.read");
+        expect(await storage.roles.update("r-sys", { description: "Nueva" })).toMatchObject({ description: "Nueva", name: "Recepción" });
+        expect((await storage.roles.update("r-sys", { description: null })).description).toBeUndefined();
+        expect((await storage.roles.findByIds(["r-sys"]))[0]).toMatchObject({ name: "Recepción", permissionKeys: ["a.read"] });
+      });
+
+      it("update cambia nombre y/o descripción, valida y protege al Owner", async () => {
+        const storage = await seed();
+        await storage.roles.create({ id: "r-1", organizationId: "org-1", name: "Uno" });
+        await storage.roles.create({ id: "r-2", organizationId: "org-1", name: "Dos" });
+        expect(await storage.roles.update("r-1", { name: " Uno  bis ", description: "d" })).toMatchObject({ name: "Uno bis", description: "d" });
+        await expect(storage.roles.update("r-1", {})).rejects.toMatchObject({ code: "role_update_empty" });
+        await expect(storage.roles.update("r-1", { name: "Dos" })).rejects.toBeInstanceOf(RoleError);
+        await expect(storage.roles.update("ghost", { name: "X" })).rejects.toMatchObject({ code: "role_not_found" });
+        await expect(storage.roles.update("role-owner", { name: "Jefe" })).rejects.toBeInstanceOf(RoleError);
+        await expect(storage.roles.update("role-owner", { description: "x" })).rejects.toBeInstanceOf(RoleError);
+      });
+
+      it("setPermissions deja EXACTAMENTE esas claves, devuelve lo que cambió y es todo o nada", async () => {
+        const storage = await seed();
+        await storage.roles.create({ id: "r-1", organizationId: "org-1", name: "Uno", permissionKeys: ["a.read", "b.read"] });
+
+        const first = await storage.roles.setPermissions("r-1", ["a.read", "a.write", "a.write"]);
+        expect(first).toEqual({ granted: ["a.write"], revoked: ["b.read"] });
+        expect((await storage.roles.findByIds(["r-1"]))[0]?.permissionKeys.sort()).toEqual(["a.read", "a.write"]);
+
+        expect(await storage.roles.setPermissions("r-1", ["a.read", "a.write"])).toEqual({ granted: [], revoked: [] });
+        expect(await storage.roles.setPermissions("r-1", [])).toEqual({ granted: [], revoked: ["a.read", "a.write"] });
+
+        // Una clave sin registrar: nada cambia (ni siquiera lo que sí era válido).
+        await storage.roles.setPermissions("r-1", ["a.read"]);
+        await expect(storage.roles.setPermissions("r-1", ["b.write", "nope.nope"])).rejects.toMatchObject({ code: "role_permission_invalid" });
+        expect((await storage.roles.findByIds(["r-1"]))[0]?.permissionKeys).toEqual(["a.read"]);
+
+        await expect(storage.roles.setPermissions("role-owner", ["a.read"])).rejects.toBeInstanceOf(RoleError);
+        await expect(storage.roles.setPermissions("ghost", [])).rejects.toMatchObject({ code: "role_not_found" });
+      });
+
+      it("clone copia permisos y descripción, en la misma o en otra organización, y nunca es del sistema", async () => {
+        const storage = await seed();
+        await storage.roles.create({
+          id: "r-sys", organizationId: "org-1", name: "Recepción", isSystem: true, description: "Entrada", permissionKeys: ["a.read", "b.write"],
+        });
+        const copy = await storage.roles.clone("r-sys", { id: "r-copy", name: "Recepción 2" });
+        expect(copy).toMatchObject({ id: "r-copy", organizationId: "org-1", isSystem: false, description: "Entrada" });
+        expect(copy.permissionKeys.sort()).toEqual(["a.read", "b.write"]);
+        expect((await storage.roles.findByIds(["r-copy"]))[0]?.permissionKeys.sort()).toEqual(["a.read", "b.write"]);
+
+        const elsewhere = await storage.roles.clone("r-sys", { id: "r-else", name: "Recepción", organizationId: "org-2", description: "Otra" });
+        expect(elsewhere).toMatchObject({ organizationId: "org-2", description: "Otra" });
+        // Cambiar la copia no toca al original.
+        await storage.roles.revokePermission("r-copy", "a.read");
+        expect((await storage.roles.findByIds(["r-sys"]))[0]?.permissionKeys.sort()).toEqual(["a.read", "b.write"]);
+
+        await expect(storage.roles.clone("role-owner", { id: "r-x", name: "X" })).rejects.toMatchObject({ code: "owner_role_protected" });
+        await expect(storage.roles.clone("ghost", { id: "r-y", name: "Y" })).rejects.toMatchObject({ code: "role_not_found" });
+        await expect(storage.roles.clone("r-sys", { id: "r-z", name: "Recepción 2" })).rejects.toBeInstanceOf(RoleError);
+        expect(await storage.roles.findByIds(["r-z"])).toEqual([]);
+      });
+
+      it("delete con política: detach (por defecto), reject y reassignTo", async () => {
+        const storage = await seed();
+        await storage.roles.create({ id: "r-old", organizationId: "org-1", name: "Viejo", permissionKeys: ["a.read"] });
+        await storage.roles.create({ id: "r-new", organizationId: "org-1", name: "Nuevo" });
+        await storage.roles.create({ id: "r-foreign", organizationId: "org-2", name: "Ajeno" });
+        for (const id of ["m-1", "m-2"]) {
+          await storage.memberships.create({ id, organizationId: "org-1", identity: { provider: "p", subject: id } });
+          await storage.memberships.assignRole(id, "r-old");
+        }
+        await storage.memberships.assignRole("m-2", "r-new");
+
+        await expect(storage.roles.delete("r-old", { members: "reject" })).rejects.toMatchObject({ code: "role_in_use" });
+        expect((await storage.roles.findByIds(["r-old"])).length).toBe(1);
+
+        for (const bad of ["ghost", "r-foreign", "role-owner", "r-old"]) {
+          await expect(storage.roles.delete("r-old", { members: { reassignTo: bad } })).rejects.toMatchObject({ code: "role_reassign_invalid" });
+        }
+        expect((await storage.roles.findByIds(["r-old"])).length).toBe(1);
+
+        await storage.roles.delete("r-old", { members: { reassignTo: "r-new" } });
+        expect(await storage.roles.findByIds(["r-old"])).toEqual([]);
+        expect((await storage.memberships.findById("m-1"))?.roleIds).toEqual(["r-new"]);
+        expect((await storage.memberships.findById("m-2"))?.roleIds).toEqual(["r-new"]);
+
+        await storage.roles.delete("r-new", { members: "reject" }).catch((error) => expect(error).toMatchObject({ code: "role_in_use" }));
+        await storage.roles.delete("r-new"); // detach
+        expect((await storage.memberships.findById("m-1"))?.roleIds).toEqual([]);
+
+        await storage.roles.create({ id: "r-empty", organizationId: "org-1", name: "Vacío" });
+        await storage.roles.delete("r-empty", { members: "reject" });
+        expect(await storage.roles.findByIds(["r-empty"])).toEqual([]);
+        await expect(storage.roles.delete("role-owner")).rejects.toMatchObject({ code: "owner_role_protected" });
+        await expect(storage.roles.delete("ghost", { members: "reject" })).rejects.toMatchObject({ code: "role_not_found" });
+      });
+
+      it("applyRoleTemplates crea los roles del sistema, es idempotente y respeta los roles propios del cliente", async () => {
+        const storage = await seed();
+        const templates = [
+          { key: "reception", name: "Recepción", description: "Entrada", permissionKeys: ["a.read", "a.write"] },
+          { key: "billing", name: "Facturación", permissionKeys: ["b.read"] },
+        ];
+        const first = await applyRoleTemplates(storage.roles, "org-1", templates);
+        expect(first.created.map((role) => role.key).sort()).toEqual(["billing", "reception"]);
+        expect(first.created.every((role) => role.isSystem)).toBe(true);
+
+        const again = await applyRoleTemplates(storage.roles, "org-1", templates);
+        expect(again.created).toEqual([]);
+        expect(again.synced).toHaveLength(2);
+
+        // Un cambio de plantilla se propaga a los roles del sistema…
+        const changed = await applyRoleTemplates(storage.roles, "org-1", [{ ...templates[0]!, permissionKeys: ["a.read"], description: "Nueva" }, templates[1]!]);
+        expect(changed.synced.find((role) => role.key === "reception")).toMatchObject({ description: "Nueva", permissionKeys: ["a.read"] });
+        const reception = (await storage.roles.listByOrganization("org-1")).find((role) => role.key === "reception");
+        expect(reception).toMatchObject({ description: "Nueva", permissionKeys: ["a.read"] });
+
+        // …pero un rol con esa clave que el cliente creó por su cuenta no se toca.
+        await storage.roles.create({ id: "r-mine", organizationId: "org-2", name: "Mi recepción", key: "reception", permissionKeys: ["b.write"] });
+        const other = await applyRoleTemplates(storage.roles, "org-2", templates);
+        expect(other.skipped).toEqual(["reception"]);
+        expect(other.created.map((role) => role.key)).toEqual(["billing"]);
+        expect((await storage.roles.findByIds(["r-mine"]))[0]).toMatchObject({ isSystem: false, permissionKeys: ["b.write"] });
+      });
+
+      it("con createAuditedStorage queda registrado el cambio de permisos, la clonación y la política de borrado", async () => {
+        const raw = await seed();
+        const storage = createAuditedStorage(raw, { actor: operator });
+        await storage.roles.create({ id: "r-1", organizationId: "org-1", name: "Uno", permissionKeys: ["a.read"] });
+        await storage.roles.setPermissions("r-1", ["a.write"]);
+        await storage.roles.setPermissions("r-1", ["a.write"]);
+        await storage.roles.update("r-1", { description: "Hola" });
+        await storage.roles.clone("r-1", { id: "r-2", name: "Dos" });
+        await storage.roles.delete("r-2", { members: "reject" });
+
+        const replaced = await raw.auditLogs.search({ action: "role.permissions_replaced" });
+        expect(replaced).toHaveLength(1);
+        expect(replaced[0]?.metadata).toEqual({ granted: ["a.write"], revoked: ["a.read"] });
+        expect(await raw.auditLogs.search({ action: "role.updated" })).toHaveLength(1);
+        expect((await raw.auditLogs.search({ action: "role.cloned" }))[0]?.metadata).toMatchObject({ from: "r-1" });
+        expect((await raw.auditLogs.search({ action: "role.deleted" }))[0]?.metadata).toEqual({ members: "reject" });
       });
     });
 
@@ -1633,7 +1823,7 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
 
       // --- roles: summaries, scoped search/keyset, counts, granted keys
       const summaries = await storage.roles.findSummariesByIds(["r1", "ghost"]);
-      expect(summaries).toEqual([{ id: "r1", organizationId: "o1", name: "Editor", key: "editor", isOwnerRole: false }]);
+      expect(summaries).toEqual([{ id: "r1", organizationId: "o1", name: "Editor", key: "editor", isOwnerRole: false, isSystem: false }]);
       expect(Object.keys(summaries[0]!)).not.toContain("permissionKeys");
       await expect(storage.roles.search({ organizationId: "o1" })).resolves.toMatchObject([{ key: "editor" }, { key: "viewer" }]);
       await expect(storage.roles.search({ organizationId: "o1", limit: 1, after: "editor" })).resolves.toMatchObject([{ key: "viewer" }]);

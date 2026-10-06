@@ -36,6 +36,11 @@ export type RoleErrorCode =
   | "role_permission_invalid"
   | "owner_role_protected"
   | "owner_role_exists"
+  | "role_system_protected"
+  | "role_in_use"
+  | "role_reassign_invalid"
+  | "role_description_invalid"
+  | "role_update_empty"
   | "role_invalid";
 
 export type PermissionErrorCode =

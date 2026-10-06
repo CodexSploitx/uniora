@@ -47,12 +47,26 @@ export type { IdentityProfile, ListMembersWithProfilesOptions, MemberListing, Pr
 export { MAX_PROFILE_BATCH, listMembersWithProfiles, sanitizeProfile } from "./profile/profiles.js";
 
 export type { Role } from "./role/types.js";
-export type { CreateOwnerRoleInput, CreateRoleInput, RoleRepository, RoleSummary, SearchRolesOptions } from "./role/repository.js";
+export type {
+  CloneRoleInput,
+  CreateOwnerRoleInput,
+  CreateRoleInput,
+  DeleteRoleMembers,
+  DeleteRoleOptions,
+  RoleRepository,
+  RoleSummary,
+  SearchRolesOptions,
+  SetRolePermissionsResult,
+  UpdateRoleInput,
+} from "./role/repository.js";
+export { applyRoleTemplates, type ApplyRoleTemplatesOptions, type ApplyRoleTemplatesResult, type RoleTemplate } from "./role/templates.js";
 export { RoleError } from "./role/repository.js";
 export {
   assertNonEmptyPermissionKey,
   assertValidRoleKey,
+  MAX_ROLE_DESCRIPTION_LENGTH,
   resolveRoleKey,
+  sanitizeRoleDescription,
   sanitizeRoleName,
   sanitizeRolePermissionKeys,
 } from "./role/key.js";

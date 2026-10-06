@@ -21,6 +21,47 @@ export interface CreateRoleInput {
    */
   key?: string;
   permissionKeys?: string[];
+  /** At most 500 characters. */
+  description?: string;
+  /** Marks a role the host's code defines (see `Role.isSystem`). Normally set through `applyRoleTemplates`. */
+  isSystem?: boolean;
+}
+
+export interface UpdateRoleInput {
+  /** New display name; refused (`role_system_protected`) on a system role. */
+  name?: string;
+  /** New description, or `null` to clear it. */
+  description?: string | null;
+}
+
+export interface CloneRoleInput {
+  id: string;
+  name: string;
+  /** Optional handle, derived from `name` when omitted (see `resolveRoleKey`). */
+  key?: string;
+  /** Clone into another organization (e.g. from a template organization). Defaults to the source's. */
+  organizationId?: string;
+  /** Defaults to the source's description. */
+  description?: string;
+}
+
+export interface SetRolePermissionsResult {
+  /** Keys that were added. */
+  granted: string[];
+  /** Keys that were removed. */
+  revoked: string[];
+}
+
+/** What `delete` does with the members that still hold the role. */
+export type DeleteRoleMembers = "detach" | "reject" | { reassignTo: string };
+
+export interface DeleteRoleOptions {
+  /**
+   * `"detach"` (default, as before): the role is removed from its members, who keep their other roles.
+   * `"reject"`: refuse (`role_in_use`) while any membership holds it.
+   * `{ reassignTo }`: every holder gets that role (same organization, not the Owner role) before this one is deleted.
+   */
+  members?: DeleteRoleMembers;
 }
 
 export interface CreateOwnerRoleInput {
@@ -35,6 +76,7 @@ export interface RoleSummary {
   name: string;
   key: string;
   isOwnerRole: boolean;
+  isSystem: boolean;
 }
 
 export interface SearchRolesOptions {
@@ -50,6 +92,8 @@ export interface SearchRolesOptions {
   notHeldBy?: string;
   /** `true` = only the protected Owner role, `false` = everything but it. */
   isOwnerRole?: boolean;
+  /** `true` = only system roles, `false` = only the ones tenants made. */
+  isSystem?: boolean;
 }
 
 export interface RoleRepository {
@@ -88,7 +132,7 @@ export interface RoleRepository {
   /** Paginated, optionally filtered roles of one organization (keyset on `key`), without permission lists. */
   search(options: SearchRolesOptions): Promise<RoleSummary[]>;
   /** Count of roles (optionally within one organization / matching `query`) — never loads rows. */
-  count(options?: { organizationId?: string; query?: string; heldBy?: string; notHeldBy?: string; isOwnerRole?: boolean }): Promise<number>;
+  count(options?: { organizationId?: string; query?: string; heldBy?: string; notHeldBy?: string; isOwnerRole?: boolean; isSystem?: boolean }): Promise<number>;
   /** How many permissions each of the given roles holds, in one call (`0` when none). The Owner role's flag-based full access is not a list and counts as 0. */
   countPermissions(roleIds: string[]): Promise<Record<string, number>>;
   /**
@@ -124,15 +168,33 @@ export interface RoleRepository {
    * `grantPermission` above.
    */
   revokePermission(roleId: string, permissionKey: string): Promise<void>;
-  /** Rejects if the role is not found, is the protected Owner role, or the name collides with another role in the same organization. */
+  /** Rejects if the role is not found, is the protected Owner role or a system role, or the name collides with another role in the same organization. */
   rename(roleId: string, name: string): Promise<Role>;
   /**
-   * Deletes the role and detaches it from every membership that had it
-   * assigned. Rejects if the role is not found or is the protected Owner
-   * role — the organization must always keep its Owner role.
-   *
-   * **Performs no authorization of its own** — same trust boundary as
-   * `create`/`grantPermission` above.
+   * Changes the name and/or the description in one step (`role_update_empty` if neither is given). The Owner role
+   * and system roles keep their name (`owner_role_protected`, `role_system_protected`); a system role's description
+   * can still be edited.
    */
-  delete(roleId: string): Promise<void>;
+  update(roleId: string, input: UpdateRoleInput): Promise<Role>;
+  /**
+   * Makes the role hold EXACTLY `permissionKeys`: adds the missing ones and removes the rest in ONE atomic step, so
+   * a role is never left half-way (no revoke-all-then-grant window). Every key must be registered
+   * (`role_permission_invalid`). Rejects the protected Owner role. Returns what changed.
+   *
+   * **Performs no authorization of its own** — same trust boundary as `grantPermission`.
+   */
+  setPermissions(roleId: string, permissionKeys: string[]): Promise<SetRolePermissionsResult>;
+  /**
+   * A new custom role with the same permissions (and, unless overridden, description) as `roleId`, in the same
+   * organization or in `organizationId`. The clone is never a system role. Rejects the Owner role
+   * (`owner_role_protected`: its power is a flag, not a list) and an unknown source.
+   */
+  clone(roleId: string, input: CloneRoleInput): Promise<Role>;
+  /**
+   * Deletes the role. `options.members` decides what happens to the memberships that hold it (default: detached).
+   * Rejects if the role is not found, is the protected Owner role, or a system role (`role_system_protected`).
+   *
+   * **Performs no authorization of its own** — same trust boundary as `create`/`grantPermission` above.
+   */
+  delete(roleId: string, options?: DeleteRoleOptions): Promise<void>;
 }

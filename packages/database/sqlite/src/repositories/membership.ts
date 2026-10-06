@@ -267,6 +267,7 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
         name: string;
         key: string;
         is_owner_role: number;
+        is_system: number;
       }
       // Page the memberships first, then, per row, count its roles and take
       // only a bounded preview (Owner first, then by name) — so a member with
@@ -277,10 +278,10 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
                 (select count(*) from uniora_membership_roles mr where mr.membership_id = m.id) as role_count,
                 coalesce((
                   select json_group_array(json_object('id', p.id, 'organization_id', p.organization_id, 'name', p.name,
-                                                      'key', p.key, 'is_owner_role', p.is_owner_role)
+                                                      'key', p.key, 'is_owner_role', p.is_owner_role, 'is_system', p.is_system)
                                           order by p.is_owner_role desc, p.name, p.id)
                   from (
-                    select r.id, r.organization_id, r.name, r.key, r.is_owner_role
+                    select r.id, r.organization_id, r.name, r.key, r.is_owner_role, r.is_system
                     from uniora_membership_roles mr
                     join uniora_roles r on r.id = mr.role_id
                     where mr.membership_id = m.id
@@ -318,6 +319,7 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
             name: role.name,
             key: role.key,
             isOwnerRole: role.is_owner_role === 1,
+            isSystem: role.is_system === 1,
           })),
         }),
       );

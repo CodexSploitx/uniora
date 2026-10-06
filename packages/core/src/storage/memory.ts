@@ -10,7 +10,7 @@ import { MembershipError, sanitizeBlockReason } from "../membership/repository.j
 import type { Role } from "../role/types.js";
 import type { CreateOwnerRoleInput, CreateRoleInput, RoleRepository, RoleSummary } from "../role/repository.js";
 import { RoleError } from "../role/repository.js";
-import { resolveRoleKey, sanitizeRolePermissionKeys, sanitizeRoleName, assertNonEmptyPermissionKey } from "../role/key.js";
+import { resolveRoleKey, sanitizeRoleDescription, sanitizeRolePermissionKeys, sanitizeRoleName, assertNonEmptyPermissionKey } from "../role/key.js";
 import type { Permission } from "../permission/types.js";
 import type { PermissionRepository, RegisterPermissionInput } from "../permission/repository.js";
 import { PermissionError } from "../permission/repository.js";
@@ -590,10 +590,10 @@ export function createMemoryStorage(): UnioraStorage {
   }
 
   function toRoleSummary(role: Role): RoleSummary {
-    return { id: role.id, organizationId: role.organizationId, name: role.name, key: role.key, isOwnerRole: role.isOwnerRole };
+    return { id: role.id, organizationId: role.organizationId, name: role.name, key: role.key, isOwnerRole: role.isOwnerRole, isSystem: role.isSystem };
   }
 
-  function matchingRoles(options?: { organizationId?: string; query?: string; heldBy?: string; notHeldBy?: string; isOwnerRole?: boolean }): Role[] {
+  function matchingRoles(options?: { organizationId?: string; query?: string; heldBy?: string; notHeldBy?: string; isOwnerRole?: boolean; isSystem?: boolean }): Role[] {
     const query = options?.query?.trim().toLowerCase();
     const heldBy = options?.heldBy !== undefined ? new Set(memberships.get(options.heldBy)?.roleIds ?? []) : undefined;
     const notHeldBy = options?.notHeldBy !== undefined ? new Set(memberships.get(options.notHeldBy)?.roleIds ?? []) : undefined;
@@ -603,6 +603,7 @@ export function createMemoryStorage(): UnioraStorage {
         (heldBy === undefined || heldBy.has(role.id)) &&
         (notHeldBy === undefined || !notHeldBy.has(role.id)) &&
         (options?.isOwnerRole === undefined || role.isOwnerRole === options.isOwnerRole) &&
+        (options?.isSystem === undefined || role.isSystem === options.isSystem) &&
         (!query || role.name.toLowerCase().includes(query) || role.key.toLowerCase().includes(query)),
     );
   }
@@ -621,12 +622,15 @@ export function createMemoryStorage(): UnioraStorage {
             : `Could not derive a unique key from this role name — "${key}" is already taken in this organization. Pass an explicit \`key\`.`,
         );
       }
+      const description = sanitizeRoleDescription(input.description);
       const role: Role = {
         id: input.id,
         organizationId: input.organizationId,
         isOwnerRole: false,
+        isSystem: input.isSystem === true,
         key,
         name,
+        ...(description !== undefined ? { description } : {}),
         permissionKeys: sanitizeRolePermissionKeys(input.permissionKeys),
       };
       roles.set(role.id, role);
@@ -643,6 +647,7 @@ export function createMemoryStorage(): UnioraStorage {
         id: input.id,
         organizationId: input.organizationId,
         isOwnerRole: true,
+        isSystem: false,
         key: "owner",
         name: "Owner",
         permissionKeys: [],
@@ -708,6 +713,7 @@ export function createMemoryStorage(): UnioraStorage {
       const role = roles.get(roleId);
       if (!role) throw new RoleError(`Role not found: ${roleId}`);
       if (role.isOwnerRole) throw new RoleError("Cannot rename the protected Owner role.");
+      if (role.isSystem) throw new RoleError("Cannot rename a system role.", "role_system_protected");
       const sanitized = sanitizeRoleName(name);
       if (roleNameTaken(role.organizationId, sanitized, roleId)) {
         throw new RoleError(`A role named "${sanitized}" already exists in this organization.`);
@@ -715,10 +721,81 @@ export function createMemoryStorage(): UnioraStorage {
       role.name = sanitized;
       return role;
     },
-    async delete(roleId) {
+    async update(roleId, input) {
+      if (input.name === undefined && input.description === undefined) {
+        throw new RoleError("Pass a name and/or a description to update.", "role_update_empty");
+      }
+      const role = roles.get(roleId);
+      const name = input.name === undefined ? undefined : sanitizeRoleName(input.name);
+      const description = input.description === undefined ? undefined : sanitizeRoleDescription(input.description);
+      if (!role) throw new RoleError(`Role not found: ${roleId}`);
+      if (name !== undefined) {
+        if (role.isOwnerRole) throw new RoleError("Cannot rename the protected Owner role.");
+        if (role.isSystem) throw new RoleError("Cannot rename a system role.", "role_system_protected");
+        if (roleNameTaken(role.organizationId, name, roleId)) {
+          throw new RoleError(`A role named "${name}" already exists in this organization.`);
+        }
+        role.name = name;
+      }
+      if (input.description !== undefined) {
+        if (role.isOwnerRole && name === undefined) throw new RoleError("Cannot modify the protected Owner role.");
+        if (description === undefined) delete role.description;
+        else role.description = description;
+      }
+      return role;
+    },
+    async setPermissions(roleId, permissionKeys) {
+      const role = roles.get(roleId);
+      if (!role) throw new RoleError(`Role not found: ${roleId}`);
+      if (role.isOwnerRole) throw new RoleError("Cannot modify permissions on the protected Owner role.");
+      const wanted = sanitizeRolePermissionKeys(permissionKeys);
+      const unknown = wanted.filter((key) => !permissions.has(key));
+      if (unknown.length > 0) {
+        throw new RoleError(`Permission(s) not registered: ${unknown.join(", ")}.`, "role_permission_invalid");
+      }
+      const had = new Set(role.permissionKeys);
+      const granted = wanted.filter((key) => !had.has(key));
+      const revoked = role.permissionKeys.filter((key) => !wanted.includes(key));
+      role.permissionKeys = wanted;
+      return { granted, revoked };
+    },
+    async clone(roleId, input) {
+      const source = roles.get(roleId);
+      if (!source) throw new RoleError(`Role not found: ${roleId}`);
+      if (source.isOwnerRole) {
+        throw new RoleError("The protected Owner role cannot be cloned: its power is a flag, not a list.", "owner_role_protected");
+      }
+      return roleRepository.create({
+        id: input.id,
+        organizationId: input.organizationId ?? source.organizationId,
+        name: input.name,
+        ...(input.key !== undefined ? { key: input.key } : {}),
+        permissionKeys: [...source.permissionKeys],
+        ...(input.description !== undefined || source.description !== undefined
+          ? { description: input.description ?? source.description! }
+          : {}),
+      });
+    },
+    async delete(roleId, options) {
       const role = roles.get(roleId);
       if (!role) throw new RoleError(`Role not found: ${roleId}`);
       if (role.isOwnerRole) throw new RoleError("Cannot delete the protected Owner role.");
+      if (role.isSystem) throw new RoleError("Cannot delete a system role.", "role_system_protected");
+      const policy = options?.members ?? "detach";
+      const holders = [...memberships.values()].filter((membership) => membership.roleIds.includes(roleId));
+      if (policy === "reject" && holders.length > 0) {
+        throw new RoleError(`The role is still held by ${holders.length} membership(s).`, "role_in_use");
+      }
+      if (typeof policy === "object") {
+        const target = roles.get(policy.reassignTo);
+        if (!target || target.organizationId !== role.organizationId || target.isOwnerRole || target.id === roleId) {
+          throw new RoleError(
+            "reassignTo must be another role of the same organization and not the Owner role.",
+            "role_reassign_invalid",
+          );
+        }
+        for (const membership of holders) if (!membership.roleIds.includes(target.id)) membership.roleIds.push(target.id);
+      }
       roles.delete(roleId);
       for (const membership of memberships.values()) {
         const index = membership.roleIds.indexOf(roleId);

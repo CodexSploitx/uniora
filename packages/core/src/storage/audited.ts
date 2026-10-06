@@ -181,11 +181,40 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
             await record(tx, "role.renamed", renamed.organizationId, { type: "role", id: roleId }, { name });
             return renamed;
           }),
-        delete: (roleId) =>
+        update: (roleId, input) =>
+          run(async (tx) => {
+            const [found] = await tx.roles.findByIds([roleId]);
+            // Copied first: the in-memory backend mutates the role it returns.
+            const before = found ? { name: found.name, description: found.description ?? null } : undefined;
+            const updated = await tx.roles.update(roleId, input);
+            const changed: Record<string, unknown> = {};
+            if (before && before.name !== updated.name) changed.name = { from: before.name, to: updated.name };
+            if (before && before.description !== (updated.description ?? null)) changed.description = true;
+            if (Object.keys(changed).length > 0) await record(tx, "role.updated", updated.organizationId, { type: "role", id: roleId }, { changed });
+            return updated;
+          }),
+        setPermissions: (roleId, permissionKeys) =>
           run(async (tx) => {
             const [role] = await tx.roles.findByIds([roleId]);
-            await tx.roles.delete(roleId);
-            await record(tx, "role.deleted", role?.organizationId, { type: "role", id: roleId });
+            const result = await tx.roles.setPermissions(roleId, permissionKeys);
+            if (result.granted.length > 0 || result.revoked.length > 0) {
+              await record(tx, "role.permissions_replaced", role?.organizationId, { type: "role", id: roleId }, { granted: result.granted, revoked: result.revoked });
+            }
+            return result;
+          }),
+        clone: (roleId, input) =>
+          run(async (tx) => {
+            const cloned = await tx.roles.clone(roleId, input);
+            await record(tx, "role.cloned", cloned.organizationId, { type: "role", id: cloned.id }, { from: roleId, name: cloned.name });
+            return cloned;
+          }),
+        delete: (roleId, options) =>
+          run(async (tx) => {
+            const [role] = await tx.roles.findByIds([roleId]);
+            await tx.roles.delete(roleId, options);
+            const members =
+              options?.members === undefined || options.members === "detach" ? "detach" : options.members === "reject" ? "reject" : { reassignTo: options.members.reassignTo };
+            await record(tx, "role.deleted", role?.organizationId, { type: "role", id: roleId }, { members });
           }),
       },
       permissions: {

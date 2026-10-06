@@ -23,6 +23,7 @@ import { MIGRATION_0020_AUDIT_LOG_SEARCH_INDEXES } from "./migrations/0020_audit
 import { MIGRATION_0021_RLS_FUNCTIONS } from "./migrations/0021_rls_functions.js";
 import { MIGRATION_0022_AUDIT_LOG_RETENTION } from "./migrations/0022_audit_log_retention.js";
 import { MIGRATION_0023_ORGANIZATION_STATUS } from "./migrations/0023_organization_status.js";
+import { MIGRATION_0024_ROLE_SYSTEM_DESCRIPTION } from "./migrations/0024_role_system_description.js";
 
 interface Migration {
   readonly id: string;
@@ -54,6 +55,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0021_rls_functions", sql: MIGRATION_0021_RLS_FUNCTIONS },
   { id: "0022_audit_log_retention", sql: MIGRATION_0022_AUDIT_LOG_RETENTION },
   { id: "0023_organization_status", sql: MIGRATION_0023_ORGANIZATION_STATUS },
+  { id: "0024_role_system_description", sql: MIGRATION_0024_ROLE_SYSTEM_DESCRIPTION },
 ];
 
 /**

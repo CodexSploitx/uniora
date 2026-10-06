@@ -91,3 +91,17 @@ export function sanitizeRolePermissionKeys(permissionKeys: string[] | undefined)
   }
   return [...unique];
 }
+
+export const MAX_ROLE_DESCRIPTION_LENGTH = 500;
+
+/** Trims the description; empty means none. Oversized text is rejected, not cut (`role_description_invalid`). */
+export function sanitizeRoleDescription(description: string | undefined | null): string | undefined {
+  if (description === undefined || description === null) return undefined;
+  if (typeof description !== "string") throw new RoleError("The role description must be text.", "role_description_invalid");
+  const trimmed = description.trim();
+  if (trimmed === "") return undefined;
+  if (trimmed.length > MAX_ROLE_DESCRIPTION_LENGTH) {
+    throw new RoleError(`The role description cannot exceed ${MAX_ROLE_DESCRIPTION_LENGTH} characters.`, "role_description_invalid");
+  }
+  return trimmed;
+}
