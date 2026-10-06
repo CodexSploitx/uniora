@@ -84,10 +84,13 @@ export type {
   AuditLogRepository,
   ListAuditLogOptions,
   ListRecentAuditLogOptions,
+  PruneAuditLogInput,
+  PruneAuditLogResult,
   RecordAuditLogInput,
   SearchAuditLogOptions,
 } from "./audit-log/repository.js";
-export { AuditLogError, assertAuditInput } from "./audit-log/repository.js";
+export { AuditLogError, assertAuditInput, assertPruneCutoff } from "./audit-log/repository.js";
+export { applyAuditRetention, MIN_AUDIT_RETENTION_DAYS, type AuditRetentionOptions, type AuditRetentionResult } from "./audit-log/retention.js";
 export { AUDIT_ACTIONS, isStandardAuditAction, type AuditAction } from "./audit-log/actions.js";
 
 export type { IdentityLink } from "./identity-link/types.js";

@@ -1039,6 +1039,146 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
       expect(await storage.auditLogs.verifyIntegrity({ anchor: head! })).toMatchObject({ ok: false, anchor: "missing" });
     });
 
+    describe("audit log — retención con checkpoint de la cadena", () => {
+      const pause = () => new Promise((resolve) => setTimeout(resolve, 8));
+
+      /** `old` entries, a cut-off, then `recent` entries: the cut-off falls cleanly between them. */
+      async function seedAround(old: string[], recent: string[]) {
+        const storage = harness.storage();
+        for (const id of old) await storage.auditLogs.record({ id, actor: identity, action: "role.created" });
+        await pause();
+        const cutoff = new Date();
+        await pause();
+        for (const id of recent) await storage.auditLogs.record({ id, actor: identity, action: "role.updated" });
+        return { storage, cutoff };
+      }
+      const ids = (entries: Array<{ id: string }>) => entries.map((entry) => entry.id);
+
+      it("quita lo anterior al corte, conserva lo demás, deja la cadena verificable y se audita", async () => {
+        const { storage, cutoff } = await seedAround(["o1", "o2", "o3"], ["n1", "n2"]);
+        const before = await storage.auditLogs.verifyIntegrity();
+        expect(before).toMatchObject({ ok: true, checked: 5 });
+        expect(before.pruned).toBeUndefined();
+
+        const result = await storage.auditLogs.pruneBefore({ before: cutoff, actor: identity });
+        expect(result.removed).toBe(3);
+        expect(result.through?.hash).toMatch(/^[0-9a-f]{64}$/);
+
+        const remaining = ids(await storage.auditLogs.search());
+        expect(remaining).toHaveLength(3);
+        expect(remaining).toEqual(expect.arrayContaining(["n1", "n2"]));
+        expect(remaining).not.toContain("o1");
+
+        const pruned = await storage.auditLogs.search({ action: "audit_log.pruned" });
+        expect(pruned).toHaveLength(1);
+        expect(pruned[0]).toMatchObject({ actor: identity, metadata: { removed: 3, throughPosition: result.through?.position } });
+
+        const after = await storage.auditLogs.verifyIntegrity();
+        expect(after).toMatchObject({ ok: true, checked: 3, pruned: { removed: 3, through: result.through } });
+        // Positions are stable: the head moved on by exactly the one `audit_log.pruned` entry.
+        expect(after.head?.position).toBe((before.head?.position ?? 0) + 1);
+      });
+
+      it("nunca quita la entrada más reciente aunque todo sea anterior al corte", async () => {
+        const { storage } = await seedAround(["o1", "o2", "o3"], []);
+        await pause();
+        const result = await storage.auditLogs.pruneBefore({ before: new Date(), actor: identity });
+        expect(result.removed).toBe(2);
+        expect(ids(await storage.auditLogs.search({ action: "role.created" }))).toEqual(["o3"]);
+        expect(await storage.auditLogs.verifyIntegrity()).toMatchObject({ ok: true, checked: 2 });
+      });
+
+      it("es idempotente: sin nada más viejo no quita nada ni escribe otra entrada", async () => {
+        const { storage, cutoff } = await seedAround(["o1", "o2"], ["n1"]);
+        await storage.auditLogs.pruneBefore({ before: cutoff, actor: identity });
+        const again = await storage.auditLogs.pruneBefore({ before: cutoff, actor: identity });
+        expect(again).toEqual({ removed: 0 });
+        expect(await harness.probe.countAuditEntries("audit_log.pruned")).toBe(1);
+      });
+
+      it("un log vacío no tiene nada que podar", async () => {
+        const result = await harness.storage().auditLogs.pruneBefore({ before: new Date(), actor: identity });
+        expect(result).toEqual({ removed: 0 });
+      });
+
+      it("rechaza un corte en el futuro o inválido", async () => {
+        const { storage } = await seedAround(["o1", "o2"], []);
+        await expect(
+          storage.auditLogs.pruneBefore({ before: new Date(Date.now() + 86_400_000), actor: identity }),
+        ).rejects.toMatchObject({ code: "audit_prune_invalid" });
+        await expect(storage.auditLogs.pruneBefore({ before: new Date("nope"), actor: identity })).rejects.toMatchObject({
+          code: "audit_prune_invalid",
+        });
+        expect(await storage.auditLogs.search()).toHaveLength(2);
+      });
+
+      it("sigue detectando lo editado o borrado DESPUÉS del checkpoint", async () => {
+        const { storage, cutoff } = await seedAround(["o1", "o2"], ["n1", "n2", "n3"]);
+        await storage.auditLogs.pruneBefore({ before: cutoff, actor: identity });
+
+        await harness.probe.tamperAuditAction("n2", "role.deleted");
+        expect(await storage.auditLogs.verifyIntegrity()).toMatchObject({
+          ok: false,
+          broken: { id: "n2", reason: "content_mismatch" },
+          pruned: { removed: 2 },
+        });
+      });
+
+      it("detecta una entrada borrada del medio tras podar", async () => {
+        const { storage, cutoff } = await seedAround(["o1", "o2"], ["n1", "n2", "n3"]);
+        await storage.auditLogs.pruneBefore({ before: cutoff, actor: identity });
+
+        await harness.probe.tamperAuditDelete("n2");
+        expect(await storage.auditLogs.verifyIntegrity()).toMatchObject({ ok: false, broken: { id: "n3", reason: "chain_broken" } });
+      });
+
+      it("la base sigue rechazando UPDATE y DELETE directos después de podar", async () => {
+        const { storage, cutoff } = await seedAround(["o1", "o2"], ["n1"]);
+        await storage.auditLogs.pruneBefore({ before: cutoff, actor: identity });
+        expect(await harness.probe.attemptAuditUpdate("n1")).toBe("rejected");
+        expect(await harness.probe.attemptAuditDelete("n1")).toBe("rejected");
+        expect(await storage.auditLogs.verifyIntegrity()).toMatchObject({ ok: true });
+      });
+
+      it("un ancla anterior al checkpoint se informa como 'pruned' sin marcar manipulación; la posterior sigue validándose", async () => {
+        const { storage, cutoff } = await seedAround(["o1", "o2"], ["n1", "n2"]);
+        const { head } = await storage.auditLogs.verifyIntegrity();
+        await storage.auditLogs.pruneBefore({ before: cutoff, actor: identity });
+
+        // The anchored head is the newest entry at the time: it was kept, at the same position.
+        expect(await storage.auditLogs.verifyIntegrity({ anchor: head! })).toMatchObject({ ok: true, anchor: "valid" });
+        expect(await storage.auditLogs.verifyIntegrity({ anchor: { position: 1, hash: "0".repeat(64) } })).toMatchObject({
+          ok: true,
+          anchor: "pruned",
+        });
+        expect(await storage.auditLogs.verifyIntegrity({ anchor: { ...head!, hash: "0".repeat(64) } })).toMatchObject({
+          ok: false,
+          anchor: "mismatch",
+        });
+      });
+
+      it("acumula: una segunda poda suma al total quitado y mueve el checkpoint", async () => {
+        const { storage, cutoff } = await seedAround(["o1", "o2"], ["n1"]);
+        const first = await storage.auditLogs.pruneBefore({ before: cutoff, actor: identity });
+        await pause();
+        const second = await storage.auditLogs.pruneBefore({ before: new Date(), actor: identity });
+        expect(second.removed).toBeGreaterThan(0);
+        expect(second.through?.position ?? 0).toBeGreaterThan(first.through?.position ?? 0);
+        const report = await storage.auditLogs.verifyIntegrity();
+        expect(report).toMatchObject({ ok: true, pruned: { removed: first.removed + second.removed } });
+        expect(report.pruned?.through).toEqual(second.through);
+      });
+
+      it("escrituras nuevas después de podar se encadenan con normalidad", async () => {
+        const { storage, cutoff } = await seedAround(["o1", "o2"], ["n1"]);
+        await storage.auditLogs.pruneBefore({ before: cutoff, actor: identity });
+        await Promise.all(
+          Array.from({ length: 6 }, (_, n) => storage.auditLogs.record({ id: `late-${n}`, actor: identity, action: "role.created" })),
+        );
+        expect(await storage.auditLogs.verifyIntegrity()).toMatchObject({ ok: true, checked: 8 });
+      });
+    });
+
     it("listRecent mezcla entradas de todas las organizaciones y pagina con keyset (`before`), no offset", async () => {
       const storage = harness.storage();
       await storage.organizations.create({ id: "org-1", name: "Acme Motors" });

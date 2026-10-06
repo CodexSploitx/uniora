@@ -59,7 +59,12 @@ export interface AuditIntegrityReport {
    * the anchored hash, `missing` if the log was truncated below it, `mismatch` if the history was
    * rewritten. Anything but `valid` makes `ok` false.
    */
-  anchor?: "valid" | "missing" | "mismatch";
+  anchor?: "valid" | "missing" | "mismatch" | "pruned";
+  /**
+   * Present once old entries were removed by `pruneBefore` (retention): the chain is checked from the checkpoint
+   * recorded then. `through` is the last removed entry (its position and hash), `removed` how many entries went in total.
+   */
+  pruned?: { through: { position: number; hash: string }; removed: number };
   /** The first entry that fails verification, when `ok` is false. */
   broken?: { id: string; reason: "content_mismatch" | "chain_broken" };
 }

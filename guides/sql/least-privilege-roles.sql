@@ -29,7 +29,7 @@ declare t text;
 begin
   for t in
     select tablename from pg_tables
-    where schemaname = 'uniora' and tablename not in ('audit_logs', 'schema_migrations')
+    where schemaname = 'uniora' and tablename not in ('audit_logs', 'audit_log_checkpoints', 'schema_migrations')
   loop
     execute format('grant select, insert, update, delete on uniora.%I to uniora_app', t);
   end loop;
@@ -37,6 +37,9 @@ end $$;
 
 -- Audit trail: read and append only. No UPDATE, no DELETE, no TRUNCATE.
 grant select, insert on uniora.audit_logs to uniora_app;
+-- Retention checkpoints: read-only for the app. `uniora.prune_audit_logs` (the only way to delete audit rows) is
+-- NOT granted to uniora_app; give it to the role of your retention job instead.
+grant select on uniora.audit_log_checkpoints to uniora_app;
 
 -- The migration ledger is read-only for the app (`doctor` reads it; only the migrator writes it).
 grant select on uniora.schema_migrations to uniora_app;

@@ -6,6 +6,7 @@ import { MIGRATION_0003_AUDIT_LOG_INTEGRITY } from "./migrations/0003_audit_log_
 import { MIGRATION_0004_FEATURE_DEFAULTS_HIERARCHY } from "./migrations/0004_feature_defaults_hierarchy.js";
 import { MIGRATION_0005_MEMBERSHIP_STATUS } from "./migrations/0005_membership_status.js";
 import { MIGRATION_0006_AUDIT_LOG_SEARCH_INDEXES } from "./migrations/0006_audit_log_search_indexes.js";
+import { MIGRATION_0007_AUDIT_LOG_RETENTION } from "./migrations/0007_audit_log_retention.js";
 
 interface Migration {
   readonly id: string;
@@ -20,6 +21,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0004_feature_defaults_hierarchy", sql: MIGRATION_0004_FEATURE_DEFAULTS_HIERARCHY },
   { id: "0005_membership_status", sql: MIGRATION_0005_MEMBERSHIP_STATUS },
   { id: "0006_audit_log_search_indexes", sql: MIGRATION_0006_AUDIT_LOG_SEARCH_INDEXES },
+  { id: "0007_audit_log_retention", sql: MIGRATION_0007_AUDIT_LOG_RETENTION },
 ];
 
 const LEDGER_TABLE = "uniora_schema_migrations";

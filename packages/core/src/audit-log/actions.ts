@@ -37,6 +37,7 @@ export const AUDIT_ACTIONS = [
   "invitation.delivery_failed",
   "identity_link.created",
   "identity_link.removed",
+  "audit_log.pruned",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

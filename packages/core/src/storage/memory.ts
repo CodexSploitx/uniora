@@ -24,10 +24,12 @@ import type {
   AuditLogRepository,
   ListAuditLogOptions,
   ListRecentAuditLogOptions,
+  PruneAuditLogInput,
+  PruneAuditLogResult,
   RecordAuditLogInput,
   SearchAuditLogOptions,
 } from "../audit-log/repository.js";
-import { assertAuditInput } from "../audit-log/repository.js";
+import { assertAuditInput, assertPruneCutoff } from "../audit-log/repository.js";
 import type { IdentityLink } from "../identity-link/types.js";
 import type { IdentityLinkRepository, LinkIdentityInput } from "../identity-link/repository.js";
 import { IdentityLinkError } from "../identity-link/repository.js";
@@ -65,6 +67,10 @@ export function createMemoryStorage(): UnioraStorage {
   // Hash chain, index-aligned with `auditLogs` (audit F-04).
   const auditChain: Array<{ prev: string | null; hash: string }> = [];
   let auditTail: Promise<void> = Promise.resolve();
+  // Retention checkpoint: how many entries `pruneBefore` removed from the front, and the hash of the last one.
+  // Positions stay stable (position = auditPruned + index + 1) and the chain is verified from this hash.
+  let auditPruned = 0;
+  let auditCheckpointHash: string | null = null;
   const chainFields = (entry: AuditLogEntry): ChainedAuditFields => ({
     id: entry.id,
     organizationId: entry.organizationId ?? null,
@@ -892,20 +898,25 @@ export function createMemoryStorage(): UnioraStorage {
   // existing entry, only `push` (via `record`) — enforcing at the API level
   // that nothing here can tamper with audit history (skill §26/§70).
   async function verifyChain(): Promise<AuditIntegrityReport> {
-    let prev: string | null = null;
+    let prev: string | null = auditCheckpointHash;
+    const pruned =
+      auditPruned > 0 && auditCheckpointHash !== null
+        ? { pruned: { through: { position: auditPruned, hash: auditCheckpointHash }, removed: auditPruned } }
+        : {};
     for (let index = 0; index < auditLogs.length; index++) {
       const entry = auditLogs[index]!;
       const link = auditChain[index]!;
-      if (link.prev !== prev) return { ok: false, checked: index, broken: { id: entry.id, reason: "chain_broken" } };
+      if (link.prev !== prev) return { ok: false, checked: index, broken: { id: entry.id, reason: "chain_broken" }, ...pruned };
       if (link.hash !== (await computeAuditEntryHash(prev, chainFields(entry)))) {
-        return { ok: false, checked: index, broken: { id: entry.id, reason: "content_mismatch" } };
+        return { ok: false, checked: index, broken: { id: entry.id, reason: "content_mismatch" }, ...pruned };
       }
       prev = link.hash;
     }
     return {
       ok: true,
       checked: auditLogs.length,
-      head: prev === null ? undefined : { position: auditLogs.length, hash: prev },
+      head: prev === null ? undefined : { position: auditPruned + auditLogs.length, hash: prev },
+      ...pruned,
     };
   }
 
@@ -937,7 +948,39 @@ export function createMemoryStorage(): UnioraStorage {
     },
     async verifyIntegrity(options?: AuditIntegrityOptions): Promise<AuditIntegrityReport> {
       const report = await verifyChain();
-      return applyAnchor(report, options?.anchor, async (position) => auditChain[position - 1]?.hash ?? null);
+      return applyAnchor(report, options?.anchor, async (position) => auditChain[position - auditPruned - 1]?.hash ?? null);
+    },
+    async pruneBefore(input: PruneAuditLogInput): Promise<PruneAuditLogResult> {
+      const before = assertPruneCutoff(input.before);
+      assertAuditInput({ actor: input.actor, action: "audit_log.pruned" });
+      // Serialized with `record`: the removal and the entry that reports it form one step of the chain.
+      const run = auditTail.then(async () => {
+        // A contiguous prefix of entries older than the cut-off; the newest entry always stays (chain continuity).
+        let count = 0;
+        while (count < auditLogs.length - 1 && auditLogs[count]!.createdAt.getTime() < before.getTime()) count++;
+        if (count === 0) return { removed: 0 };
+        const through = { position: auditPruned + count, hash: auditChain[count - 1]!.hash };
+        auditLogs.splice(0, count);
+        auditChain.splice(0, count);
+        auditPruned += count;
+        auditCheckpointHash = through.hash;
+        const entry: AuditLogEntry = {
+          id: `audit-pruned:${randomId()}`,
+          actor: input.actor,
+          action: "audit_log.pruned",
+          metadata: { before: before.toISOString(), removed: count, throughPosition: through.position },
+          createdAt: new Date(),
+        };
+        const prev = auditChain[auditChain.length - 1]!.hash;
+        auditLogs.push(entry);
+        auditChain.push({ prev, hash: await computeAuditEntryHash(prev, chainFields(entry)) });
+        return { removed: count, through };
+      });
+      auditTail = run.then(
+        () => undefined,
+        () => undefined,
+      );
+      return run;
     },
     async search(options?: SearchAuditLogOptions) {
       const actions = options?.action === undefined ? undefined : new Set(Array.isArray(options.action) ? options.action : [options.action]);

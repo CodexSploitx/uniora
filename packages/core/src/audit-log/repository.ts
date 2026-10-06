@@ -4,7 +4,7 @@ import type { AuditIntegrityOptions, AuditIntegrityReport, AuditLogEntry, AuditL
 
 /** Invalid input to the audit log. `code` is `audit_actor_required` or `audit_action_invalid`. */
 export class AuditLogError extends UnioraError {
-  constructor(message: string, code: "audit_actor_required" | "audit_action_invalid") {
+  constructor(message: string, code: "audit_actor_required" | "audit_action_invalid" | "audit_prune_invalid") {
     super(message, code);
     this.name = "AuditLogError";
   }
@@ -26,6 +26,20 @@ export function assertAuditInput<T extends { actor: Identity; action: string }>(
     throw new AuditLogError("An audit entry needs an action name of at most 200 characters.", "audit_action_invalid");
   }
   return input;
+}
+
+export interface PruneAuditLogInput {
+  /** Entries created strictly before this instant are removed (never the newest entry, never the future). */
+  before: Date;
+  /** Who is pruning. Required: the removal is itself recorded in the log, with this actor. */
+  actor: Identity;
+}
+
+export interface PruneAuditLogResult {
+  /** How many entries were removed. `0` when nothing was old enough. */
+  removed: number;
+  /** The last removed entry, i.e. the new checkpoint the chain is verified from. */
+  through?: { position: number; hash: string };
 }
 
 export interface RecordAuditLogInput {
@@ -107,10 +121,33 @@ export interface AuditLogRepository {
    */
   search(options?: SearchAuditLogOptions): Promise<AuditLogEntry[]>;
   /**
+   * Retention: removes the OLDEST entries (those created before `before`, never the newest one) and records a
+   * checkpoint — the hash of the last removed entry — so the chain still verifies from there and an edited or
+   * deleted entry after it is still detected. The removal is itself written to the log (`audit_log.pruned`, with
+   * the actor, the cut-off and how many entries went) in the same transaction. This is the ONLY way entries leave
+   * the log; the append-only protections still reject any other UPDATE or DELETE. Export what you must keep
+   * (`search`) BEFORE pruning. Rejects (`audit_prune_invalid`) a cut-off in the future or an invalid date.
+   *
+   * **Performs no authorization of its own.** In Postgres the pruning function is revoked from `public`: grant it
+   * only to the role that runs your retention job (see guides/hardening.md).
+   */
+  pruneBefore(input: PruneAuditLogInput): Promise<PruneAuditLogResult>;
+  /**
    * Re-computes the hash chain over the whole log and reports the first entry that doesn't
    * match. Read-only, and linear in the size of the log: run it from a scheduled job, not per
    * request. Detects edited and deleted entries (not removal of the newest ones — see
    * `AuditIntegrityReport`).
    */
   verifyIntegrity(options?: AuditIntegrityOptions): Promise<AuditIntegrityReport>;
+}
+
+/** Validates a retention cut-off and returns it as a `Date`. Throws `AuditLogError` (`audit_prune_invalid`). */
+export function assertPruneCutoff(before: Date, now: Date = new Date()): Date {
+  if (!(before instanceof Date) || Number.isNaN(before.getTime())) {
+    throw new AuditLogError("The retention cut-off must be a valid date.", "audit_prune_invalid");
+  }
+  if (before.getTime() > now.getTime()) {
+    throw new AuditLogError("The retention cut-off cannot be in the future.", "audit_prune_invalid");
+  }
+  return before;
 }
