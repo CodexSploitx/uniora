@@ -1,7 +1,7 @@
 {
   "name": "@uniora/postgres",
   "version": "0.2.0",
-  "description": "PostgreSQL storage adapter for @uniora/core (docs/PROYECT.md §18)",
+  "description": "PostgreSQL storage adapter for @uniora/core (docs/PROYECT.md \u00a718)",
   "license": "PolyForm-Shield-1.0.0",
   "keywords": [
     "uniora",
@@ -45,6 +45,7 @@
   },
   "devDependencies": {
     "@types/pg": "^8.11.10",
+    "@uniora/storage-conformance": "workspace:^",
     "typescript": "^5.6.3",
     "vitest": "^2.1.4"
   }
