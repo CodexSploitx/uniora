@@ -39,6 +39,9 @@ export { MembershipError } from "./membership/repository.js";
 export type { LeaveOrganizationInput, TransferOwnershipInput } from "./membership/ownership.js";
 export { leaveOrganization, transferOwnership } from "./membership/ownership.js";
 
+export type { IdentityProfile, ListMembersWithProfilesOptions, MemberListing, ProfileResolver } from "./profile/profiles.js";
+export { MAX_PROFILE_BATCH, listMembersWithProfiles, sanitizeProfile } from "./profile/profiles.js";
+
 export type { Role } from "./role/types.js";
 export type { CreateOwnerRoleInput, CreateRoleInput, RoleRepository, RoleSummary, SearchRolesOptions } from "./role/repository.js";
 export { RoleError } from "./role/repository.js";
