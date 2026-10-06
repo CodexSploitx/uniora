@@ -10,6 +10,7 @@ import type {
 } from "@uniora/core";
 import {
   FeatureError,
+  assertEffectiveManyInput,
   assertValidFeatureParent,
   featureRequirements,
   resolveEffectiveFeatures,
@@ -67,7 +68,7 @@ function toFeatureDefinition(row: FeatureDefinitionRow): FeatureDefinition {
 const unknownFeature = (key: string): FeatureError =>
   new FeatureError(`Feature "${key}" is not registered. Call features.register() first.`, "feature_unknown");
 
-async function loadDefinitions(db: Queryable): Promise<FeatureDefinition[]> {
+export async function loadDefinitions(db: Queryable): Promise<FeatureDefinition[]> {
   const result = await db.query<FeatureDefinitionRow>(`select ${DEFINITION_COLUMNS} from uniora.feature_definitions order by key asc`);
   return result.rows.map(toFeatureDefinition);
 }
@@ -267,6 +268,21 @@ export function createFeatureRepository(db: Queryable): FeatureRepository {
     async listEffective(organizationId: string, options?: { keys?: string[] }) {
       const all = await effectiveFor(db, organizationId);
       return options?.keys ? all.filter((feature) => options.keys!.includes(feature.key)) : all;
+    },
+
+    async listEffectiveMany(organizationIds: string[], options?: { keys?: string[] }) {
+      assertEffectiveManyInput(organizationIds);
+      const unique = [...new Set(organizationIds)];
+      const result: Record<string, EffectiveFeature[]> = {};
+      if (unique.length === 0) return result;
+      const [definitions, overrides] = await Promise.all([loadDefinitions(db), loadOverrides(db, unique)]);
+      const byOrganization = new Map<string, Feature[]>();
+      for (const row of overrides) byOrganization.set(row.organizationId, [...(byOrganization.get(row.organizationId) ?? []), row]);
+      for (const organizationId of unique) {
+        const all = resolveEffectiveFeatures(definitions, byOrganization.get(organizationId) ?? []);
+        result[organizationId] = options?.keys ? all.filter((feature) => options.keys!.includes(feature.key)) : all;
+      }
+      return result;
     },
 
     async listByOrganization(organizationId: string) {

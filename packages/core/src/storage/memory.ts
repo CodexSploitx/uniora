@@ -17,7 +17,7 @@ import { PermissionError } from "../permission/repository.js";
 import { assertValidPermissionKey, sanitizePermissionName } from "../permission/key.js";
 import type { EffectiveFeature, Feature, FeatureChangeMeta, FeatureDefinition } from "../feature/types.js";
 import type { FeatureRepository, FeatureUsage, RegisterFeatureInput } from "../feature/repository.js";
-import { FeatureError, sanitizeFeatureChangeReason } from "../feature/repository.js";
+import { FeatureError, assertEffectiveManyInput, sanitizeFeatureChangeReason } from "../feature/repository.js";
 import { assertValidFeatureParent, resolveEffectiveFeatures } from "../feature/effective.js";
 import { resolveFeatureKey, sanitizeFeatureName } from "../feature/key.js";
 import type { AuditLogEntry } from "../audit-log/types.js";
@@ -175,6 +175,13 @@ export function createMemoryStorage(): UnioraStorage {
   const statusSet = (status: OrganizationStatus | OrganizationStatus[] | undefined): Set<OrganizationStatus> | undefined =>
     status === undefined ? undefined : new Set((Array.isArray(status) ? status : [status]).map(assertOrganizationStatus));
 
+  /** Predicate for `search({ feature })`: effective state of that feature in an organization (unknown key: off). */
+  const featureFilter = (feature: { key: string; enabled?: boolean } | undefined): ((organizationId: string) => boolean) => {
+    if (!feature) return () => true;
+    const wantOn = feature.enabled ?? true;
+    return (organizationId) => effectiveFor(organizationId).some((f) => f.key === feature.key && f.enabled) === wantOn;
+  };
+
   const organizationRepository: OrganizationRepository = {
     async create(input: CreateOrganizationInput) {
       const name = sanitizeOrganizationName(input.name);
@@ -242,9 +249,11 @@ export function createMemoryStorage(): UnioraStorage {
     async search(options) {
       const query = options?.query?.trim().toLowerCase();
       const statuses = statusSet(options?.status);
+      const hasFeature = featureFilter(options?.feature);
       const matches = [...organizations.values()].filter(
         (organization) =>
           (!statuses || statuses.has(organization.status)) &&
+          hasFeature(organization.id) &&
           (!query || organization.name.toLowerCase().includes(query) || organization.slug.toLowerCase().includes(query)),
       );
       const sorted = matches.sort(
@@ -263,9 +272,11 @@ export function createMemoryStorage(): UnioraStorage {
     async count(options) {
       const query = options?.query?.trim().toLowerCase();
       const statuses = statusSet(options?.status);
+      const hasFeature = featureFilter(options?.feature);
       return [...organizations.values()].filter(
         (organization) =>
           (!statuses || statuses.has(organization.status)) &&
+          hasFeature(organization.id) &&
           (!query || organization.name.toLowerCase().includes(query) || organization.slug.toLowerCase().includes(query)),
       ).length;
     },
@@ -905,6 +916,15 @@ export function createMemoryStorage(): UnioraStorage {
     async listEffective(organizationId, options) {
       const all = effectiveFor(organizationId).sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
       return options?.keys ? all.filter((f) => options.keys!.includes(f.key)) : all;
+    },
+    async listEffectiveMany(organizationIds, options) {
+      assertEffectiveManyInput(organizationIds);
+      return Object.fromEntries(
+        [...new Set(organizationIds)].map((organizationId) => {
+          const all = effectiveFor(organizationId).sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+          return [organizationId, options?.keys ? all.filter((f) => options.keys!.includes(f.key)) : all];
+        }),
+      );
     },
     async listByOrganization(organizationId) {
       return overridesOf(organizationId);

@@ -76,7 +76,7 @@ export type {
   RegisterFeatureInput,
   SearchFeaturesOptions,
 } from "./feature/repository.js";
-export { FeatureError, sanitizeFeatureChangeReason } from "./feature/repository.js";
+export { FeatureError, MAX_EFFECTIVE_MANY, assertEffectiveManyInput, sanitizeFeatureChangeReason } from "./feature/repository.js";
 export { MAX_FEATURE_DEPTH, assertValidFeatureParent, featureChain, featureRequirements, resolveEffectiveFeatures } from "./feature/effective.js";
 export { assertValidFeatureKey, resolveFeatureKey, sanitizeFeatureName } from "./feature/key.js";
 

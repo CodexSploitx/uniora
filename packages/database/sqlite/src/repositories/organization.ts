@@ -12,11 +12,13 @@ import {
   assertAuditInput,
   assertOrganizationStatus,
   assertValidSlug,
+  featureRequirements,
   resolveOrganizationSlug,
   sanitizeOrganizationName,
   sanitizeStatusReason,
 } from "@uniora/core";
 import type { SqliteExecutor } from "../executor.js";
+import { loadDefinitions } from "./feature.js";
 import { jsonList } from "../json.js";
 import { toLikePattern } from "../like.js";
 import { isUniqueViolation, violatedExactly } from "../sqlite-errors.js";
@@ -55,6 +57,26 @@ function toOrganization(row: OrganizationRow): Organization {
         }
       : {}),
   };
+}
+
+/**
+ * SQL condition (over the alias `o`) for `search({ feature })`: the feature is effectively on, or off. An organization
+ * has it on when every feature of its chain that is off by default has an explicit "on" override and no chain feature
+ * has an explicit "off" one (the same rule as `summarizeUsage`). An unregistered key or a broken chain is on nowhere.
+ */
+async function featureCondition(
+  db: SqliteExecutor,
+  feature: { key: string; enabled?: boolean } | undefined,
+  firstParam: number,
+): Promise<{ sql: string; params: unknown[] }> {
+  if (!feature) return { sql: "1", params: [] };
+  const wantOn = feature.enabled ?? true;
+  const catalog = new Map((await loadDefinitions(db)).map((definition) => [definition.key, definition]));
+  const { chain, requiredOn, complete } = featureRequirements(catalog, feature.key);
+  if (!complete) return { sql: wantOn ? "0" : "1", params: [] };
+  const on = `((select count(*) from uniora_features f where f.organization_id = o.id and f.enabled = 1 and f.key in (select value from json_each(?${firstParam}))) = ?${firstParam + 2}
+      and not exists (select 1 from uniora_features f where f.organization_id = o.id and f.enabled = 0 and f.key in (select value from json_each(?${firstParam + 1}))))`;
+  return { sql: wantOn ? on : `not ${on}`, params: [jsonList(requiredOn), jsonList(chain), requiredOn.length] };
 }
 
 /** `null` when no status filter was given; otherwise the validated list as JSON for `json_each`. */
@@ -165,28 +187,32 @@ export function createOrganizationRepository(db: SqliteExecutor): OrganizationRe
       const query = options?.query?.trim();
       const pattern = query ? toLikePattern(query) : null;
       const after = options?.after;
+      const condition = await featureCondition(db, options?.feature, 6);
       const result = await db.query<OrganizationRow>(
         `select ${COLUMNS}
-         from uniora_organizations
-         where (?1 is null or uniora_ilike(name, ?1) or uniora_ilike(slug, ?1))
-           and (?2 is null or (created_at, id) > (?2, ?3))
-           and (?5 is null or status in (select value from json_each(?5)))
-         order by created_at asc, id asc
+         from uniora_organizations o
+         where (?1 is null or uniora_ilike(o.name, ?1) or uniora_ilike(o.slug, ?1))
+           and (?2 is null or (o.created_at, o.id) > (?2, ?3))
+           and (?5 is null or o.status in (select value from json_each(?5)))
+           and ${condition.sql}
+         order by o.created_at asc, o.id asc
          limit coalesce(?4, -1)`,
-        [pattern, after?.createdAt ?? null, after?.id ?? null, options?.limit ?? null, statusFilter(options?.status)],
+        [pattern, after?.createdAt ?? null, after?.id ?? null, options?.limit ?? null, statusFilter(options?.status), ...condition.params],
       );
       return result.rows.map(toOrganization);
     },
 
-    async count(options?: { query?: string; status?: OrganizationStatus | OrganizationStatus[] }) {
+    async count(options?: Pick<SearchOrganizationsOptions, "query" | "status" | "feature">) {
       const query = options?.query?.trim();
       const pattern = query ? toLikePattern(query) : null;
+      const condition = await featureCondition(db, options?.feature, 3);
       const result = await db.query<{ count: number }>(
         `select count(*) as count
-         from uniora_organizations
-         where (?1 is null or uniora_ilike(name, ?1) or uniora_ilike(slug, ?1))
-           and (?2 is null or status in (select value from json_each(?2)))`,
-        [pattern, statusFilter(options?.status)],
+         from uniora_organizations o
+         where (?1 is null or uniora_ilike(o.name, ?1) or uniora_ilike(o.slug, ?1))
+           and (?2 is null or o.status in (select value from json_each(?2)))
+           and ${condition.sql}`,
+        [pattern, statusFilter(options?.status), ...condition.params],
       );
       return Number(result.rows[0]!.count);
     },
