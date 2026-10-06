@@ -85,7 +85,10 @@ export type {
   ListAuditLogOptions,
   ListRecentAuditLogOptions,
   RecordAuditLogInput,
+  SearchAuditLogOptions,
 } from "./audit-log/repository.js";
+export { AuditLogError, assertAuditInput } from "./audit-log/repository.js";
+export { AUDIT_ACTIONS, isStandardAuditAction, type AuditAction } from "./audit-log/actions.js";
 
 export type { IdentityLink } from "./identity-link/types.js";
 export type { IdentityLinkRepository, LinkIdentityInput } from "./identity-link/repository.js";
