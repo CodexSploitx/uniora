@@ -196,3 +196,19 @@ export {
 } from "./outbox/repository.js";
 export type { DispatchOutboxOptions, DispatchOutboxResult } from "./outbox/dispatch.js";
 export { dispatchOutbox, outboxBackoffSeconds } from "./outbox/dispatch.js";
+
+export type { ConsumeResult, EntitlementDefinition, EntitlementLimitSource, EntitlementPeriod, EntitlementStatus } from "./entitlement/types.js";
+export type { DefineEntitlementInput, EntitlementClock, EntitlementErrorCode, EntitlementRepository } from "./entitlement/repository.js";
+export {
+  EntitlementError,
+  MAX_ENTITLEMENT_AMOUNT,
+  MAX_ENTITLEMENT_KEY_LENGTH,
+  assertValidEntitlementAmount,
+  assertValidEntitlementKey,
+  assertValidEntitlementLimit,
+  assertValidEntitlementPeriod,
+  buildEntitlementStatus,
+  entitlementWindow,
+  sanitizeEntitlementName,
+  toConsumeResult,
+} from "./entitlement/repository.js";

@@ -61,7 +61,7 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
   }
 
   function wrap(scope: Scope, run: <T>(work: (tx: UnioraTransaction) => Promise<T>) => Promise<T>): UnioraTransaction {
-    const { organizations, memberships, roles, permissions, features } = scope;
+    const { organizations, memberships, roles, permissions, features, entitlements } = scope;
     return {
       ...scope,
       organizations: {
@@ -243,6 +243,34 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
           run(async (tx) => {
             await tx.permissions.unregister(key);
             await record(tx, "permission.unregistered", undefined, { type: "permission", id: key });
+          }),
+      },
+      entitlements: {
+        ...entitlements,
+        define: (input) =>
+          run(async (tx) => {
+            const defined = await tx.entitlements.define(input);
+            await record(tx, "entitlement.defined", undefined, { type: "entitlement", id: defined.key }, { period: defined.period, defaultLimit: defined.defaultLimit });
+            return defined;
+          }),
+        undefine: (key) =>
+          run(async (tx) => {
+            await tx.entitlements.undefine(key);
+            await record(tx, "entitlement.removed", undefined, { type: "entitlement", id: key });
+          }),
+        setLimit: (organizationId, key, limit) =>
+          run(async (tx) => {
+            const before = await tx.entitlements.get(organizationId, key);
+            const status = await tx.entitlements.setLimit(organizationId, key, limit);
+            await record(tx, "entitlement.limit_changed", organizationId, { type: "entitlement", id: key }, { from: before.limit, to: status.limit });
+            return status;
+          }),
+        clearLimit: (organizationId, key) =>
+          run(async (tx) => {
+            const before = await tx.entitlements.get(organizationId, key);
+            const status = await tx.entitlements.clearLimit(organizationId, key);
+            await record(tx, "entitlement.limit_cleared", organizationId, { type: "entitlement", id: key }, { from: before.limit, to: status.limit });
+            return status;
           }),
       },
       features: {

@@ -10,6 +10,7 @@ import { createAuditLogRepository } from "./repositories/audit-log.js";
 import { createIdentityLinkRepository } from "./repositories/identity-link.js";
 import { createInvitationRepository } from "./repositories/invitation.js";
 import { createOutboxRepository } from "./repositories/outbox.js";
+import { createEntitlementRepository } from "./repositories/entitlement.js";
 
 function createTransactionScope(db: Queryable, pool?: Pool): UnioraTransaction {
   // Built once and passed into `createIdentityLinkRepository` too: `link()`
@@ -35,6 +36,7 @@ function createTransactionScope(db: Queryable, pool?: Pool): UnioraTransaction {
     identityLinks: createIdentityLinkRepository(db, auditLogs, pool),
     invitations: createInvitationRepository(db),
     outbox: createOutboxRepository(db),
+    entitlements: createEntitlementRepository(db),
     // Only meaningful inside `storage.transaction()` (xact-scoped lock); released on commit/rollback.
     async lock(key: string): Promise<void> {
       await db.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [key]);

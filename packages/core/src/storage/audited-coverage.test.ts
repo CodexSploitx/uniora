@@ -7,7 +7,7 @@ const actor = { provider: "p", subject: "operator" };
 /** Methods that only read (or are deliberately not audited). Anything else a repository exposes must be audited. */
 const READ_ONLY = /^(find|list|search|count|is[A-Z]|enabledKeys$|summarizeUsage$|granting|granted|get|resolve|verify|impliedBy$|expand$)/;
 /** Deliberately not audited: a heartbeat, not a change. */
-const NOT_AUDITED = new Set(["memberships.recordActivity"]);
+const NOT_AUDITED = new Set(["memberships.recordActivity", "entitlements.consume", "entitlements.release"]);
 /** Audited by their own service/repository rather than by the wrapper (they already record themselves). */
 const SELF_AUDITING = new Set(["auditLogs", "invitations", "identityLinks"]);
 
@@ -16,7 +16,7 @@ describe("createAuditedStorage: every mutation is audited, with standard names",
     const raw = createMemoryStorage();
     const audited = createAuditedStorage(raw, { actor });
     const unwrapped: string[] = [];
-    for (const repository of ["organizations", "memberships", "roles", "permissions", "features"] as const) {
+    for (const repository of ["organizations", "memberships", "roles", "permissions", "features", "entitlements"] as const) {
       for (const method of Object.keys(raw[repository])) {
         const name = `${repository}.${method}`;
         if (READ_ONLY.test(method) || NOT_AUDITED.has(name)) continue;
@@ -36,6 +36,11 @@ describe("createAuditedStorage: every mutation is audited, with standard names",
     await audited.organizations.setStatus("org", { status: "suspended", actor, reason: "unpaid" });
     await audited.organizations.setStatus("org", { status: "active", actor });
     await audited.permissions.register({ key: "reports.read" });
+    await audited.entitlements.define({ key: "seats", period: "lifetime", defaultLimit: 3 });
+    await audited.entitlements.setLimit("org", "seats", 10);
+    await audited.entitlements.clearLimit("org", "seats");
+    await audited.entitlements.define({ key: "gone" });
+    await audited.entitlements.undefine("gone");
     await audited.features.register({ key: "agenda", name: "Agenda" });
     await audited.features.register({ key: "agenda_chat", name: "Chat", parentKey: "agenda" });
     await audited.features.enable("org", "agenda");
