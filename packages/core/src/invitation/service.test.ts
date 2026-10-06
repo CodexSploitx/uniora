@@ -249,7 +249,3 @@ describe("accept", () => {
     expect(await second.storage.memberships.findByIdentity("org-1", invitee)).toBeNull();
   });
 });
-    expect(await storage.memberships.findByIdentity("org-1", invitee)).toBeNull();
-  });
-});
-
