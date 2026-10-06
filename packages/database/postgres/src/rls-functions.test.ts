@@ -58,9 +58,10 @@ const blocked: Identity = { provider: "supabase", subject: "blocked" };
 const other: Identity = { provider: "supabase", subject: "other-org" };
 const alias: Identity = { provider: "clerk", subject: "staff-alias" };
 const stranger: Identity = { provider: "supabase", subject: "stranger" };
-const identities = [owner, staff, blocked, other, alias, stranger];
+const manager: Identity = { provider: "supabase", subject: "manager" };
+const identities = [owner, staff, blocked, other, alias, stranger, manager];
 const orgs = ["org-1", "org-2", "org-ghost"];
-const permissions = ["vehicles.read", "vehicles.write", "reports.read", "never_registered.thing", "Not Valid", ""];
+const permissions = ["vehicles.read", "vehicles.write", "vehicles.manage", "vehicles.super", "reports.read", "never_registered.thing", "Not Valid", ""];
 const features = ["agenda", "agenda_chat", "agenda_files", "reports", "ghost", ""];
 
 describe("uniora.* functions for row-level security", () => {
@@ -89,6 +90,9 @@ describe("uniora.* functions for row-level security", () => {
     await storage.organizations.create({ id: "org-1", name: "Uno" });
     await storage.organizations.create({ id: "org-2", name: "Dos" });
     for (const key of ["vehicles.read", "vehicles.write", "reports.read"]) await storage.permissions.register({ key });
+    // Implied permissions: super -> manage -> write. The SQL functions must follow the chain exactly like the engine.
+    await storage.permissions.register({ key: "vehicles.manage", implies: ["vehicles.write"] });
+    await storage.permissions.register({ key: "vehicles.super", implies: ["vehicles.manage"] });
 
     const ownerRole = await storage.roles.createOwnerRole({ id: "owner-1", organizationId: "org-1" });
     const staffRole = await storage.roles.create({ id: "staff-1", organizationId: "org-1", name: "Staff", permissionKeys: ["vehicles.read", "reports.read"] });
@@ -96,6 +100,8 @@ describe("uniora.* functions for row-level security", () => {
     const ownerMembership = await storage.memberships.create({ id: "m-owner", organizationId: "org-1", identity: owner });
     await storage.memberships.assignOwnerRole(ownerMembership.id, ownerRole.id);
     await storage.memberships.create({ id: "m-staff", organizationId: "org-1", identity: staff, roleIds: [staffRole.id] });
+    await storage.roles.create({ id: "manager-1", organizationId: "org-1", name: "Manager", permissionKeys: ["vehicles.super"] });
+    await storage.memberships.create({ id: "m-manager", organizationId: "org-1", identity: manager, roleIds: ["manager-1"] });
     await storage.memberships.create({ id: "m-blocked", organizationId: "org-1", identity: blocked, roleIds: [staffRole.id] });
     await storage.memberships.block("m-blocked", { actor: owner, reason: "test" });
     await storage.memberships.create({ id: "m-other", organizationId: "org-2", identity: other, roleIds: ["staff-2"] });
@@ -163,6 +169,10 @@ describe("uniora.* functions for row-level security", () => {
     }
     // El Owner pasa cualquier clave bien formada, también una que no está registrada (comportamiento por defecto del motor).
     expect(await asProbe(owner, "select uniora.has_permission('org-1', 'never_registered.thing') as v")).toBe(true);
+    // Permisos implícitos: vehicles.super -> vehicles.manage -> vehicles.write, pero no hacia vehicles.read ni hacia atrás.
+    expect(await asProbe(manager, "select uniora.has_permission('org-1', 'vehicles.write') as v")).toBe(true);
+    expect(await asProbe(manager, "select uniora.has_permission('org-1', 'vehicles.read') as v")).toBe(false);
+    expect(await asProbe(staff, "select uniora.has_permission('org-1', 'vehicles.manage') as v")).toBe(false);
     // Un rol de OTRA organización no cuenta.
     expect(await asProbe(other, "select uniora.has_permission('org-1', 'vehicles.write') as v")).toBe(false);
   });

@@ -1125,6 +1125,105 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
       });
     });
 
+    describe("permisos — grupos e implicaciones", () => {
+      const staff = { provider: "supabase", subject: "staff" };
+
+      async function seed() {
+        const storage = harness.storage();
+        await createOrganizationWithOwner(storage, {
+          organizationId: "org-1",
+          organizationName: "Acme",
+          ownerRoleId: "role-owner",
+          membershipId: "m-owner",
+          ownerIdentity: identity,
+        });
+        await storage.permissions.register({ key: "appointments.read", group: "Agenda" });
+        await storage.permissions.register({ key: "appointments.write", group: "Agenda", implies: ["appointments.read"] });
+        await storage.permissions.register({ key: "appointments.admin", group: "Agenda", implies: ["appointments.write"] });
+        await storage.permissions.register({ key: "reports.read", group: "Reportes" });
+        return storage;
+      }
+
+      it("guarda grupo e implicaciones; re-registrar sin ellas las borra", async () => {
+        const storage = await seed();
+        expect(await storage.permissions.findByKey("appointments.write")).toMatchObject({ group: "Agenda", implies: ["appointments.read"] });
+        expect((await storage.permissions.findByKey("reports.read"))?.implies ?? []).toEqual([]);
+        await storage.permissions.register({ key: "appointments.write" });
+        const cleared = await storage.permissions.findByKey("appointments.write");
+        expect(cleared?.group).toBeUndefined();
+        expect(cleared?.implies ?? []).toEqual([]);
+        await storage.permissions.register({ key: "appointments.write", group: "  Agenda  ", implies: ["appointments.read", "appointments.read"] });
+        expect(await storage.permissions.findByKey("appointments.write")).toMatchObject({ group: "Agenda", implies: ["appointments.read"] });
+      });
+
+      it("rechaza implicaciones inválidas: desconocida, a sí misma, ciclo, demasiado profunda o demasiadas", async () => {
+        const storage = await seed();
+        const code = { code: "permission_implication_invalid" };
+        await expect(storage.permissions.register({ key: "x.y", implies: ["nope.read"] })).rejects.toMatchObject(code);
+        await expect(storage.permissions.register({ key: "x.y", implies: ["x.y"] })).rejects.toMatchObject(code);
+        // appointments.read -> admin cierra el ciclo admin -> write -> read -> admin
+        await expect(storage.permissions.register({ key: "appointments.read", implies: ["appointments.admin"] })).rejects.toMatchObject(code);
+        expect(await storage.permissions.findByKey("x.y")).toBeNull();
+
+        let previous = "chain.p0";
+        await storage.permissions.register({ key: previous });
+        for (let level = 1; level <= 8; level += 1) {
+          const key = `chain.p${level}`;
+          await storage.permissions.register({ key, implies: [previous] });
+          previous = key;
+        }
+        await expect(storage.permissions.register({ key: "chain.p9", implies: [previous] })).rejects.toMatchObject(code);
+
+        for (let index = 0; index < 21; index += 1) await storage.permissions.register({ key: `many.p${index}` });
+        await expect(
+          storage.permissions.register({ key: "many.all", implies: Array.from({ length: 21 }, (_, index) => `many.p${index}`) }),
+        ).rejects.toMatchObject(code);
+        await expect(storage.permissions.register({ key: "x.y", group: "g".repeat(101) })).rejects.toMatchObject({ code: "permission_group_invalid" });
+      });
+
+      it("impliedBy y expand recorren la cadena completa", async () => {
+        const storage = await seed();
+        expect(await storage.permissions.impliedBy("appointments.read")).toEqual(["appointments.admin", "appointments.write"]);
+        expect(await storage.permissions.impliedBy("appointments.admin")).toEqual([]);
+        expect(await storage.permissions.impliedBy("unknown.key")).toEqual([]);
+        expect(await storage.permissions.expand(["appointments.admin"])).toEqual(["appointments.admin", "appointments.read", "appointments.write"]);
+        expect(await storage.permissions.expand(["reports.read", "unknown.key"])).toEqual(["reports.read", "unknown.key"]);
+      });
+
+      it("un rol con un permiso mayor pasa can() de los que implica, también por la cadena; al revés no", async () => {
+        const storage = await seed();
+        await storage.roles.create({ id: "r-admin", organizationId: "org-1", name: "Admin agenda", permissionKeys: ["appointments.admin"] });
+        await storage.roles.create({ id: "r-reader", organizationId: "org-1", name: "Lector", permissionKeys: ["appointments.read"] });
+        await storage.memberships.create({ id: "m-admin", organizationId: "org-1", identity: staff, roleIds: ["r-admin"] });
+        const reader = { provider: "supabase", subject: "reader" };
+        await storage.memberships.create({ id: "m-reader", organizationId: "org-1", identity: reader, roleIds: ["r-reader"] });
+        const engine = createAuthorizationEngine(storage);
+        const can = (who: typeof staff, permission: string) => engine.can({ identity: who, organizationId: "org-1", permission });
+        expect(await can(staff, "appointments.admin")).toBe(true);
+        expect(await can(staff, "appointments.write")).toBe(true);
+        expect(await can(staff, "appointments.read")).toBe(true);
+        expect(await can(staff, "reports.read")).toBe(false);
+        expect(await can(reader, "appointments.read")).toBe(true);
+        expect(await can(reader, "appointments.write")).toBe(false);
+        expect(await engine.access.check({ identity: staff, organizationId: "org-1", permission: "appointments.read" })).toBe(true);
+      });
+
+      it("search y count filtran por grupo; unregister se niega si otro permiso lo implica", async () => {
+        const storage = await seed();
+        expect((await storage.permissions.search({ group: "Agenda" })).map((permission) => permission.key)).toEqual([
+          "appointments.admin",
+          "appointments.read",
+          "appointments.write",
+        ]);
+        expect(await storage.permissions.count({ group: "Reportes" })).toBe(1);
+        await expect(storage.permissions.unregister("appointments.read")).rejects.toMatchObject({ code: "permission_has_dependents" });
+        await storage.permissions.unregister("appointments.admin");
+        await storage.permissions.unregister("appointments.write");
+        await storage.permissions.unregister("appointments.read");
+        expect(await storage.permissions.findByKey("appointments.read")).toBeNull();
+      });
+    });
+
     describe("audit log — search por acción, actor, objetivo y rango; actor obligatorio", () => {
       const ana = { provider: "supabase", subject: "ana" };
       const luis = { provider: "supabase", subject: "luis" };

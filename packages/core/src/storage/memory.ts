@@ -15,6 +15,14 @@ import type { Permission } from "../permission/types.js";
 import type { PermissionRepository, RegisterPermissionInput } from "../permission/repository.js";
 import { PermissionError } from "../permission/repository.js";
 import { assertValidPermissionKey, sanitizePermissionName } from "../permission/key.js";
+import {
+  assertValidImplications,
+  expandClosure,
+  implicationGraph,
+  impliedByClosure,
+  sanitizeImplies,
+  sanitizePermissionGroup,
+} from "../permission/implications.js";
 import type { EffectiveFeature, Feature, FeatureChangeMeta, FeatureDefinition } from "../feature/types.js";
 import type { FeatureRepository, FeatureUsage, RegisterFeatureInput } from "../feature/repository.js";
 import { FeatureError, assertEffectiveManyInput, sanitizeFeatureChangeReason } from "../feature/repository.js";
@@ -811,7 +819,7 @@ export function createMemoryStorage(): UnioraStorage {
     return counts;
   }
 
-  function matchingPermissions(options?: { query?: string; grantedToRole?: string; grantedToMember?: string }): Permission[] {
+  function matchingPermissions(options?: { query?: string; group?: string; grantedToRole?: string; grantedToMember?: string }): Permission[] {
     const query = options?.query?.trim().toLowerCase();
     const viaMember =
       options?.grantedToMember !== undefined
@@ -821,6 +829,7 @@ export function createMemoryStorage(): UnioraStorage {
       options?.grantedToRole !== undefined ? new Set(roles.get(options.grantedToRole)?.permissionKeys ?? []) : undefined;
     return [...permissions.values()].filter(
       (permission) =>
+        (options?.group === undefined || permission.group === options.group) &&
         (granted === undefined || granted.has(permission.key)) &&
         (viaMember === undefined || viaMember.has(permission.key)) &&
         (!query || permission.key.toLowerCase().includes(query) || (permission.name?.toLowerCase().includes(query) ?? false)),
@@ -831,7 +840,16 @@ export function createMemoryStorage(): UnioraStorage {
     async register(input: RegisterPermissionInput) {
       const key = assertValidPermissionKey(input.key);
       const name = input.name !== undefined ? sanitizePermissionName(input.name) : undefined;
-      const permission: Permission = { key, name, description: input.description };
+      const group = sanitizePermissionGroup(input.group);
+      const implies = sanitizeImplies(input.implies);
+      assertValidImplications(implicationGraph(permissions.values()), key, implies);
+      const permission: Permission = {
+        key,
+        name,
+        description: input.description,
+        ...(group !== undefined ? { group } : {}),
+        ...(implies.length > 0 ? { implies } : {}),
+      };
       permissions.set(permission.key, permission);
       return permission;
     },
@@ -859,9 +877,21 @@ export function createMemoryStorage(): UnioraStorage {
       }
       return counts;
     },
+    async impliedBy(key) {
+      return impliedByClosure(implicationGraph(permissions.values()), key);
+    },
+    async expand(keys) {
+      return expandClosure(implicationGraph(permissions.values()), keys);
+    },
     async unregister(key) {
       if (!permissions.has(key)) {
         throw new PermissionError(`Permission not found: ${key}`);
+      }
+      if ([...permissions.values()].some((permission) => permission.implies?.includes(key))) {
+        throw new PermissionError(
+          `Cannot unregister permission "${key}": another permission still implies it. Change that one first.`,
+          "permission_has_dependents",
+        );
       }
       const stillGranted = [...roles.values()].some((r) => r.permissionKeys.includes(key));
       if (stillGranted) {

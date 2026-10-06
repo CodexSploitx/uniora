@@ -133,12 +133,16 @@ export function createAuthorizationEngine(
       (role) => role.organizationId === input.organizationId,
     );
     if (roles.some((role) => role.permissionKeys.includes(input.permission))) return true;
-    if (!roles.some((role) => role.isOwnerRole)) return false;
-    // Documented contract: the Owner holds every permission. `ownerRequiresRegisteredPermission` narrows
-    // that to REGISTERED keys (audit F-02): an unregistered key is a typo or a stale constant, and
-    // "unknown permission" is a deny everywhere else in UNIORA.
-    if (options.ownerRequiresRegisteredPermission) return (await storage.permissions.findByKey(input.permission)) !== null;
-    return true;
+    if (roles.some((role) => role.isOwnerRole)) {
+      // Documented contract: the Owner holds every permission. `ownerRequiresRegisteredPermission` narrows
+      // that to REGISTERED keys (audit F-02): an unregistered key is a typo or a stale constant, and
+      // "unknown permission" is a deny everywhere else in UNIORA.
+      if (!options.ownerRequiresRegisteredPermission || (await storage.permissions.findByKey(input.permission)) !== null) return true;
+    }
+    // A permission another one implies (`appointments.write` implies `appointments.read`): a role holding any
+    // of the permissions that imply this one passes. Only looked up after a direct miss.
+    const implying = await storage.permissions.impliedBy(input.permission);
+    return implying.length > 0 && roles.some((role) => implying.some((key) => role.permissionKeys.includes(key)));
   }
 
   async function check(input: AccessCheckInput): Promise<boolean> {

@@ -48,6 +48,9 @@ export type PermissionErrorCode =
   | "permission_in_use"
   | "permission_name_invalid"
   | "permission_key_invalid"
+  | "permission_group_invalid"
+  | "permission_implication_invalid"
+  | "permission_has_dependents"
   | "permission_invalid";
 
 export type FeatureErrorCode =
