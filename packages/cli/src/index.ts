@@ -10,4 +10,4 @@ export { runMigrate } from "./commands/migrate.js";
 export { runCli } from "./cli/main.js";
 export { UsageError } from "./cli/args.js";
 export type { CommonOptions } from "./cli/common.js";
-export { runStudio, parseStudioArgs, studioArgsFromFlags, findFreePort, buildStudioEnv, studioLaunchUrl } from "./commands/studio.js";
+export { runStudio, parseStudioArgs, studioArgsFromFlags, findFreePort, buildStudioEnv, studioDatabaseUrl, studioLaunchUrl } from "./commands/studio.js";

@@ -1,7 +1,10 @@
 import "server-only";
+import { parseDatabaseProvider, type DatabaseProvider } from "@/lib/database-provider";
 
 export interface StudioEnv {
+  /** A connection string for PostgreSQL, or `sqlite:<absolute path>` (the CLI resolves relative paths before launching us). */
   databaseUrl: string;
+  databaseProvider: DatabaseProvider;
   token: string;
   readOnly: boolean;
   /** From `auth.provider` in `uniora.config.mjs`, if set — pre-fills the "owner/member provider" fields. Never validated further: a host app may use more than one provider. */
@@ -17,6 +20,7 @@ export function getStudioEnv(): StudioEnv {
   }
   return {
     databaseUrl,
+    databaseProvider: parseDatabaseProvider(process.env.UNIORA_STUDIO_DATABASE_PROVIDER),
     token,
     readOnly: process.env.UNIORA_STUDIO_READ_ONLY === "1",
     defaultAuthProvider: process.env.UNIORA_STUDIO_AUTH_PROVIDER || undefined,

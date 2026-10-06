@@ -8,6 +8,8 @@ import { parseArgs, UsageError, type OptionSpec, type ParsedFlags } from "../cli
 import { COMMON_SPEC, type CommonOptions } from "../cli/common.js";
 import { loadConfig } from "../config/loader.js";
 import { UnioraConfigError } from "../config/validate.js";
+import type { UnioraDatabaseConfig } from "../config/types.js";
+import { sqlitePathFromUrl } from "@uniora/sqlite";
 
 export const STUDIO_HOST = "127.0.0.1";
 export const DEFAULT_STUDIO_PORT = 4321;
@@ -60,18 +62,36 @@ export function generateLaunchToken(): string {
 }
 
 /**
+ * La URL con la que Studio abre la base. Studio corre con SU directorio como
+ * cwd, no el del proyecto, así que una ruta SQLite relativa se resuelve aquí,
+ * contra el proyecto, y viaja absoluta.
+ */
+export function studioDatabaseUrl(database: UnioraDatabaseConfig, cwd: string): string {
+  return database.provider === "sqlite" ? `sqlite:${sqlitePathFromUrl(database.url, cwd)}` : database.url;
+}
+
+/**
  * Entorno con el que se lanza Studio. La connection string viaja por
  * variable de entorno (nunca por argv, donde `ps` la mostraría) y el token de
  * lanzamiento es aleatorio por ejecución.
  */
 export function buildStudioEnv(
   base: NodeJS.ProcessEnv,
-  options: { databaseUrl: string; token: string; port: number; readOnly: boolean; authProvider?: string },
+  options: {
+    databaseUrl: string;
+    /** Por defecto `postgresql` (compatibilidad con quien construya este entorno a mano). */
+    databaseProvider?: UnioraDatabaseConfig["provider"];
+    token: string;
+    port: number;
+    readOnly: boolean;
+    authProvider?: string;
+  },
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...base,
     NODE_ENV: "production",
     UNIORA_STUDIO_DATABASE_URL: options.databaseUrl,
+    UNIORA_STUDIO_DATABASE_PROVIDER: options.databaseProvider ?? "postgresql",
     UNIORA_STUDIO_TOKEN: options.token,
     UNIORA_STUDIO_PORT: String(options.port),
     UNIORA_STUDIO_READ_ONLY: options.readOnly ? "1" : "0",
@@ -160,7 +180,8 @@ export async function runStudio(
     cwd: studio.dir,
     stdio: ["ignore", "inherit", "inherit"],
     env: buildStudioEnv(process.env, {
-      databaseUrl: config.database.url,
+      databaseUrl: studioDatabaseUrl(config.database, cwd),
+      databaseProvider: config.database.provider,
       token,
       port,
       readOnly: args.readOnly,

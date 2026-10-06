@@ -1,18 +1,28 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { emit } from "../cli/output.js";
+import type { DatabaseProvider } from "../database/types.js";
 
 const CONFIG_FILENAME = "uniora.config.mjs";
 const ENV_EXAMPLE_FILENAME = ".env.example";
 const GITIGNORE_FILENAME = ".gitignore";
 const ENV_IGNORE_LINES = [".env", ".env.*.local"];
+/** El archivo SQLite guarda los datos de autorización: tampoco debe acabar en git (incluye `-wal`/`-shm`). */
+const SQLITE_IGNORE_LINES = ["uniora.db*"];
 
-const CONFIG_TEMPLATE = `import { defineConfig } from "@uniora/cli";
+const URL_COMMENT: Record<DatabaseProvider, string> = {
+  postgresql: "    // Nunca hardcodees esta URL: siempre debe venir de tu .env (ver .env.example).",
+  sqlite:
+    "    // sqlite:<ruta> — relativa a este proyecto, o absoluta. Viene de tu .env (ver .env.example).",
+};
+
+function configTemplate(provider: DatabaseProvider): string {
+  return `import { defineConfig } from "@uniora/cli";
 
 export default defineConfig({
   database: {
-    provider: "postgresql",
-    // Nunca hardcodees esta URL: siempre debe venir de tu .env (ver .env.example).
+    provider: "${provider}",
+${URL_COMMENT[provider]}
     url: process.env.DATABASE_URL,
   },
 
@@ -21,10 +31,18 @@ export default defineConfig({
   // },
 });
 `;
+}
 
-const ENV_EXAMPLE_TEMPLATE = `# Copia este archivo a .env (nunca lo commitees) y ajusta los valores.
-DATABASE_URL=postgresql://user:password@localhost:5432/database
+const ENV_EXAMPLE_URL: Record<DatabaseProvider, string> = {
+  postgresql: "postgresql://user:password@localhost:5432/database",
+  sqlite: "sqlite:./uniora.db",
+};
+
+function envExampleTemplate(provider: DatabaseProvider): string {
+  return `# Copia este archivo a .env (nunca lo commitees) y ajusta los valores.
+DATABASE_URL=${ENV_EXAMPLE_URL[provider]}
 `;
+}
 
 interface WriteResult {
   readonly path: string;
@@ -63,20 +81,21 @@ function writeIfAbsent(path: string, content: string, force: boolean): WriteResu
 }
 
 /**
- * Añade `.env`/`.env.*.local` a `.gitignore` si faltan, sin tocar el resto
- * del archivo. Nunca elimina ni reemplaza líneas existentes.
+ * Añade `.env`/`.env.*.local` (y, con SQLite, el archivo de la base) a
+ * `.gitignore` si faltan, sin tocar el resto del archivo. Nunca elimina ni reemplaza líneas existentes.
  */
-function ensureEnvIgnored(cwd: string): WriteResult {
+function ensureEnvIgnored(cwd: string, extraLines: readonly string[]): WriteResult {
+  const wanted = [...ENV_IGNORE_LINES, ...extraLines];
   const gitignorePath = join(cwd, GITIGNORE_FILENAME);
 
   if (!existsSync(gitignorePath)) {
-    writeFileSync(gitignorePath, ENV_IGNORE_LINES.join("\n") + "\n");
+    writeFileSync(gitignorePath, wanted.join("\n") + "\n");
     return { path: gitignorePath, status: "created" };
   }
 
   const content = readFileSync(gitignorePath, "utf8");
   const lines = content.split("\n").map((line) => line.trim());
-  const missing = ENV_IGNORE_LINES.filter((line) => !lines.includes(line));
+  const missing = wanted.filter((line) => !lines.includes(line));
 
   if (missing.length === 0) {
     return { path: gitignorePath, status: "skipped" };
@@ -98,12 +117,16 @@ const STATUS_LABEL: Record<WriteResult["status"], string> = {
  * solo plantillas con placeholders y `process.env.DATABASE_URL` — el
  * desarrollador copia `.env.example` a `.env` y pone sus propios valores.
  */
-export function runInit(cwd: string = process.cwd(), options: { force?: boolean; json?: boolean } = {}): void {
+export function runInit(
+  cwd: string = process.cwd(),
+  options: { force?: boolean; json?: boolean; provider?: DatabaseProvider } = {},
+): void {
   const force = options.force ?? false;
+  const provider = options.provider ?? "postgresql";
 
-  const configResult = writeIfAbsent(join(cwd, CONFIG_FILENAME), CONFIG_TEMPLATE, force);
-  const envExampleResult = writeIfAbsent(join(cwd, ENV_EXAMPLE_FILENAME), ENV_EXAMPLE_TEMPLATE, force);
-  const gitignoreResult = ensureEnvIgnored(cwd);
+  const configResult = writeIfAbsent(join(cwd, CONFIG_FILENAME), configTemplate(provider), force);
+  const envExampleResult = writeIfAbsent(join(cwd, ENV_EXAMPLE_FILENAME), envExampleTemplate(provider), force);
+  const gitignoreResult = ensureEnvIgnored(cwd, provider === "sqlite" ? SQLITE_IGNORE_LINES : []);
   const results = [configResult, envExampleResult, gitignoreResult];
 
   if (options.json) {
