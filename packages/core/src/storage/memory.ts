@@ -37,8 +37,8 @@ import type {
 } from "../invitation/repository.js";
 import { InvitationError } from "../invitation/repository.js";
 import { randomId } from "../invitation/token.js";
-import { computeAuditEntryHash, type ChainedAuditFields } from "../audit-log/chain.js";
-import type { AuditIntegrityReport } from "../audit-log/types.js";
+import { applyAnchor, computeAuditEntryHash, type ChainedAuditFields } from "../audit-log/chain.js";
+import type { AuditIntegrityOptions, AuditIntegrityReport } from "../audit-log/types.js";
 import type { UnioraStorage, UnioraTransaction } from "./types.js";
 
 function identityKey(identity: Identity): string {
@@ -772,6 +772,24 @@ export function createMemoryStorage(): UnioraStorage {
   // Append-only: this object exposes no method that removes or mutates an
   // existing entry, only `push` (via `record`) — enforcing at the API level
   // that nothing here can tamper with audit history (skill §26/§70).
+  async function verifyChain(): Promise<AuditIntegrityReport> {
+    let prev: string | null = null;
+    for (let index = 0; index < auditLogs.length; index++) {
+      const entry = auditLogs[index]!;
+      const link = auditChain[index]!;
+      if (link.prev !== prev) return { ok: false, checked: index, broken: { id: entry.id, reason: "chain_broken" } };
+      if (link.hash !== (await computeAuditEntryHash(prev, chainFields(entry)))) {
+        return { ok: false, checked: index, broken: { id: entry.id, reason: "content_mismatch" } };
+      }
+      prev = link.hash;
+    }
+    return {
+      ok: true,
+      checked: auditLogs.length,
+      head: prev === null ? undefined : { position: auditLogs.length, hash: prev },
+    };
+  }
+
   const auditLogRepository: AuditLogRepository = {
     async record(input: RecordAuditLogInput) {
       // Serialized: each entry's hash needs the previous one, so two concurrent records can't overlap.
@@ -797,22 +815,9 @@ export function createMemoryStorage(): UnioraStorage {
       );
       return run;
     },
-    async verifyIntegrity(): Promise<AuditIntegrityReport> {
-      let prev: string | null = null;
-      for (let index = 0; index < auditLogs.length; index++) {
-        const entry = auditLogs[index]!;
-        const link = auditChain[index]!;
-        if (link.prev !== prev) return { ok: false, checked: index, broken: { id: entry.id, reason: "chain_broken" } };
-        if (link.hash !== (await computeAuditEntryHash(prev, chainFields(entry)))) {
-          return { ok: false, checked: index, broken: { id: entry.id, reason: "content_mismatch" } };
-        }
-        prev = link.hash;
-      }
-      return {
-        ok: true,
-        checked: auditLogs.length,
-        head: prev === null ? undefined : { position: auditLogs.length, hash: prev },
-      };
+    async verifyIntegrity(options?: AuditIntegrityOptions): Promise<AuditIntegrityReport> {
+      const report = await verifyChain();
+      return applyAnchor(report, options?.anchor, async (position) => auditChain[position - 1]?.hash ?? null);
     },
     async listByOrganization(organizationId: string, options?: ListAuditLogOptions) {
       // Same total order as `listRecent` — newest first, `id` desc breaking

@@ -43,12 +43,23 @@ export interface AuditLogEntry {
  * is not: keep `head` somewhere the database owner can't rewrite (a WORM
  * bucket, another system) and compare it later — see docs/hardening.md.
  */
+export interface AuditIntegrityOptions {
+  /** A `head` exported by an earlier run and stored out of the database owner's reach. */
+  anchor?: { position: number; hash: string };
+}
+
 export interface AuditIntegrityReport {
   ok: boolean;
   /** Chained entries whose content and link were checked. */
   checked: number;
   /** The newest chained entry; export it periodically as an external anchor. */
   head?: { position: number; hash: string };
+  /**
+   * Only when `verifyIntegrity({ anchor })` was given: `valid` if the anchored position still holds
+   * the anchored hash, `missing` if the log was truncated below it, `mismatch` if the history was
+   * rewritten. Anything but `valid` makes `ok` false.
+   */
+  anchor?: "valid" | "missing" | "mismatch";
   /** The first entry that fails verification, when `ok` is false. */
   broken?: { id: string; reason: "content_mismatch" | "chain_broken" };
 }

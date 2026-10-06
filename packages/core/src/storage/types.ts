@@ -16,6 +16,12 @@ export interface UnioraTransaction {
   auditLogs: AuditLogRepository;
   identityLinks: IdentityLinkRepository;
   invitations: InvitationRepository;
+  /**
+   * Takes a transaction-scoped advisory lock on `key`, held until commit/rollback, so check-then-insert
+   * sequences (e.g. invitation rate limits) can't interleave across processes. Optional: backends that
+   * already serialize writers (SQLite `begin immediate`, in-memory) may omit it.
+   */
+  lock?(key: string): Promise<void>;
 }
 
 /**

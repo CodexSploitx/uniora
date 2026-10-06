@@ -630,6 +630,23 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
       });
     });
 
+    it("el ancla externa detecta el truncado del final del log (audit F-04)", async () => {
+      const storage = harness.storage();
+      for (const id of ["a", "b", "c", "d"]) await storage.auditLogs.record({ id, actor: identity, action: "role.created" });
+      const { head } = await storage.auditLogs.verifyIntegrity();
+      expect(head).toBeDefined();
+
+      expect(await storage.auditLogs.verifyIntegrity({ anchor: head! })).toMatchObject({ ok: true, anchor: "valid" });
+      expect(await storage.auditLogs.verifyIntegrity({ anchor: { ...head!, hash: "0".repeat(64) } })).toMatchObject({
+        ok: false,
+        anchor: "mismatch",
+      });
+
+      await harness.probe.tamperAuditDelete("d");
+      expect(await storage.auditLogs.verifyIntegrity()).toMatchObject({ ok: true });
+      expect(await storage.auditLogs.verifyIntegrity({ anchor: head! })).toMatchObject({ ok: false, anchor: "missing" });
+    });
+
     it("listRecent mezcla entradas de todas las organizaciones y pagina con keyset (`before`), no offset", async () => {
       const storage = harness.storage();
       await storage.organizations.create({ id: "org-1", name: "Acme Motors" });

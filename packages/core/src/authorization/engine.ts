@@ -28,6 +28,13 @@ export interface AuthorizationDecision {
 
 export interface AuthorizationEngineOptions {
   /**
+   * When `true`, the Owner passes only permission keys registered in the catalog
+   * (`storage.permissions.register`), so a typo or a stale constant is denied for the Owner too instead of
+   * being invisible to them. Recommended for new installations; defaults to `false` to keep the documented
+   * "the Owner can do everything" contract of existing ones.
+   */
+  ownerRequiresRegisteredPermission?: boolean;
+  /**
    * Called after every decision (allow and deny) so the host can keep a
    * forensic trail — the engine itself never writes audit entries. Errors
    * from the hook are swallowed: a failing logger must never change a decision.
@@ -111,12 +118,16 @@ export function createAuthorizationEngine(
     const membership = await storage.memberships.findByIdentity(input.organizationId, input.identity);
     if (!membership || membership.roleIds.length === 0) return false;
 
-    const roles = await storage.roles.findByIds(membership.roleIds);
-    return roles.some(
-      (role) =>
-        role.organizationId === input.organizationId &&
-        (role.isOwnerRole || role.permissionKeys.includes(input.permission)),
+    const roles = (await storage.roles.findByIds(membership.roleIds)).filter(
+      (role) => role.organizationId === input.organizationId,
     );
+    if (roles.some((role) => role.permissionKeys.includes(input.permission))) return true;
+    if (!roles.some((role) => role.isOwnerRole)) return false;
+    // Documented contract: the Owner holds every permission. `ownerRequiresRegisteredPermission` narrows
+    // that to REGISTERED keys (audit F-02): an unregistered key is a typo or a stale constant, and
+    // "unknown permission" is a deny everywhere else in UNIORA.
+    if (options.ownerRequiresRegisteredPermission) return (await storage.permissions.findByKey(input.permission)) !== null;
+    return true;
   }
 
   async function check(input: AccessCheckInput): Promise<boolean> {

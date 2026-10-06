@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import { defineStorageConformance, type StorageHarness } from "@uniora/storage-conformance";
 import { createTestPool } from "./test-pool.js";
 import { applyMigrations } from "./migrate.js";
+import { createInvitationService, createOrganizationWithOwner } from "@uniora/core";
 import { createPostgresStorage } from "./storage.js";
 
 let pool: Pool;
@@ -144,5 +145,42 @@ defineStorageConformance(harness, () => {
     expect(result.rowCount).toBe(0);
 
     expect(await harness.probe.hasMembershipRole("m-2", roleId)).toBe(false);
+  });
+
+  it("el límite de invitaciones se respeta entre procesos distintos (audit F-06)", async () => {
+    const second = createTestPool();
+    try {
+      const storageA = createPostgresStorage(pool);
+      const storageB = createPostgresStorage(second);
+      await createOrganizationWithOwner(storageA, {
+        organizationId: "org-race",
+        organizationName: "Race",
+        ownerRoleId: "role-owner-race",
+        membershipId: "m-owner-race",
+        ownerIdentity: { provider: "supabase", subject: "owner-race" },
+      });
+      await storageA.roles.create({ id: "role-viewer-race", organizationId: "org-race", name: "Viewer", permissionKeys: [] });
+      const make = (storage: typeof storageA) =>
+        createInvitationService({
+          storage,
+          acceptUrl: (token) => `https://app.test/invite/${token}`,
+          rateLimits: { perOrganizationPerHour: 3 },
+        });
+      const services = [make(storageA), make(storageB)];
+
+      const results = await Promise.allSettled(
+        Array.from({ length: 12 }, (_, index) =>
+          services[index % 2]!.invite({
+            organizationId: "org-race",
+            email: `victim${index}@example.com`,
+            roleIds: ["role-viewer-race"],
+            invitedBy: { provider: "supabase", subject: "owner-race" },
+          }),
+        ),
+      );
+      expect(results.filter((r) => r.status === "fulfilled"), JSON.stringify(results.map((r) => (r.status === "rejected" ? String(r.reason) : "ok")))).toHaveLength(3);
+    } finally {
+      await second.end();
+    }
   });
 });

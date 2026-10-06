@@ -1,10 +1,25 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { extname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { UnioraConfigError, validateConfig } from "./validate.js";
 import type { UnioraConfig } from "./types.js";
 
 const CONFIG_FILENAMES = ["uniora.config.mjs", "uniora.config.js"];
+
+/**
+ * Auditoría F-15: el archivo de config se ejecuta (`import()`) y el `.env` trae credenciales; si
+ * cualquier usuario del sistema puede escribirlos, cualquiera puede ejecutar código o cambiar la base
+ * a la que apunta `migrate`. Se rechazan en POSIX; en Windows los modos no son fiables y se omite.
+ */
+function assertNotWorldWritable(path: string): void {
+  if (process.platform === "win32") return;
+  const mode = statSync(path).mode;
+  if ((mode & 0o002) !== 0) {
+    throw new UnioraConfigError(
+      `${path} es escribible por cualquier usuario (modo ${(mode & 0o777).toString(8)}). Corrige con: chmod o-w "${path}"`,
+    );
+  }
+}
 
 /**
  * Un nombre de entorno solo puede ser un token simple: se usa para construir
@@ -35,6 +50,7 @@ function loadDotEnv(cwd: string, envName: string | undefined): void {
   if (envName === undefined) {
     const envPath = resolve(cwd, ".env");
     if (existsSync(envPath)) {
+      assertNotWorldWritable(envPath);
       process.loadEnvFile(envPath);
     }
     return;
@@ -47,6 +63,7 @@ function loadDotEnv(cwd: string, envName: string | undefined): void {
   if (!existsSync(envPath)) {
     throw new UnioraConfigError(`No existe .env.${envName} en ${cwd} (pedido con --env ${envName}).`);
   }
+  assertNotWorldWritable(envPath);
   process.loadEnvFile(envPath);
 }
 
@@ -90,6 +107,7 @@ export async function loadConfig(cwd: string = process.cwd(), options: LoadConfi
   loadDotEnv(cwd, options.envName);
 
   const configPath = resolveConfigPath(cwd, options.configPath);
+  assertNotWorldWritable(configPath);
 
   const mod: unknown = await import(pathToFileURL(configPath).href);
   const exported = hasDefaultExport(mod) ? mod.default : undefined;

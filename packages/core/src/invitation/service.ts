@@ -279,11 +279,10 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
 
   async function checkRate(repo: Pick<UnioraStorage["invitations"], "countCreatedSince">, organizationId: string, email: string): Promise<void> {
     const since = new Date(now().getTime() - HOUR_MS);
-    const [forEmailInOrg, forEmailEverywhere, forOrg] = await Promise.all([
-      repo.countCreatedSince({ organizationId, email, since }),
-      repo.countCreatedSince({ email, since }),
-      repo.countCreatedSince({ organizationId, since }),
-    ]);
+    // Sequential on purpose: inside a transaction all three share one database connection.
+    const forEmailInOrg = await repo.countCreatedSince({ organizationId, email, since });
+    const forEmailEverywhere = await repo.countCreatedSince({ email, since });
+    const forOrg = await repo.countCreatedSince({ organizationId, since });
     if (
       forEmailInOrg >= limits.perEmailPerHour ||
       forEmailEverywhere >= limits.perEmailGlobalPerHour ||
@@ -313,6 +312,8 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
 
       const invitation = await serialized(() =>
         storage.transaction(async (tx) => {
+          // Cross-process: sorted advisory locks so concurrent invites to the same email/org can't both pass the check.
+          for (const key of [`invite:email:${email}`, `invite:org:${input.organizationId}`].sort()) await tx.lock?.(key);
           await checkRate(tx.invitations, input.organizationId, email);
           const at = now();
           await tx.invitations.expireStale(input.organizationId, email, at);

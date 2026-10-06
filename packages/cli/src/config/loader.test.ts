@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -18,6 +18,20 @@ describe("loadConfig", () => {
 
   it("lanza UnioraConfigError si no hay uniora.config.mjs/.js en el directorio", async () => {
     await expect(loadConfig(dir)).rejects.toThrow(UnioraConfigError);
+  });
+
+  it.skipIf(process.platform === "win32")("rechaza una config o un .env escribibles por cualquier usuario (audit F-15)", async () => {
+    const config = join(dir, "uniora.config.mjs");
+    writeFileSync(config, 'export default { database: { provider: "postgresql", url: "postgresql://u:p@host/db" } };\n');
+    chmodSync(config, 0o666);
+    await expect(loadConfig(dir)).rejects.toThrow(/escribible por cualquier usuario/);
+    chmodSync(config, 0o644);
+    await expect(loadConfig(dir)).resolves.toBeDefined();
+
+    const env = join(dir, ".env");
+    writeFileSync(env, "UNIORA_TEST_F15=1\n");
+    chmodSync(env, 0o666);
+    await expect(loadConfig(dir)).rejects.toThrow(/escribible por cualquier usuario/);
   });
 
   it("carga y valida un uniora.config.mjs válido", async () => {

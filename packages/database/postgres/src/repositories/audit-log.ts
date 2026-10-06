@@ -3,10 +3,12 @@ import type {
   AuditLogRepository,
   AuditLogTarget,
   ListAuditLogOptions,
+  AuditIntegrityOptions,
   AuditIntegrityReport,
   ListRecentAuditLogOptions,
   RecordAuditLogInput,
 } from "@uniora/core";
+import { applyAnchor } from "@uniora/core";
 import type { Queryable } from "../queryable.js";
 
 interface AuditLogRow {
@@ -100,7 +102,16 @@ export function createAuditLogRepository(db: Queryable): AuditLogRepository {
       return result.rows.map(toEntry);
     },
 
-    async verifyIntegrity(): Promise<AuditIntegrityReport> {
+    async verifyIntegrity(options?: AuditIntegrityOptions): Promise<AuditIntegrityReport> {
+      const report = await verifyChain();
+      return applyAnchor(report, options?.anchor, async (position) => {
+        const found = await db.query<{ hash: string }>("select hash from uniora.audit_logs where seq = $1", [position]);
+        return found.rows[0]?.hash ?? null;
+      });
+    },
+  };
+
+  async function verifyChain(): Promise<AuditIntegrityReport> {
       const result = await db.query<{
         checked: string;
         head_seq: string | null;
@@ -119,6 +130,5 @@ export function createAuditLogRepository(db: Queryable): AuditLogRepository {
         checked,
         head: row.head_hash !== null && row.head_seq !== null ? { position: Number(row.head_seq), hash: row.head_hash } : undefined,
       };
-    },
-  };
+  }
 }

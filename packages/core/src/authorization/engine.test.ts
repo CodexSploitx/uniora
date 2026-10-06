@@ -256,3 +256,27 @@ describe("onDecision (audit F-05)", () => {
     expect(await noisy.can({ identity, organizationId: "org-1", permission: "vehicles.create" })).toBe(true);
   });
 });
+
+describe("ownerRequiresRegisteredPermission (audit F-02)", () => {
+  async function world() {
+    const storage = createMemoryStorage();
+    await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+    await storage.roles.createOwnerRole({ id: "role-owner", organizationId: "org-1" });
+    const membership = await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity });
+    await storage.memberships.assignOwnerRole(membership.id, "role-owner");
+    await storage.permissions.register({ key: "vehicles.delete" });
+    return storage;
+  }
+
+  it("lets the Owner through registered keys only when enabled", async () => {
+    const strict = createAuthorizationEngine(await world(), { ownerRequiresRegisteredPermission: true });
+    expect(await strict.can({ identity, organizationId: "org-1", permission: "vehicles.delete" })).toBe(true);
+    expect(await strict.can({ identity, organizationId: "org-1", permission: "vehicles.dleete" })).toBe(false);
+    expect(await strict.access.check({ identity, organizationId: "org-1", permission: "vehicles.dleete" })).toBe(false);
+  });
+
+  it("keeps the unconditional Owner by default", async () => {
+    const lax = createAuthorizationEngine(await world());
+    expect(await lax.can({ identity, organizationId: "org-1", permission: "vehicles.dleete" })).toBe(true);
+  });
+});

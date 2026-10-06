@@ -8,6 +8,8 @@
  * application can't skip it.
  */
 
+import type { AuditIntegrityReport } from "./types.js";
+
 interface DigestCrypto {
   subtle: { digest(algorithm: string, data: Uint8Array): Promise<ArrayBuffer> };
 }
@@ -43,4 +45,19 @@ export async function computeAuditEntryHash(prevHash: string | null, fields: Cha
   ]);
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Folds an external anchor into a verification report (audit F-04): the anchored position must still
+ * hold the anchored hash. Only meaningful when the chain itself verified (`report.ok`).
+ */
+export async function applyAnchor(
+  report: AuditIntegrityReport,
+  anchor: { position: number; hash: string } | undefined,
+  hashAt: (position: number) => Promise<string | null>,
+): Promise<AuditIntegrityReport> {
+  if (!anchor || !report.ok) return report;
+  const found = await hashAt(anchor.position);
+  const status = found === null ? "missing" : found === anchor.hash ? "valid" : "mismatch";
+  return { ...report, anchor: status, ok: status === "valid" };
 }

@@ -3,11 +3,12 @@ import type {
   AuditLogRepository,
   AuditLogTarget,
   ListAuditLogOptions,
+  AuditIntegrityOptions,
   AuditIntegrityReport,
   ListRecentAuditLogOptions,
   RecordAuditLogInput,
 } from "@uniora/core";
-import { computeAuditEntryHash } from "@uniora/core";
+import { applyAnchor, computeAuditEntryHash } from "@uniora/core";
 import type { ChainedAuditFields } from "@uniora/core";
 import type { SqliteExecutor } from "../executor.js";
 
@@ -119,7 +120,16 @@ export function createAuditLogRepository(db: SqliteExecutor): AuditLogRepository
       return result.rows.map(toEntry);
     },
 
-    async verifyIntegrity(): Promise<AuditIntegrityReport> {
+    async verifyIntegrity(options?: AuditIntegrityOptions): Promise<AuditIntegrityReport> {
+      const report = await verifyChain();
+      return applyAnchor(report, options?.anchor, async (position) => {
+        const found = await db.query<{ hash: string | null }>("select hash from uniora_audit_logs where rowid = ?1", [position]);
+        return found.rows[0]?.hash ?? null;
+      });
+    },
+  };
+
+  async function verifyChain(): Promise<AuditIntegrityReport> {
       interface ChainRow {
         rowid: number;
         id: string;
@@ -169,6 +179,5 @@ export function createAuditLogRepository(db: SqliteExecutor): AuditLogRepository
         }
       }
       return { ok: true, checked, head: prev === null ? undefined : { position, hash: prev } };
-    },
-  };
+  }
 }

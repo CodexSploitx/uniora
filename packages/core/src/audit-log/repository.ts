@@ -1,5 +1,5 @@
 import type { Identity } from "../identity/types.js";
-import type { AuditIntegrityReport, AuditLogEntry, AuditLogTarget } from "./types.js";
+import type { AuditIntegrityOptions, AuditIntegrityReport, AuditLogEntry, AuditLogTarget } from "./types.js";
 
 export interface RecordAuditLogInput {
   id: string;
@@ -60,5 +60,5 @@ export interface AuditLogRepository {
    * request. Detects edited and deleted entries (not removal of the newest ones — see
    * `AuditIntegrityReport`).
    */
-  verifyIntegrity(): Promise<AuditIntegrityReport>;
+  verifyIntegrity(options?: AuditIntegrityOptions): Promise<AuditIntegrityReport>;
 }
