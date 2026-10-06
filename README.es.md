@@ -138,6 +138,23 @@ const denied = await authorizeRoute(engine, { identity, organizationId, permissi
 if (denied) return denied;
 ```
 
+Para Express, `@uniora/express` es un middleware de ruta — también sin dependencia del paquete `express` en sí. Responde `401` cuando no se sabe quién llama y `403` cuando el motor deniega, y cualquier error (tuyo, del motor o de la base de datos) va a `next(err)`: un fallo nunca deja pasar una request. No depende del manejo de errores async de Express 5, así que sirve también en Express 4.
+
+```ts
+import { requirePermission, requireFeature } from "@uniora/express";
+
+app.delete(
+  "/orgs/:orgId/vehicles/:id",
+  requirePermission(engine, "vehicles.delete", {
+    // identity: lo que resolvió tu middleware de auth (con @uniora/supabase, @uniora/clerk, ...)
+    resolve: (req) => req.identity && { identity: req.identity, organizationId: req.params.orgId },
+  }),
+  deleteVehicle,
+);
+// requireFeature(engine, "ai_assistant", { resolve }) comprueba lo que la organización tiene habilitado;
+// authorize(engine, { permission, feature, resolve }) comprueba ambos.
+```
+
 ## Paquetes
 
 | Paquete | Qué hace |
@@ -151,6 +168,7 @@ if (denied) return denied;
 | [`@uniora/auth0`](packages/adapters/auth0) | Adapter de identidad para Auth0. |
 | [`@uniora/react`](packages/react) | Helpers headless de React (`<Can>`, `<Feature>`, `useCan`, `useFeature`) sobre un `AuthorizationSnapshot` calculado en servidor. |
 | [`@uniora/next`](packages/next) | Pegamento de Next.js: memoización por request (`react.cache()`) más los guards `assertCan`/`assertAccess`/`authorizeRoute` para Server Actions y Route Handlers. |
+| [`@uniora/express`](packages/express) | Middleware de Express (`requirePermission`, `requireFeature`, `authorize`): guards de ruta deny-by-default que responden 401/403 y fallan cerrado ante cualquier error. |
 | [`@uniora/cli`](packages/cli) | `npx uniora init / check / migrate / doctor / studio` — con ledger de migraciones, salida `--json` y códigos de salida aptos para CI. |
 | [`@uniora/studio`](apps/studio) | UNIORA Studio: una interfaz de administración local (Next.js + shadcn/ui + ReUI) para explorar y administrar organizaciones, miembros, roles, permisos, features y el audit log. Se abre con `npx uniora studio`. |
 

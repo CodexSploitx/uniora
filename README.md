@@ -137,6 +137,23 @@ const denied = await authorizeRoute(engine, { identity, organizationId, permissi
 if (denied) return denied;
 ```
 
+For Express, `@uniora/express` is a route middleware — again with no dependency on the `express` package itself. It answers `401` when you can't tell who the caller is and `403` when the engine denies, and any error (yours, the engine's, the database's) goes to `next(err)`: a failure can never let a request through. It does not rely on Express 5's async-error handling, so it suits Express 4 too.
+
+```ts
+import { requirePermission, requireFeature } from "@uniora/express";
+
+app.delete(
+  "/orgs/:orgId/vehicles/:id",
+  requirePermission(engine, "vehicles.delete", {
+    // identity: whatever your auth middleware resolved (via @uniora/supabase, @uniora/clerk, ...)
+    resolve: (req) => req.identity && { identity: req.identity, organizationId: req.params.orgId },
+  }),
+  deleteVehicle,
+);
+// requireFeature(engine, "ai_assistant", { resolve }) checks what the organization has unlocked;
+// authorize(engine, { permission, feature, resolve }) checks both.
+```
+
 ## Packages
 
 | Package | What it does |
@@ -150,6 +167,7 @@ if (denied) return denied;
 | [`@uniora/auth0`](packages/adapters/auth0) | Identity adapter for Auth0. |
 | [`@uniora/react`](packages/react) | Headless React helpers (`<Can>`, `<Feature>`, `useCan`, `useFeature`) over a server-computed `AuthorizationSnapshot`. |
 | [`@uniora/next`](packages/next) | Next.js glue: request-scoped memoization (`react.cache()`) plus `assertCan`/`assertAccess`/`authorizeRoute` guards for Server Actions and Route Handlers. |
+| [`@uniora/express`](packages/express) | Express middleware (`requirePermission`, `requireFeature`, `authorize`): deny-by-default route guards that answer 401/403 and fail closed on any error. |
 | [`@uniora/cli`](packages/cli) | `npx uniora init / check / migrate / doctor / studio` — with a migration ledger, `--json` output and CI-friendly exit codes. |
 | [`@uniora/studio`](apps/studio) | UNIORA Studio: a local-first admin UI (Next.js + shadcn/ui + ReUI) to browse and manage organizations, members, roles, permissions, features and the audit log. Launched with `npx uniora studio`. |
 
