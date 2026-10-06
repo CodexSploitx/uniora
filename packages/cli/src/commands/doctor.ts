@@ -111,6 +111,7 @@ export async function checkDatabase(config: UnioraConfig, cwd: string = process.
     // Las consultas de integridad asumen el schema completo: solo si no falta ninguna migración.
     if (migrations.ledgerPresent && migrations.pending.length === 0 && migrations.modified.length === 0) {
       results.push(await driver.ownerInvariant());
+      results.push(await driver.auditIntegrity());
     }
   } catch (error) {
     results.push({ name: "Diagnóstico de la base", severity: "fail", message: error instanceof Error ? error.message : String(error) });

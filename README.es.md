@@ -196,7 +196,9 @@ const { acceptUrl, delivery } = await invitations.invite({
 const { membership } = await invitations.accept({ token, identity, verifiedEmail: user.email }); // solo un e-mail verificado por el proveedor
 ```
 
-La entrega nunca hace fallar la petición: los errores SMTP transitorios se reintentan con backoff y jitter, cada intento tiene su timeout, el resultado queda registrado en la invitación y una fallida se puede `resend` (emite un enlace nuevo e invalida el anterior). El role Owner no se puede otorgar por invitación. Sin sender la invitación igual se crea y se devuelve el enlace para que lo entregues tú.
+La entrega nunca hace fallar la petición: los errores SMTP transitorios se reintentan con backoff y jitter, cada intento tiene su timeout, el resultado queda registrado en la invitación y una fallida se puede `resend` (emite un enlace nuevo e invalida el anterior). El role Owner no se puede otorgar por invitación. Sin sender la invitación igual se crea y se devuelve el enlace para que lo entregues tú. `resend` y `revoke` reciben `{ organizationId, invitationId, actor }` y tratan la invitación de otra organización como inexistente; `accept` exige un email verificado por el proveedor (`toVerifiedEmail` en cada adaptador de identidad).
+
+**Hardening:** el audit log es solo-anexar y está encadenado con hashes (`auditLogs.verifyIntegrity()`, `npx uniora doctor`), y el motor puede informar cada decisión con `onDecision`. Consulta [docs/hardening.md](docs/hardening.md) para los controles que viven fuera del código (roles de base de datos, anclar la cabeza del audit log, ajustes de publicación).
 
 ```bash
 # .env
