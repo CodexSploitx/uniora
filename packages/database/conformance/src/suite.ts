@@ -701,6 +701,159 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
       });
     });
 
+    describe("organizations — estado (active, suspended, archived) y actualización", () => {
+      const operator = { provider: "supabase", subject: "operator" };
+      const staff = { provider: "supabase", subject: "staff" };
+
+      async function seedOrg(storage = harness.storage()) {
+        await createOrganizationWithOwner(storage, {
+          organizationId: "org-1",
+          organizationName: "Acme",
+          ownerRoleId: "role-owner",
+          membershipId: "m-owner",
+          ownerIdentity: identity,
+        });
+        await storage.permissions.register({ key: "reports.read" });
+        await storage.roles.create({ id: "role-staff", organizationId: "org-1", name: "Staff", permissionKeys: ["reports.read"] });
+        await storage.memberships.create({ id: "m-staff", organizationId: "org-1", identity: staff, roleIds: ["role-staff"] });
+        await storage.features.register({ key: "agenda", name: "Agenda", defaultEnabled: true });
+        return storage;
+      }
+
+      it("una organización nace activa y sin cambio de estado", async () => {
+        const storage = harness.storage();
+        const created = await storage.organizations.create({ id: "org-1", name: "Acme" });
+        expect(created).toMatchObject({ status: "active" });
+        expect((await storage.organizations.findById("org-1"))?.statusChange).toBeUndefined();
+      });
+
+      it("setStatus guarda quién, cuándo y por qué; repetir el mismo estado no cambia nada", async () => {
+        const storage = await seedOrg();
+        const suspended = await storage.organizations.setStatus("org-1", { status: "suspended", actor: operator, reason: "  impago  " });
+        expect(suspended).toMatchObject({ status: "suspended", statusChange: { by: operator, reason: "impago" } });
+        expect(suspended?.statusChange?.at).toBeInstanceOf(Date);
+        expect(await storage.organizations.findById("org-1")).toMatchObject({ status: "suspended", statusChange: { by: operator, reason: "impago" } });
+
+        const again = await storage.organizations.setStatus("org-1", { status: "suspended", actor: { provider: "x", subject: "y" }, reason: "otra" });
+        expect(again?.statusChange).toMatchObject({ by: operator, reason: "impago" });
+
+        const restored = await storage.organizations.setStatus("org-1", { status: "active", actor: operator });
+        expect(restored).toMatchObject({ status: "active", statusChange: { by: operator } });
+        expect(restored?.statusChange?.reason).toBeUndefined();
+        expect(await storage.organizations.setStatus("ghost", { status: "archived", actor: operator })).toBeNull();
+      });
+
+      it("rechaza un estado desconocido, un motivo enorme o sin actor", async () => {
+        const storage = await seedOrg();
+        await expect(
+          storage.organizations.setStatus("org-1", { status: "deleted" as never, actor: operator }),
+        ).rejects.toMatchObject({ code: "organization_status_invalid" });
+        await expect(
+          storage.organizations.setStatus("org-1", { status: "archived", actor: operator, reason: "x".repeat(501) }),
+        ).rejects.toMatchObject({ code: "organization_status_invalid" });
+        await expect(
+          storage.organizations.setStatus("org-1", { status: "archived", actor: undefined as never }),
+        ).rejects.toMatchObject({ code: "audit_actor_required" });
+        expect((await storage.organizations.findById("org-1"))?.status).toBe("active");
+      });
+
+      it("mientras no esté activa, el motor deniega todo (Owner incluido) en can, access.check y snapshots; al reactivarla vuelve", async () => {
+        const storage = await seedOrg();
+        const engine = createAuthorizationEngine(storage);
+        const asks = async () => ({
+          ownerCan: await engine.can({ identity, organizationId: "org-1", permission: "anything.at_all" }),
+          staffCan: await engine.can({ identity: staff, organizationId: "org-1", permission: "reports.read" }),
+          featureOnly: await engine.access.check({ identity: staff, organizationId: "org-1", feature: "agenda" }),
+          both: await engine.access.check({ identity: staff, organizationId: "org-1", permission: "reports.read", feature: "agenda" }),
+          member: await engine.access.check({ identity: staff, organizationId: "org-1" }),
+        });
+        expect(await asks()).toEqual({ ownerCan: true, staffCan: true, featureOnly: true, both: true, member: true });
+
+        for (const status of ["suspended", "archived"] as const) {
+          await storage.organizations.setStatus("org-1", { status, actor: operator });
+          expect(await asks()).toEqual({ ownerCan: false, staffCan: false, featureOnly: false, both: false, member: false });
+        }
+
+        await storage.organizations.setStatus("org-1", { status: "active", actor: operator });
+        expect(await asks()).toEqual({ ownerCan: true, staffCan: true, featureOnly: true, both: true, member: true });
+      });
+
+      it("suspender una organización no toca a las demás", async () => {
+        const storage = await seedOrg();
+        await storage.organizations.create({ id: "org-2", name: "Otra" });
+        const role = await storage.roles.createOwnerRole({ id: "role-owner-2", organizationId: "org-2" });
+        const membership = await storage.memberships.create({ id: "m-2", organizationId: "org-2", identity });
+        await storage.memberships.assignOwnerRole(membership.id, role.id);
+        await storage.organizations.setStatus("org-1", { status: "suspended", actor: operator });
+        const engine = createAuthorizationEngine(storage);
+        expect(await engine.can({ identity, organizationId: "org-1", permission: "a.b" })).toBe(false);
+        expect(await engine.can({ identity, organizationId: "org-2", permission: "a.b" })).toBe(true);
+      });
+
+      it("search y count filtran por estado (uno o varios), solos o con el texto", async () => {
+        const storage = harness.storage();
+        for (const [id, name] of [["a", "Alfa"], ["b", "Beta"], ["c", "Gamma"], ["d", "Alfa dos"]] as const) {
+          await storage.organizations.create({ id, name });
+          await new Promise((resolve) => setTimeout(resolve, 3));
+        }
+        await storage.organizations.setStatus("b", { status: "suspended", actor: operator });
+        await storage.organizations.setStatus("c", { status: "archived", actor: operator });
+        await storage.organizations.setStatus("d", { status: "archived", actor: operator });
+        const ids = (list: Array<{ id: string }>) => list.map((organization) => organization.id);
+
+        expect(ids(await storage.organizations.search({ status: "active" }))).toEqual(["a"]);
+        expect(ids(await storage.organizations.search({ status: "archived" }))).toEqual(["c", "d"]);
+        expect(ids(await storage.organizations.search({ status: ["suspended", "archived"] }))).toEqual(["b", "c", "d"]);
+        expect(ids(await storage.organizations.search({ status: "archived", query: "alfa" }))).toEqual(["d"]);
+        expect(await storage.organizations.count({ status: "archived" })).toBe(2);
+        expect(await storage.organizations.count({ status: ["active", "suspended"] })).toBe(2);
+        expect(await storage.organizations.count({ status: "archived", query: "gam" })).toBe(1);
+        expect(await storage.organizations.count()).toBe(4);
+        await expect(storage.organizations.search({ status: "gone" as never })).rejects.toMatchObject({ code: "organization_status_invalid" });
+      });
+
+      it("update cambia nombre y/o slug a la vez, valida y devuelve null si no existe", async () => {
+        const storage = harness.storage();
+        await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+        await storage.organizations.create({ id: "org-2", name: "Otra", slug: "otra" });
+
+        expect(await storage.organizations.update("org-1", { name: " Acme  Global ", slug: "acme-global" })).toMatchObject({
+          name: "Acme Global",
+          slug: "acme-global",
+        });
+        expect(await storage.organizations.update("org-1", { name: "Solo nombre" })).toMatchObject({ name: "Solo nombre", slug: "acme-global" });
+        expect(await storage.organizations.update("org-1", { slug: "solo-slug" })).toMatchObject({ name: "Solo nombre", slug: "solo-slug" });
+        expect(await storage.organizations.update("org-1", { slug: "solo-slug" })).toMatchObject({ slug: "solo-slug" });
+        expect(await storage.organizations.update("ghost", { name: "X" })).toBeNull();
+
+        await expect(storage.organizations.update("org-1", {})).rejects.toMatchObject({ code: "organization_update_empty" });
+        await expect(storage.organizations.update("org-1", { slug: "otra" })).rejects.toMatchObject({ code: "organization_slug_taken" });
+        await expect(storage.organizations.update("org-1", { slug: "Not Valid" })).rejects.toMatchObject({ code: "organization_slug_invalid" });
+        await expect(storage.organizations.update("org-1", { name: "  " })).rejects.toMatchObject({ code: "organization_name_invalid" });
+        expect(await storage.organizations.findById("org-1")).toMatchObject({ name: "Solo nombre", slug: "solo-slug" });
+      });
+
+      it("con createAuditedStorage queda registrado quién, de qué a qué y por qué", async () => {
+        const raw = harness.storage();
+        const storage = createAuditedStorage(raw, { actor: operator });
+        await storage.organizations.create({ id: "org-1", name: "Acme" });
+        await storage.organizations.update("org-1", { name: "Acme 2" });
+        await storage.organizations.setStatus("org-1", { status: "suspended", actor: operator, reason: "impago" });
+        await storage.organizations.setStatus("org-1", { status: "suspended", actor: operator });
+
+        const updated = await raw.auditLogs.search({ action: "organization.updated" });
+        expect(updated).toHaveLength(1);
+        expect(updated[0]?.metadata).toMatchObject({ changed: { name: { from: "Acme", to: "Acme 2" } } });
+        const changes = await raw.auditLogs.search({ action: "organization.status_changed" });
+        expect(changes).toHaveLength(1);
+        expect(changes[0]).toMatchObject({
+          organizationId: "org-1",
+          actor: operator,
+          metadata: { from: "active", to: "suspended", reason: "impago" },
+        });
+      });
+    });
+
     describe("audit log — search por acción, actor, objetivo y rango; actor obligatorio", () => {
       const ana = { provider: "supabase", subject: "ana" };
       const luis = { provider: "supabase", subject: "luis" };

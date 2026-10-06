@@ -10,6 +10,8 @@ same answers `engine.can()` and `access.check()` give. The functions ship with `
 | `uniora.is_feature_enabled(org, key)` | the feature is on for `org`: its override, else its default, and every parent on |
 | `uniora.has_access(org, permission, feature)` | every argument given holds (like `access.check`); with neither, `is_member` |
 
+A **suspended or archived organization** (`organizations.setStatus`) denies everyone in it from `is_member`, `has_permission` and `has_access`, Owner included, exactly like the engine; `is_feature_enabled` still reports the feature's own state.
+
 Anything unknown — an organization, a permission, a feature, a missing identity, a `NULL` — answers `false`; they never raise.
 
 ```sql

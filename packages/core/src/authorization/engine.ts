@@ -76,6 +76,8 @@ export interface AuthorizationEngine {
  * `permissionKeys` — see `RoleRepository.createOwnerRole` and
  * uniora-security-engineering §11 (Owner Protection).
  *
+ * Everything is denied while the organization is not `active` (suspended or archived), the Owner included.
+ *
  * `access.check()` never falls back to an unconditional grant when
  * `permission` is omitted — whether or not `feature` was given: it still
  * verifies real membership in `organizationId` before answering (see the
@@ -95,6 +97,10 @@ export function createAuthorizationEngine(
   }
 
   const keyOf = (value: unknown): string | undefined => (typeof value === "string" ? value : undefined);
+
+  async function organizationIsActive(organizationId: string): Promise<boolean> {
+    return (await storage.organizations.findById(organizationId))?.status === "active";
+  }
 
   async function can(input: CanInput): Promise<boolean> {
     const allowed = await evaluateCan(input);
@@ -119,6 +125,9 @@ export function createAuthorizationEngine(
     if (!membership || membership.roleIds.length === 0) return false;
     // A blocked member keeps their roles but is denied everything, Owner included.
     if (membership.status !== "active") return false;
+
+    // A suspended or archived organization denies everyone in it, Owner included (and an unknown one, fail-closed).
+    if (!(await organizationIsActive(input.organizationId))) return false;
 
     const roles = (await storage.roles.findByIds(membership.roleIds)).filter(
       (role) => role.organizationId === input.organizationId,
@@ -191,6 +200,7 @@ export function createAuthorizationEngine(
       // organization asking about this one (INV-001).
       const membership = await storage.memberships.findByIdentity(input.organizationId, input.identity);
       if (!membership || membership.status !== "active") return false;
+      if (!(await organizationIsActive(input.organizationId))) return false;
     }
 
     return true;

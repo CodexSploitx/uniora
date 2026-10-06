@@ -1,4 +1,5 @@
-import type { Organization } from "./types.js";
+import type { Identity } from "../identity/types.js";
+import type { Organization, OrganizationStatus } from "./types.js";
 
 export interface CreateOrganizationInput {
   id: string;
@@ -12,6 +13,24 @@ export interface CreateOrganizationInput {
   slug?: string;
 }
 
+export interface UpdateOrganizationInput {
+  /** New display name, sanitized like on `create`. */
+  name?: string;
+  /**
+   * New URL handle. Changing it breaks every link that used the old one, so do it on purpose; it must be well formed
+   * and not taken (`OrganizationError`: `organization_slug_invalid`, `organization_slug_taken`).
+   */
+  slug?: string;
+}
+
+export interface SetOrganizationStatusInput {
+  status: OrganizationStatus;
+  /** Who is changing it. Required: the change is recorded with the organization and in the audit log. */
+  actor: Identity;
+  /** Why (at most 500 characters), shown wherever the status is shown. */
+  reason?: string;
+}
+
 export interface OrganizationCursor {
   createdAt: Date;
   id: string;
@@ -23,6 +42,8 @@ export interface SearchOrganizationsOptions {
   after?: OrganizationCursor;
   /** Case-insensitive substring match against `name` or `slug`. Empty/omitted matches everything. */
   query?: string;
+  /** Only organizations in this status (or any of these). Omitted matches every status. */
+  status?: OrganizationStatus | OrganizationStatus[];
 }
 
 export interface OrganizationRepository {
@@ -38,6 +59,20 @@ export interface OrganizationRepository {
    * every permission check).
    */
   rename(id: string, name: string): Promise<Organization | null>;
+  /**
+   * Changes `name` and/or `slug` in one step and returns the updated record, or `null` if there is no such
+   * organization. Passing neither is an error (`organization_update_empty`). Authorization is the caller's job.
+   */
+  update(id: string, input: UpdateOrganizationInput): Promise<Organization | null>;
+  /**
+   * Moves the organization to `active`, `suspended` or `archived` and records who did it and why (`statusChange`).
+   * While it is not `active` the authorization engine (`can`, `access.check`, snapshots) and the SQL functions for RLS
+   * deny everyone in it, Owner included; the data stays untouched, so setting it back to `active` restores everything.
+   * Setting the status it already has changes nothing. Returns `null` for an unknown organization. There is no
+   * hard delete on purpose: the audit trail of an organization must outlive it (see `guides/`).
+   * Authorization is the caller's job.
+   */
+  setStatus(id: string, input: SetOrganizationStatusInput): Promise<Organization | null>;
   /** Batch lookup — unknown ids are simply absent from the result (no error, no ordering guarantee). */
   findByIds(ids: string[]): Promise<Organization[]>;
   /**
@@ -57,5 +92,5 @@ export interface OrganizationRepository {
    */
   search(options?: SearchOrganizationsOptions): Promise<Organization[]>;
   /** Total organizations matching `query` (or all, if omitted) — for result counts/badges without loading every row. */
-  count(options?: { query?: string }): Promise<number>;
+  count(options?: { query?: string; status?: OrganizationStatus | OrganizationStatus[] }): Promise<number>;
 }

@@ -11,12 +11,16 @@ export type {
 export type { Identity } from "./identity/types.js";
 export { sameIdentity } from "./identity/types.js";
 
-export type { Organization } from "./organization/types.js";
+export type { Organization, OrganizationStatus, OrganizationStatusChange } from "./organization/types.js";
+export { ORGANIZATION_STATUSES } from "./organization/types.js";
+export { MAX_STATUS_REASON_LENGTH, assertOrganizationStatus, sanitizeStatusReason } from "./organization/status.js";
 export type {
   CreateOrganizationInput,
   OrganizationCursor,
   OrganizationRepository,
   SearchOrganizationsOptions,
+  SetOrganizationStatusInput,
+  UpdateOrganizationInput,
 } from "./organization/repository.js";
 export type {
   CreateOrganizationWithOwnerInput,

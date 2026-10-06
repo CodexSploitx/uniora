@@ -61,6 +61,7 @@ describe("createAuthorizationEngine", () => {
 
   it("requires both the feature and the permission for access.check", async () => {
     const storage = createMemoryStorage();
+    await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
     await storage.roles.create({ id: "role-admin", organizationId: "org-1", name: "Admin", permissionKeys: ["vehicles.delete"] });
     const membership = await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity });
     await storage.memberships.assignRole(membership.id, "role-admin");

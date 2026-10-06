@@ -60,6 +60,8 @@ export type OrganizationErrorCode =
   | "organization_slug_taken"
   | "organization_name_invalid"
   | "organization_slug_invalid"
+  | "organization_status_invalid"
+  | "organization_update_empty"
   | "organization_invalid";
 
 export type IdentityLinkErrorCode =
