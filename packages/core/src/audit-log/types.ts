@@ -35,3 +35,20 @@ export interface AuditLogEntry {
   readonly metadata?: Record<string, unknown>;
   readonly createdAt: Date;
 }
+
+/**
+ * Result of `AuditLogRepository.verifyIntegrity()`. Entries are hash-chained
+ * (each one commits to the previous entry's hash), so editing or deleting a
+ * row in the middle of the log is detectable. Truncating the END of the log
+ * is not: keep `head` somewhere the database owner can't rewrite (a WORM
+ * bucket, another system) and compare it later — see docs/hardening.md.
+ */
+export interface AuditIntegrityReport {
+  ok: boolean;
+  /** Chained entries whose content and link were checked. */
+  checked: number;
+  /** The newest chained entry; export it periodically as an external anchor. */
+  head?: { position: number; hash: string };
+  /** The first entry that fails verification, when `ok` is false. */
+  broken?: { id: string; reason: "content_mismatch" | "chain_broken" };
+}

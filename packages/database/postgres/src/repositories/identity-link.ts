@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import type { AuditLogRepository, Identity, IdentityLink, IdentityLinkRepository, LinkIdentityInput } from "@uniora/core";
 import { IdentityLinkError } from "@uniora/core";
@@ -111,12 +112,10 @@ async function performLink(db: Queryable, auditLogs: AuditLogRepository, input: 
   // enough to require a forensic trail regardless of whether the host
   // caller remembers to add one of its own. Global entry (no
   // `organizationId`): a link isn't scoped to any single organization.
-  // Deterministic id (`from`'s natural key — the same one that
-  // uniquely identifies it as this table's primary key) instead of a
-  // randomly generated one, consistent with Core never depending on an
-  // id-generation library.
+  // Random id (audit F-11): a caller-chosen or guessable id could be pre-inserted into the audit
+  // table to make this self-audit collide and block the link with a misleading error.
   await auditLogs.record({
-    id: `identity-link:${input.from.provider}:${input.from.subject}`,
+    id: `identity-link:${randomUUID()}`,
     actor: input.actor,
     action: "identity_link.created",
     target: { type: "identity_link", id: `${input.from.provider}:${input.from.subject}` },

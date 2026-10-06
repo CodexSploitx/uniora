@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { AuditLogRepository, Identity, IdentityLink, IdentityLinkRepository, LinkIdentityInput } from "@uniora/core";
 import { IdentityLinkError } from "@uniora/core";
 import type { SqliteExecutor } from "../executor.js";
@@ -98,7 +99,7 @@ async function performLink(db: SqliteExecutor, auditLogs: AuditLogRepository, in
   // not the host remembers one. Global entry (no organizationId) with a
   // deterministic id — `from`'s natural key — so Core needs no id generator.
   await auditLogs.record({
-    id: `identity-link:${input.from.provider}:${input.from.subject}`,
+    id: `identity-link:${randomUUID()}`,
     actor: input.actor,
     action: "identity_link.created",
     target: { type: "identity_link", id: `${input.from.provider}:${input.from.subject}` },

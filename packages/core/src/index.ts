@@ -40,7 +40,9 @@ export type { FeatureRepository, FeatureUsage, RegisterFeatureInput, SearchFeatu
 export { FeatureError } from "./feature/repository.js";
 export { assertValidFeatureKey, resolveFeatureKey, sanitizeFeatureName } from "./feature/key.js";
 
-export type { AuditLogEntry, AuditLogTarget } from "./audit-log/types.js";
+export type { AuditIntegrityReport, AuditLogEntry, AuditLogTarget } from "./audit-log/types.js";
+export { computeAuditEntryHash } from "./audit-log/chain.js";
+export type { ChainedAuditFields } from "./audit-log/chain.js";
 export type {
   AuditLogCursor,
   AuditLogRepository,

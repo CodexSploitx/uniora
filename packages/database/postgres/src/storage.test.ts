@@ -49,8 +49,38 @@ const harness: StorageHarness = {
       );
       return Number(result.rows[0]!.count);
     },
+    async attemptAuditUpdate(id) {
+      return pool.query("update uniora.audit_logs set action = 'x' where id = $1", [id]).then(
+        () => "applied" as const,
+        () => "rejected" as const,
+      );
+    },
+    async attemptAuditDelete(id) {
+      return pool.query("delete from uniora.audit_logs where id = $1", [id]).then(
+        () => "applied" as const,
+        () => "rejected" as const,
+      );
+    },
+    async tamperAuditAction(id, action) {
+      await withoutAuditProtection(`update uniora.audit_logs set action = '${action.replace(/'/g, "''")}' where id = '${id.replace(/'/g, "''")}'`);
+    },
+    async tamperAuditDelete(id) {
+      await withoutAuditProtection(`delete from uniora.audit_logs where id = '${id.replace(/'/g, "''")}'`);
+    },
   },
 };
+
+/** What a superuser (or the table owner) could do: switch the append-only trigger off, edit, switch it back on. */
+async function withoutAuditProtection(statement: string): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("alter table uniora.audit_logs disable trigger audit_logs_append_only");
+    await client.query(statement);
+    await client.query("alter table uniora.audit_logs enable trigger audit_logs_append_only");
+  } finally {
+    client.release();
+  }
+}
 
 const identity = { provider: "supabase", subject: "user-1" };
 

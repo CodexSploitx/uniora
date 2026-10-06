@@ -36,6 +36,9 @@ import type {
   SearchInvitationsOptions,
 } from "../invitation/repository.js";
 import { InvitationError } from "../invitation/repository.js";
+import { randomId } from "../invitation/token.js";
+import { computeAuditEntryHash, type ChainedAuditFields } from "../audit-log/chain.js";
+import type { AuditIntegrityReport } from "../audit-log/types.js";
 import type { UnioraStorage, UnioraTransaction } from "./types.js";
 
 function identityKey(identity: Identity): string {
@@ -56,6 +59,20 @@ export function createMemoryStorage(): UnioraStorage {
   const features = new Map<string, Feature>();
   const featureDefinitions = new Map<string, FeatureDefinition>();
   const auditLogs: AuditLogEntry[] = [];
+  // Hash chain, index-aligned with `auditLogs` (audit F-04).
+  const auditChain: Array<{ prev: string | null; hash: string }> = [];
+  let auditTail: Promise<void> = Promise.resolve();
+  const chainFields = (entry: AuditLogEntry): ChainedAuditFields => ({
+    id: entry.id,
+    organizationId: entry.organizationId ?? null,
+    actorProvider: entry.actor.provider,
+    actorSubject: entry.actor.subject,
+    action: entry.action,
+    targetType: entry.target?.type ?? null,
+    targetId: entry.target?.id ?? null,
+    metadataJson: entry.metadata !== undefined ? JSON.stringify(entry.metadata) : null,
+    createdAt: entry.createdAt.toISOString(),
+  });
   const identityLinksByFromKey = new Map<string, IdentityLink>();
   const invitations = new Map<string, Invitation>();
   const invitationTokenHashes = new Map<string, string>(); // id -> token hash
@@ -115,12 +132,10 @@ export function createMemoryStorage(): UnioraStorage {
       // dangerous enough to require a forensic trail regardless of whether
       // the host caller remembers to add one of its own. Global entry (no
       // `organizationId`): a link isn't scoped to any single organization.
-      // Deterministic id (`from`'s natural key, unique by construction —
-      // same guarantee as `identity_links`' own primary key) instead of
-      // generating a random one, consistent with Core never depending on an
-      // id-generation library.
+      // Random id (audit F-11): a caller-chosen or guessable id could be pre-inserted into the audit
+  // table to make this self-audit collide and block the link with a misleading error.
       await auditLogRepository.record({
-        id: `identity-link:${input.from.provider}:${input.from.subject}`,
+        id: `identity-link:${randomId()}`,
         actor: input.actor,
         action: "identity_link.created",
         target: { type: "identity_link", id: `${input.from.provider}:${input.from.subject}` },
@@ -746,17 +761,45 @@ export function createMemoryStorage(): UnioraStorage {
   // that nothing here can tamper with audit history (skill §26/§70).
   const auditLogRepository: AuditLogRepository = {
     async record(input: RecordAuditLogInput) {
-      const entry: AuditLogEntry = {
-        id: input.id,
-        organizationId: input.organizationId,
-        actor: input.actor,
-        action: input.action,
-        target: input.target,
-        metadata: input.metadata,
-        createdAt: new Date(),
+      // Serialized: each entry's hash needs the previous one, so two concurrent records can't overlap.
+      const run = auditTail.then(async () => {
+        const entry: AuditLogEntry = {
+          id: input.id,
+          organizationId: input.organizationId,
+          actor: input.actor,
+          action: input.action,
+          target: input.target,
+          metadata: input.metadata,
+          createdAt: new Date(),
+        };
+        const prev = auditChain.length > 0 ? auditChain[auditChain.length - 1]!.hash : null;
+        const hash = await computeAuditEntryHash(prev, chainFields(entry));
+        auditLogs.push(entry);
+        auditChain.push({ prev, hash });
+        return entry;
+      });
+      auditTail = run.then(
+        () => undefined,
+        () => undefined,
+      );
+      return run;
+    },
+    async verifyIntegrity(): Promise<AuditIntegrityReport> {
+      let prev: string | null = null;
+      for (let index = 0; index < auditLogs.length; index++) {
+        const entry = auditLogs[index]!;
+        const link = auditChain[index]!;
+        if (link.prev !== prev) return { ok: false, checked: index, broken: { id: entry.id, reason: "chain_broken" } };
+        if (link.hash !== (await computeAuditEntryHash(prev, chainFields(entry)))) {
+          return { ok: false, checked: index, broken: { id: entry.id, reason: "content_mismatch" } };
+        }
+        prev = link.hash;
+      }
+      return {
+        ok: true,
+        checked: auditLogs.length,
+        head: prev === null ? undefined : { position: auditLogs.length, hash: prev },
       };
-      auditLogs.push(entry);
-      return entry;
     },
     async listByOrganization(organizationId: string, options?: ListAuditLogOptions) {
       // Same total order as `listRecent` — newest first, `id` desc breaking
