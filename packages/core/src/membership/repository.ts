@@ -2,7 +2,7 @@ import { UnioraError, inferErrorCode } from "../shared/errors.js";
 import type { MembershipErrorCode } from "../shared/errors.js";
 import type { Identity } from "../identity/types.js";
 import type { RoleSummary } from "../role/repository.js";
-import type { Membership } from "./types.js";
+import type { Membership, MembershipStatus } from "./types.js";
 
 export class MembershipError extends UnioraError {
   constructor(message: string, code?: MembershipErrorCode) {
@@ -22,6 +22,10 @@ export interface CreateMembershipInput {
    * Hallazgo 2).
    */
   roleIds?: string[];
+  /** Who invited this member, kept on the membership ("invited by" in a members screen). */
+  invitedBy?: Identity;
+  /** Overrides "now" for `createdAt` — only for importing existing members. */
+  createdAt?: Date;
 }
 
 export interface SearchMembershipsOptions {
@@ -34,6 +38,19 @@ export interface SearchMembershipsOptions {
   query?: string;
   /** Exact `(provider, subject)` match — every membership of one identity, across organizations. */
   identity?: Identity;
+  /** Only memberships with this status. Omit for both. */
+  status?: MembershipStatus;
+}
+
+export interface BlockMembershipInput {
+  /** Who is blocking. Required: a block is always attributable. */
+  actor: Identity;
+  /** Free text, trimmed and capped at 500 characters. */
+  reason?: string;
+}
+
+export interface UnblockMembershipInput {
+  actor: Identity;
 }
 
 /**
@@ -47,6 +64,10 @@ export interface MembershipListing {
   organizationId: string;
   identity: Identity;
   roleCount: number;
+  status: MembershipStatus;
+  createdAt: Date;
+  invitedBy?: Identity;
+  lastActiveAt?: Date;
   /** Up to `rolesPerMember` roles — the Owner role first, then alphabetical. */
   roles: RoleSummary[];
 }
@@ -68,7 +89,7 @@ export interface MembershipRepository {
    */
   searchListing(options: SearchMembershipsOptions & { rolesPerMember: number }): Promise<MembershipListing[]>;
   /** Count of memberships (optionally within one organization / matching `query`) — never loads rows. */
-  count(options?: { organizationId?: string; query?: string; identity?: Identity }): Promise<number>;
+  count(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus }): Promise<number>;
   /**
    * How many members currently hold each of the given roles, in one call.
    * Every requested id is present (`0` when none).
@@ -138,8 +159,32 @@ export interface MembershipRepository {
    */
   unassignOwnerRole(membershipId: string, roleId: string): Promise<void>;
   /**
+   * Blocks a member without removing them: the engine denies a blocked member everything (`can`,
+   * `access.check`, snapshots) while roles, history and audit trail stay. Idempotent — blocking an
+   * already-blocked member keeps the original actor and reason. Rejects (`MembershipError`) if the
+   * membership doesn't exist (`membership_not_found`), or if it is an Owner and no OTHER active Owner would
+   * remain (`last_owner`) — an organization must always keep an Owner who can still act.
+   *
+   * **Performs no authorization of its own** — authorize who may block (e.g. `members.block`) in the host,
+   * like `assignRole`.
+   */
+  block(membershipId: string, input: BlockMembershipInput): Promise<Membership>;
+  /** Lifts a block. Idempotent. Rejects (`membership_not_found`) for an unknown membership. */
+  unblock(membershipId: string, input: UnblockMembershipInput): Promise<Membership>;
+  /**
+   * Reports that the member was active at `at` (default: now) — for a "last seen" column. Only ever moves
+   * `lastActiveAt` forward, never touches `updatedAt`, and is a no-op for an unknown membership.
+   */
+  recordActivity(membershipId: string, at?: Date): Promise<void>;
+  /**
    * Rejects if the membership is not found, or if it holds the
    * organization's Owner role and is the only membership holding it.
    */
   delete(membershipId: string): Promise<void>;
+}
+
+/** Trims and caps the free-text reason of a block; `undefined` when empty. */
+export function sanitizeBlockReason(reason: string | undefined): string | undefined {
+  const trimmed = reason?.trim();
+  return trimmed ? trimmed.slice(0, 500) : undefined;
 }

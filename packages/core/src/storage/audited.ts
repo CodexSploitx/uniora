@@ -97,6 +97,23 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
             await tx.memberships.unassignOwnerRole(membershipId, roleId);
             await record(tx, "membership.owner_role_unassigned", membership?.organizationId, { type: "membership", id: membershipId }, { roleId });
           }),
+        block: (membershipId, input) =>
+          run(async (tx) => {
+            const blocked = await tx.memberships.block(membershipId, input);
+            await record(tx, "membership.blocked", blocked.organizationId, { type: "membership", id: membershipId }, {
+              ...(blocked.blocked?.reason ? { reason: blocked.blocked.reason } : {}),
+              requestedBy: `${input.actor.provider}:${input.actor.subject}`,
+            });
+            return blocked;
+          }),
+        unblock: (membershipId, input) =>
+          run(async (tx) => {
+            const unblocked = await tx.memberships.unblock(membershipId, input);
+            await record(tx, "membership.unblocked", unblocked.organizationId, { type: "membership", id: membershipId }, {
+              requestedBy: `${input.actor.provider}:${input.actor.subject}`,
+            });
+            return unblocked;
+          }),
         delete: (membershipId) =>
           run(async (tx) => {
             const membership = await tx.memberships.findById(membershipId);

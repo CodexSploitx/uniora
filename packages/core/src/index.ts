@@ -25,8 +25,16 @@ export type {
 export { createOrganizationWithOwner } from "./organization/create-with-owner.js";
 export { OrganizationError, assertValidSlug, resolveOrganizationSlug, sanitizeOrganizationName, slugify } from "./organization/slug.js";
 
-export type { Membership } from "./membership/types.js";
-export type { CreateMembershipInput, MembershipListing, MembershipRepository, SearchMembershipsOptions } from "./membership/repository.js";
+export type { Membership, MembershipBlock, MembershipStatus } from "./membership/types.js";
+export type {
+  BlockMembershipInput,
+  CreateMembershipInput,
+  MembershipListing,
+  MembershipRepository,
+  SearchMembershipsOptions,
+  UnblockMembershipInput,
+} from "./membership/repository.js";
+export { sanitizeBlockReason } from "./membership/repository.js";
 export { MembershipError } from "./membership/repository.js";
 export type { LeaveOrganizationInput, TransferOwnershipInput } from "./membership/ownership.js";
 export { leaveOrganization, transferOwnership } from "./membership/ownership.js";

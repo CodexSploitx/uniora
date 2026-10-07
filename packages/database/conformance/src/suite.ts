@@ -570,6 +570,136 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
       });
     });
 
+    describe("memberships — estado (bloqueo), fechas y autoría", () => {
+      const admin = { provider: "supabase", subject: "admin" };
+      const alice = { provider: "supabase", subject: "alice" };
+      const bob = { provider: "supabase", subject: "bob" };
+
+      async function seed() {
+        const storage = harness.storage();
+        await storage.organizations.create({ id: "org-1", name: "Acme" });
+        await storage.permissions.register({ key: "reports.read" });
+        await storage.features.register({ key: "agenda", name: "Agenda", defaultEnabled: true });
+        const owner = await storage.roles.createOwnerRole({ id: "owner", organizationId: "org-1" });
+        const staff = await storage.roles.create({ id: "staff", organizationId: "org-1", name: "Staff", permissionKeys: ["reports.read"] });
+        const a = await storage.memberships.create({ id: "m-alice", organizationId: "org-1", identity: alice, roleIds: [staff.id], invitedBy: admin });
+        const b = await storage.memberships.create({ id: "m-bob", organizationId: "org-1", identity: bob });
+        await storage.memberships.assignOwnerRole(b.id, owner.id);
+        return { storage, owner, staff, a, b };
+      }
+
+      it("nace activa, con createdAt/updatedAt y quién invitó, y lo conserva al leerla", async () => {
+        const { storage, a, b } = await seed();
+        expect(a).toMatchObject({ status: "active", invitedBy: admin });
+        expect(a.createdAt).toBeInstanceOf(Date);
+        expect(b.invitedBy).toBeUndefined();
+        const found = (await storage.memberships.findById("m-alice"))!;
+        expect(found).toMatchObject({ status: "active", invitedBy: admin, roleIds: ["staff"] });
+        expect(found.createdAt.getTime()).toBe(a.createdAt.getTime());
+        expect(found.lastActiveAt).toBeUndefined();
+        expect(found.blocked).toBeUndefined();
+        expect((await storage.memberships.findByIdentity("org-1", alice))!.id).toBe("m-alice");
+        expect((await storage.memberships.listByOrganization("org-1")).every((m) => m.status === "active")).toBe(true);
+      });
+
+      it("asignar y quitar roles actualiza updatedAt y no createdAt", async () => {
+        const { storage, a } = await seed();
+        await storage.roles.create({ id: "other", organizationId: "org-1", name: "Other" });
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        await storage.memberships.assignRole("m-alice", "other");
+        const afterAssign = (await storage.memberships.findById("m-alice"))!;
+        expect(afterAssign.createdAt.getTime()).toBe(a.createdAt.getTime());
+        expect(afterAssign.updatedAt.getTime()).toBeGreaterThan(a.createdAt.getTime());
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        await storage.memberships.unassignRole("m-alice", "other");
+        expect((await storage.memberships.findById("m-alice"))!.updatedAt.getTime()).toBeGreaterThan(afterAssign.updatedAt.getTime());
+      });
+
+      it("bloquear no elimina: conserva roles pero el motor lo deniega todo; desbloquear lo restaura", async () => {
+        const { storage, a } = await seed();
+        const engine = createAuthorizationEngine(storage);
+        const input = { identity: alice, organizationId: "org-1", permission: "reports.read" };
+        expect(await engine.can(input)).toBe(true);
+        expect(await engine.access.check({ ...input, feature: "agenda" })).toBe(true);
+
+        const blocked = await storage.memberships.block(a.id, { actor: admin, reason: "  impago  " });
+        expect(blocked).toMatchObject({ status: "blocked", roleIds: ["staff"], blocked: { by: admin, reason: "impago" } });
+        expect(blocked.blocked!.at).toBeInstanceOf(Date);
+        expect(await engine.can(input)).toBe(false);
+        expect(await engine.access.check({ ...input, feature: "agenda" })).toBe(false);
+        expect(await engine.access.check({ identity: alice, organizationId: "org-1" })).toBe(false);
+        expect(await engine.access.check({ identity: alice, organizationId: "org-1", feature: "agenda" })).toBe(false);
+        expect(await engine.can({ identity: bob, organizationId: "org-1", permission: "reports.read" })).toBe(true);
+        // El bloqueo se ve al volver a leer, también por identidad enlazada.
+        expect((await storage.memberships.findByIdentity("org-1", alice))!.blocked).toMatchObject({ by: admin, reason: "impago" });
+
+        const unblocked = await storage.memberships.unblock(a.id, { actor: admin });
+        expect(unblocked.status).toBe("active");
+        expect(unblocked.blocked).toBeUndefined();
+        expect(await engine.can(input)).toBe(true);
+      });
+
+      it("bloquear y desbloquear son idempotentes; el primer bloqueo conserva autor y motivo; ids desconocidos fallan con código", async () => {
+        const { storage, a } = await seed();
+        await storage.memberships.block(a.id, { actor: admin, reason: "uno" });
+        expect((await storage.memberships.block(a.id, { actor: bob, reason: "dos" })).blocked).toMatchObject({ by: admin, reason: "uno" });
+        await storage.memberships.unblock(a.id, { actor: admin });
+        expect((await storage.memberships.unblock(a.id, { actor: admin })).status).toBe("active");
+        await expect(storage.memberships.block("nope", { actor: admin })).rejects.toMatchObject({ code: "membership_not_found" });
+        await expect(storage.memberships.unblock("nope", { actor: admin })).rejects.toMatchObject({ code: "membership_not_found" });
+      });
+
+      it("no se puede bloquear al último Owner activo, pero sí a uno de dos", async () => {
+        const { storage, owner, a, b } = await seed();
+        await expect(storage.memberships.block(b.id, { actor: admin })).rejects.toMatchObject({ code: "last_owner" });
+        expect((await storage.memberships.findById(b.id))!.status).toBe("active");
+
+        await storage.memberships.assignOwnerRole(a.id, owner.id);
+        await storage.memberships.block(b.id, { actor: admin });
+        await expect(storage.memberships.block(a.id, { actor: admin })).rejects.toMatchObject({ code: "last_owner" });
+      });
+
+      it("filtra y cuenta por estado, y el listado trae estado, fecha, invitedBy y lastActiveAt", async () => {
+        const { storage, a } = await seed();
+        await storage.memberships.block(a.id, { actor: admin });
+        expect((await storage.memberships.search({ organizationId: "org-1", status: "blocked" })).map((m) => m.id)).toEqual(["m-alice"]);
+        expect(await storage.memberships.count({ organizationId: "org-1", status: "active" })).toBe(1);
+        expect(await storage.memberships.count({ organizationId: "org-1" })).toBe(2);
+        const seen = new Date(Date.now() + 60_000);
+        await storage.memberships.recordActivity(a.id, seen);
+        const listing = await storage.memberships.searchListing({ organizationId: "org-1", rolesPerMember: 2, status: "blocked" });
+        expect(listing).toMatchObject([{ id: "m-alice", status: "blocked", invitedBy: admin, roleCount: 1 }]);
+        expect(listing[0]!.createdAt).toBeInstanceOf(Date);
+        expect(listing[0]!.lastActiveAt!.getTime()).toBe(seen.getTime());
+      });
+
+      it("recordActivity solo avanza lastActiveAt, no toca updatedAt y no falla con un id desconocido", async () => {
+        const { storage, a } = await seed();
+        const before = (await storage.memberships.findById(a.id))!;
+        const later = new Date(Date.now() + 60_000);
+        await storage.memberships.recordActivity(a.id, later);
+        await storage.memberships.recordActivity(a.id, new Date(later.getTime() - 30_000));
+        await storage.memberships.recordActivity("nope");
+        const found = (await storage.memberships.findById(a.id))!;
+        expect(found.lastActiveAt!.getTime()).toBe(later.getTime());
+        expect(found.updatedAt.getTime()).toBe(before.updatedAt.getTime());
+      });
+
+      it("dos Owners que se bloquean a la vez nunca dejan la organización sin un Owner activo", async () => {
+        for (let trial = 0; trial < 4; trial++) {
+          await harness.reset();
+          const { storage, owner, a, b } = await seed();
+          await storage.memberships.assignOwnerRole(a.id, owner.id);
+          const outcomes = await Promise.allSettled([
+            storage.memberships.block(a.id, { actor: admin }),
+            storage.memberships.block(b.id, { actor: admin }),
+          ]);
+          expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1);
+          expect(await storage.memberships.count({ organizationId: "org-1", status: "active" })).toBe(1);
+        }
+      });
+    });
+
     it("permission.unregister() rechaza un key nunca registrado, y uno todavía otorgado a algún role", async () => {
       const storage = harness.storage();
       await expect(storage.permissions.unregister("vehicles.delete")).rejects.toThrow(PermissionError);
