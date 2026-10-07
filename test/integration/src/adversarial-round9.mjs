@@ -167,7 +167,7 @@ section("SECCIÓN 3 — Corrupción controlada de la base: ¿el sistema falla ce
     let blocked = false;
     try {
       await pool.query(
-        `insert into uniora.roles (id, organization_id, name, key, is_owner_role) values ($1, $2, $3, $4, true)`,
+        `insert into uniora.roles (id, organization_id, name, name_normalized, key, is_owner_role) values ($1, $2, $3, lower($3), $4, true)`,
         ["role-second-owner", orgA.id, "Second Owner", "second-owner"],
       );
     } catch (error) {
