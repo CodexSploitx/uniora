@@ -32,6 +32,16 @@ export interface UpdateRoleInput {
   name?: string;
   /** New description, or `null` to clear it. */
   description?: string | null;
+  /**
+   * Apply the change only if the role is still at this `version` (see `Role.version`); otherwise it is refused with
+   * `role_version_conflict` and nothing changes. Omitted: last write wins, as before.
+   */
+  expectedVersion?: number;
+}
+
+export interface SetRolePermissionsOptions {
+  /** Same as `UpdateRoleInput.expectedVersion`: refuse with `role_version_conflict` if the role changed since it was read. */
+  expectedVersion?: number;
 }
 
 export interface CloneRoleInput {
@@ -183,7 +193,7 @@ export interface RoleRepository {
    *
    * **Performs no authorization of its own** — same trust boundary as `grantPermission`.
    */
-  setPermissions(roleId: string, permissionKeys: string[]): Promise<SetRolePermissionsResult>;
+  setPermissions(roleId: string, permissionKeys: string[], options?: SetRolePermissionsOptions): Promise<SetRolePermissionsResult>;
   /**
    * A new custom role with the same permissions (and, unless overridden, description) as `roleId`, in the same
    * organization or in `organizationId`. The clone is never a system role. Rejects the Owner role

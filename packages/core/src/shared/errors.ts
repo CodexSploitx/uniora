@@ -42,6 +42,7 @@ export type RoleErrorCode =
   | "role_reassign_invalid"
   | "role_description_invalid"
   | "role_update_empty"
+  | "role_version_conflict"
   | "role_invalid";
 
 export type PermissionErrorCode =
@@ -71,6 +72,7 @@ export type OrganizationErrorCode =
   | "organization_slug_invalid"
   | "organization_status_invalid"
   | "organization_update_empty"
+  | "organization_version_conflict"
   | "organization_invalid";
 
 export type IdentityLinkErrorCode =

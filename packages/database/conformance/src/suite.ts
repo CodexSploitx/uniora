@@ -835,6 +835,41 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         await expect(storage.roles.update("role-owner", { description: "x" })).rejects.toBeInstanceOf(RoleError);
       });
 
+      it("version sube con cada cambio real y expectedVersion rechaza una edición hecha desde una copia vieja", async () => {
+        const storage = await seed();
+        const role = await storage.roles.create({ id: "r-v", organizationId: "org-1", name: "Versionado", permissionKeys: ["a.read"] });
+        expect(role.version).toBe(1);
+
+        // update: sube; con la versión correcta pasa, con una vieja falla y no cambia nada.
+        expect((await storage.roles.update("r-v", { description: "uno" })).version).toBe(2);
+        expect((await storage.roles.update("r-v", { description: "dos", expectedVersion: 2 })).version).toBe(3);
+        await expect(storage.roles.update("r-v", { description: "viejo", expectedVersion: 2 })).rejects.toMatchObject({ code: "role_version_conflict" });
+        expect((await storage.roles.findByIds(["r-v"]))[0]).toMatchObject({ description: "dos", version: 3 });
+
+        // setPermissions: solo sube si algo cambió; el conflicto no toca nada.
+        await storage.roles.setPermissions("r-v", ["a.read"], { expectedVersion: 3 });
+        expect((await storage.roles.findByIds(["r-v"]))[0]!.version).toBe(3);
+        await storage.roles.setPermissions("r-v", ["a.read", "a.write"], { expectedVersion: 3 });
+        expect((await storage.roles.findByIds(["r-v"]))[0]).toMatchObject({ version: 4, permissionKeys: ["a.read", "a.write"] });
+        await expect(storage.roles.setPermissions("r-v", ["b.read"], { expectedVersion: 3 })).rejects.toMatchObject({ code: "role_version_conflict" });
+        expect((await storage.roles.findByIds(["r-v"]))[0]).toMatchObject({ version: 4, permissionKeys: ["a.read", "a.write"] });
+
+        // grant / revoke / rename: suben solo si hubo cambio.
+        await storage.roles.grantPermission("r-v", "a.read");
+        await storage.roles.revokePermission("r-v", "b.read");
+        expect((await storage.roles.findByIds(["r-v"]))[0]!.version).toBe(4);
+        await storage.roles.grantPermission("r-v", "b.read");
+        await storage.roles.revokePermission("r-v", "b.read");
+        expect((await storage.roles.findByIds(["r-v"]))[0]!.version).toBe(6);
+        expect((await storage.roles.rename("r-v", "Renombrado")).version).toBe(7);
+
+        // Valores que nunca coinciden son un error del llamador, no un conflicto.
+        await expect(storage.roles.update("r-v", { description: "x", expectedVersion: 0 })).rejects.toBeInstanceOf(TypeError);
+        await expect(storage.roles.setPermissions("r-v", [], { expectedVersion: 1.5 })).rejects.toBeInstanceOf(TypeError);
+        // Un rol inexistente sigue siendo role_not_found aunque se pase expectedVersion.
+        await expect(storage.roles.update("ghost", { name: "X", expectedVersion: 1 })).rejects.toMatchObject({ code: "role_not_found" });
+      });
+
       it("setPermissions deja EXACTAMENTE esas claves, devuelve lo que cambió y es todo o nada", async () => {
         const storage = await seed();
         await storage.roles.create({ id: "r-1", organizationId: "org-1", name: "Uno", permissionKeys: ["a.read", "b.read"] });
@@ -1170,6 +1205,32 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         await expect(storage.organizations.update("org-1", { slug: "Not Valid" })).rejects.toMatchObject({ code: "organization_slug_invalid" });
         await expect(storage.organizations.update("org-1", { name: "  " })).rejects.toMatchObject({ code: "organization_name_invalid" });
         expect(await storage.organizations.findById("org-1")).toMatchObject({ name: "Solo nombre", slug: "solo-slug" });
+      });
+
+      it("version sube con cada cambio y expectedVersion rechaza una edición hecha desde una copia vieja", async () => {
+        const storage = harness.storage();
+        const created = await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+        expect(created.version).toBe(1);
+
+        expect((await storage.organizations.rename("org-1", "Acme Uno"))?.version).toBe(2);
+        expect((await storage.organizations.update("org-1", { name: "Acme Dos", expectedVersion: 2 }))?.version).toBe(3);
+        await expect(storage.organizations.update("org-1", { name: "Viejo", expectedVersion: 2 })).rejects.toMatchObject({
+          code: "organization_version_conflict",
+        });
+        expect(await storage.organizations.findById("org-1")).toMatchObject({ name: "Acme Dos", version: 3 });
+
+        // setStatus sube solo cuando el estado cambia de verdad.
+        const actor = { provider: "test", subject: "admin" };
+        expect((await storage.organizations.setStatus("org-1", { status: "suspended", actor }))?.version).toBe(4);
+        expect((await storage.organizations.setStatus("org-1", { status: "suspended", actor }))?.version).toBe(4);
+        expect((await storage.organizations.update("org-1", { slug: "acme-dos", expectedVersion: 4 }))?.version).toBe(5);
+
+        // Un conflicto de slug no consume versión, y una organización inexistente sigue devolviendo null.
+        await storage.organizations.create({ id: "org-2", name: "Otra", slug: "otra" });
+        await expect(storage.organizations.update("org-1", { slug: "otra", expectedVersion: 5 })).rejects.toMatchObject({ code: "organization_slug_taken" });
+        expect((await storage.organizations.findById("org-1"))!.version).toBe(5);
+        expect(await storage.organizations.update("ghost", { name: "X", expectedVersion: 1 })).toBeNull();
+        await expect(storage.organizations.update("org-1", { name: "X", expectedVersion: 0 })).rejects.toBeInstanceOf(TypeError);
       });
 
       it("con createAuditedStorage queda registrado quién, de qué a qué y por qué", async () => {

@@ -1,3 +1,4 @@
+import { assertExpectedVersion } from "../shared/version.js";
 import type { Identity } from "../identity/types.js";
 import { sameIdentity } from "../identity/types.js";
 import type { Organization, OrganizationStatus } from "../organization/types.js";
@@ -234,7 +235,7 @@ export function createMemoryStorage(): UnioraStorage {
         );
       }
 
-      const organization: Organization = { id: input.id, slug, name, createdAt: new Date(), status: "active" };
+      const organization: Organization = { id: input.id, slug, name, createdAt: new Date(), status: "active", version: 1 };
       organizations.set(organization.id, organization);
       return organization;
     },
@@ -244,7 +245,7 @@ export function createMemoryStorage(): UnioraStorage {
     async rename(id, name) {
       const existing = organizations.get(id);
       if (!existing) return null;
-      const updated: Organization = { ...existing, name: sanitizeOrganizationName(name) };
+      const updated: Organization = { ...existing, name: sanitizeOrganizationName(name), version: existing.version + 1 };
       organizations.set(id, updated);
       return updated;
     },
@@ -255,11 +256,20 @@ export function createMemoryStorage(): UnioraStorage {
       }
       const name = input.name === undefined ? undefined : sanitizeOrganizationName(input.name);
       const slug = input.slug === undefined ? undefined : assertValidSlug(input.slug);
+      const expectedVersion = assertExpectedVersion(input.expectedVersion);
       if (!existing) return null;
+      if (expectedVersion !== undefined && existing.version !== expectedVersion) {
+        throw new OrganizationError("The organization changed since it was read.", "organization_version_conflict");
+      }
       if (slug !== undefined && [...organizations.values()].some((o) => o.id !== id && o.slug === slug)) {
         throw new OrganizationError(`An organization with slug "${slug}" already exists.`, "organization_slug_taken");
       }
-      const updated: Organization = { ...existing, ...(name !== undefined ? { name } : {}), ...(slug !== undefined ? { slug } : {}) };
+      const updated: Organization = {
+        ...existing,
+        ...(name !== undefined ? { name } : {}),
+        ...(slug !== undefined ? { slug } : {}),
+        version: existing.version + 1,
+      };
       organizations.set(id, updated);
       return updated;
     },
@@ -274,6 +284,7 @@ export function createMemoryStorage(): UnioraStorage {
         ...existing,
         status,
         statusChange: { at: new Date(), by: input.actor, ...(reason !== undefined ? { reason } : {}) },
+        version: existing.version + 1,
       };
       organizations.set(id, updated);
       return updated;
@@ -697,6 +708,7 @@ export function createMemoryStorage(): UnioraStorage {
         name,
         ...(description !== undefined ? { description } : {}),
         permissionKeys: sanitizeRolePermissionKeys(input.permissionKeys),
+        version: 1,
       };
       roles.set(role.id, role);
       return role;
@@ -716,6 +728,7 @@ export function createMemoryStorage(): UnioraStorage {
         key: "owner",
         name: "Owner",
         permissionKeys: [],
+        version: 1,
       };
       roles.set(role.id, role);
       return role;
@@ -765,14 +778,20 @@ export function createMemoryStorage(): UnioraStorage {
       if (!role) throw new RoleError(`Role not found: ${roleId}`);
       if (role.isOwnerRole) throw new RoleError("Cannot modify permissions on the protected Owner role.");
       assertNonEmptyPermissionKey(permissionKey);
-      if (!role.permissionKeys.includes(permissionKey)) role.permissionKeys.push(permissionKey);
+      if (!role.permissionKeys.includes(permissionKey)) {
+        role.permissionKeys.push(permissionKey);
+        role.version += 1;
+      }
     },
     async revokePermission(roleId, permissionKey) {
       const role = roles.get(roleId);
       if (!role) throw new RoleError(`Role not found: ${roleId}`);
       if (role.isOwnerRole) throw new RoleError("Cannot modify permissions on the protected Owner role.");
       const index = role.permissionKeys.indexOf(permissionKey);
-      if (index !== -1) role.permissionKeys.splice(index, 1);
+      if (index !== -1) {
+        role.permissionKeys.splice(index, 1);
+        role.version += 1;
+      }
     },
     async rename(roleId, name) {
       const role = roles.get(roleId);
@@ -784,6 +803,7 @@ export function createMemoryStorage(): UnioraStorage {
         throw new RoleError(`A role named "${sanitized}" already exists in this organization.`);
       }
       role.name = sanitized;
+      role.version += 1;
       return role;
     },
     async update(roleId, input) {
@@ -793,7 +813,11 @@ export function createMemoryStorage(): UnioraStorage {
       const role = roles.get(roleId);
       const name = input.name === undefined ? undefined : sanitizeRoleName(input.name);
       const description = input.description === undefined ? undefined : sanitizeRoleDescription(input.description);
+      const expectedVersion = assertExpectedVersion(input.expectedVersion);
       if (!role) throw new RoleError(`Role not found: ${roleId}`);
+      if (expectedVersion !== undefined && role.version !== expectedVersion) {
+        throw new RoleError("The role changed since it was read.", "role_version_conflict");
+      }
       if (name !== undefined) {
         if (role.isOwnerRole) throw new RoleError("Cannot rename the protected Owner role.");
         if (role.isSystem) throw new RoleError("Cannot rename a system role.", "role_system_protected");
@@ -807,12 +831,17 @@ export function createMemoryStorage(): UnioraStorage {
         if (description === undefined) delete role.description;
         else role.description = description;
       }
+      role.version += 1;
       return role;
     },
-    async setPermissions(roleId, permissionKeys) {
+    async setPermissions(roleId, permissionKeys, options) {
       const role = roles.get(roleId);
+      const expectedVersion = assertExpectedVersion(options?.expectedVersion);
       if (!role) throw new RoleError(`Role not found: ${roleId}`);
       if (role.isOwnerRole) throw new RoleError("Cannot modify permissions on the protected Owner role.");
+      if (expectedVersion !== undefined && role.version !== expectedVersion) {
+        throw new RoleError("The role changed since it was read.", "role_version_conflict");
+      }
       const wanted = sanitizeRolePermissionKeys(permissionKeys);
       const unknown = wanted.filter((key) => !permissions.has(key));
       if (unknown.length > 0) {
@@ -822,6 +851,7 @@ export function createMemoryStorage(): UnioraStorage {
       const granted = wanted.filter((key) => !had.has(key));
       const revoked = role.permissionKeys.filter((key) => !wanted.includes(key));
       role.permissionKeys = wanted;
+      if (granted.length > 0 || revoked.length > 0) role.version += 1;
       return { granted, revoked };
     },
     async clone(roleId, input) {

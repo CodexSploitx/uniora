@@ -1,4 +1,5 @@
 export { UnioraError } from "./shared/errors.js";
+export { assertExpectedVersion } from "./shared/version.js";
 export type {
   FeatureErrorCode,
   IdentityLinkErrorCode,
@@ -57,6 +58,7 @@ export type {
   RoleRepository,
   RoleSummary,
   SearchRolesOptions,
+  SetRolePermissionsOptions,
   SetRolePermissionsResult,
   UpdateRoleInput,
 } from "./role/repository.js";

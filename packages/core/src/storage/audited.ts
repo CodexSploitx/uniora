@@ -217,10 +217,10 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
             if (Object.keys(changed).length > 0) await record(tx, "role.updated", updated.organizationId, { type: "role", id: roleId }, { changed });
             return updated;
           }),
-        setPermissions: (roleId, permissionKeys) =>
+        setPermissions: (roleId, permissionKeys, options) =>
           run(async (tx) => {
             const [role] = await tx.roles.findByIds([roleId]);
-            const result = await tx.roles.setPermissions(roleId, permissionKeys);
+            const result = await tx.roles.setPermissions(roleId, permissionKeys, options);
             if (result.granted.length > 0 || result.revoked.length > 0) {
               await record(tx, "role.permissions_replaced", role?.organizationId, { type: "role", id: roleId }, { granted: result.granted, revoked: result.revoked });
             }

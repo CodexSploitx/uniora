@@ -125,7 +125,7 @@ await storage.roles.delete(role.id, { members: { reassignTo: otherRoleId } });
 | `listByOrganization(organizationId)` | Internal use. |
 | `search({ organizationId, query?, heldBy?, notHeldBy?, isOwnerRole?, isSystem?, limit?, after? })` / `count(...)` | `heldBy` / `notHeldBy` take a membership id. |
 | `grantPermission` / `revokePermission(roleId, key)` | Not for the Owner role. |
-| `setPermissions(roleId, keys)` | Exactly this list, atomically. Unregistered key: `role_permission_invalid`, nothing changes. |
+| `setPermissions(roleId, keys, { expectedVersion? })` | Exactly this list, atomically. Unregistered key: `role_permission_invalid`, nothing changes. With `expectedVersion`, refused (`role_version_conflict`) if the role changed since you read it. |
 | `rename(roleId, name)` / `update(roleId, { name?, description? })` | Owner and system roles keep their name; a system role's description can change. |
 | `clone(roleId, { id, name, key?, organizationId?, description? })` | A custom copy, never a system role. Can't clone the Owner role. |
 | `delete(roleId, { members?: "detach" \| "reject" \| { reassignTo } })` | Default `detach`. `reject` fails with `role_in_use` while someone holds it. Not for Owner or system roles. |
