@@ -835,6 +835,41 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         await expect(storage.roles.update("role-owner", { description: "x" })).rejects.toBeInstanceOf(RoleError);
       });
 
+      it("el nombre es único normalizado: mayúsculas, acentos y espacios no crean un rol distinto, ni siquiera en carrera", async () => {
+        const storage = await seed();
+        await storage.roles.create({ id: "n-1", organizationId: "org-1", name: "Recepción" });
+        for (const [index, variant] of ["recepción", "Recepcion", " RECEPCIÓN ", "Re  cepción"].entries()) {
+          if (variant === "Re  cepción") continue; // different word once whitespace is collapsed
+          await expect(
+            storage.roles.create({ id: `n-dup-${index}`, organizationId: "org-1", name: variant, key: `dup-${index}` }),
+          ).rejects.toBeInstanceOf(RoleError);
+        }
+        // Another organization may use the same name; the display name keeps its spelling.
+        await storage.organizations.create({ id: "org-n2", name: "Segunda" });
+        expect(await storage.roles.create({ id: "n-other", organizationId: "org-n2", name: "recepcion" })).toMatchObject({ name: "recepcion" });
+        expect((await storage.roles.findByIds(["n-1"]))[0]).toMatchObject({ name: "Recepción" });
+
+        // rename / update / clone follow the same rule, and a role may change the case of its own name.
+        await storage.roles.create({ id: "n-2", organizationId: "org-1", name: "Otro" });
+        await expect(storage.roles.rename("n-2", "RECEPCION")).rejects.toBeInstanceOf(RoleError);
+        await expect(storage.roles.update("n-2", { name: "recepcion" })).rejects.toBeInstanceOf(RoleError);
+        await expect(storage.roles.clone("n-1", { id: "n-3", name: "recepciÓn", key: "copy" })).rejects.toBeInstanceOf(RoleError);
+        expect((await storage.roles.rename("n-1", "RECEPCIÓN")).name).toBe("RECEPCIÓN");
+        expect((await storage.roles.update("n-1", { name: "Recepción" })).name).toBe("Recepción");
+
+        // The protected Owner role keeps its name against look-alikes ("ÓWNER" has another key but reads the same).
+        await expect(storage.roles.create({ id: "n-own", organizationId: "org-1", name: "OWNER", key: "jefe" })).rejects.toBeInstanceOf(RoleError);
+        await expect(storage.roles.create({ id: "n-own2", organizationId: "org-1", name: "Ówner", key: "jefe-2" })).rejects.toBeInstanceOf(RoleError);
+
+        // Concurrent creations of look-alike names: exactly one wins (the unique index, not a check-then-insert).
+        const outcomes = await Promise.allSettled(
+          ["Ventas", "ventas", "VENTAS", "Véntas"].map((name, index) =>
+            storage.roles.create({ id: `race-${index}`, organizationId: "org-1", name, key: `race-${index}` }),
+          ),
+        );
+        expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+      });
+
       it("version sube con cada cambio real y expectedVersion rechaza una edición hecha desde una copia vieja", async () => {
         const storage = await seed();
         const role = await storage.roles.create({ id: "r-v", organizationId: "org-1", name: "Versionado", permissionKeys: ["a.read"] });

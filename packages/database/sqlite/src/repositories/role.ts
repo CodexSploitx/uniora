@@ -15,6 +15,7 @@ import {
   RoleError,
   assertExpectedVersion,
   assertNonEmptyPermissionKey,
+  normalizeRoleName,
   resolveRoleKey,
   sanitizeRoleDescription,
   sanitizeRoleName,
@@ -115,13 +116,14 @@ export function createRoleRepository(db: SqliteExecutor): RoleRepository {
 
       await db.atomic(async () => {
         try {
-          await db.query(`insert into uniora_roles (id, organization_id, name, key, is_system, description) values (?1, ?2, ?3, ?4, ?5, ?6)`, [
+          await db.query(`insert into uniora_roles (id, organization_id, name, name_normalized, key, is_system, description) values (?1, ?2, ?3, ?7, ?4, ?5, ?6)`, [
             input.id,
             input.organizationId,
             name,
             key,
             input.isSystem === true ? 1 : 0,
             description ?? null,
+            normalizeRoleName(name),
           ]);
         } catch (error) {
           if (isUniqueViolation(error)) {
@@ -164,8 +166,8 @@ export function createRoleRepository(db: SqliteExecutor): RoleRepository {
     async createOwnerRole(input: CreateOwnerRoleInput) {
       try {
         const result = await db.query<RoleHeadRow>(
-          `insert into uniora_roles (id, organization_id, name, key, is_owner_role)
-           values (?1, ?2, 'Owner', 'owner', 1)
+          `insert into uniora_roles (id, organization_id, name, name_normalized, key, is_owner_role)
+           values (?1, ?2, 'Owner', 'owner', 'owner', 1)
            returning ${HEAD_COLUMNS}, null as description`,
           [input.id, input.organizationId],
         );
@@ -332,7 +334,7 @@ export function createRoleRepository(db: SqliteExecutor): RoleRepository {
         if (role.isSystem) throw new RoleError("Cannot rename a system role.", "role_system_protected");
         const sanitized = sanitizeRoleName(name);
         try {
-          await db.query(`update uniora_roles set name = ?2, version = version + 1 where id = ?1`, [roleId, sanitized]);
+          await db.query(`update uniora_roles set name = ?2, name_normalized = ?3, version = version + 1 where id = ?1`, [roleId, sanitized, normalizeRoleName(sanitized)]);
         } catch (error) {
           if (isUniqueViolation(error)) {
             throw new RoleError(`A role named "${sanitized}" already exists in this organization.`);
@@ -362,8 +364,8 @@ export function createRoleRepository(db: SqliteExecutor): RoleRepository {
         if (setDescription && name === null && role.isOwnerRole) throw new RoleError("Cannot modify the protected Owner role.");
         try {
           await db.query(
-            `update uniora_roles set name = coalesce(?2, name), description = case when ?3 then ?4 else description end, version = version + 1 where id = ?1`,
-            [roleId, name, setDescription ? 1 : 0, description],
+            `update uniora_roles set name = coalesce(?2, name), name_normalized = coalesce(?5, name_normalized), description = case when ?3 then ?4 else description end, version = version + 1 where id = ?1`,
+            [roleId, name, setDescription ? 1 : 0, description, name === null ? null : normalizeRoleName(name)],
           );
         } catch (error) {
           if (isUniqueViolation(error)) throw new RoleError(`A role named "${name}" already exists in this organization.`);

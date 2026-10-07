@@ -119,14 +119,14 @@ await storage.roles.delete(role.id, { members: { reassignTo: otherRoleId } });
 
 | Method | Purpose |
 | --- | --- |
-| `create({ id, organizationId, name, key?, description?, permissionKeys?, isSystem? })` | Name up to 100 characters, key like `billing-manager` (`owner` is reserved). Permissions must be registered. |
+| `create({ id, organizationId, name, key?, description?, permissionKeys?, isSystem? })` | Name up to 100 characters, unique per organization ignoring case, accents and extra spaces ("Recepción" = "recepcion"; `normalizeRoleName` gives that form), key like `billing-manager` (`owner` is reserved). Permissions must be registered. |
 | `createOwnerRole({ id, organizationId })` | The only way to make an Owner role. One per organization. Normally called by `createOrganizationWithOwner`. |
 | `findByIds(ids)` / `findSummariesByIds(ids)` | Summaries skip permission lists. |
 | `listByOrganization(organizationId)` | Internal use. |
 | `search({ organizationId, query?, heldBy?, notHeldBy?, isOwnerRole?, isSystem?, limit?, after? })` / `count(...)` | `heldBy` / `notHeldBy` take a membership id. |
 | `grantPermission` / `revokePermission(roleId, key)` | Not for the Owner role. |
 | `setPermissions(roleId, keys, { expectedVersion? })` | Exactly this list, atomically. Unregistered key: `role_permission_invalid`, nothing changes. With `expectedVersion`, refused (`role_version_conflict`) if the role changed since you read it. |
-| `rename(roleId, name)` / `update(roleId, { name?, description? })` | Owner and system roles keep their name; a system role's description can change. |
+| `rename(roleId, name)` / `update(roleId, { name?, description?, expectedVersion? })` | Owner and system roles keep their name; a system role's description can change. The new name follows the same uniqueness rule as `create`. |
 | `clone(roleId, { id, name, key?, organizationId?, description? })` | A custom copy, never a system role. Can't clone the Owner role. |
 | `delete(roleId, { members?: "detach" \| "reject" \| { reassignTo } })` | Default `detach`. `reject` fails with `role_in_use` while someone holds it. Not for Owner or system roles. |
 | `countPermissions(ids)` / `countByOrganization(ids)` / `grantedPermissionKeys(roleId, keys)` / `grantingRoles(membershipId, keys, perKey)` | UI helpers: counts and "why does this member have this permission". |

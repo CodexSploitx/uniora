@@ -30,6 +30,7 @@ import { MIGRATION_0027_ENTITLEMENTS } from "./migrations/0027_entitlements.js";
 import { MIGRATION_0028_SUPPORT_GRANTS } from "./migrations/0028_support_grants.js";
 import { MIGRATION_0029_MEMBERSHIP_SUSPENSION } from "./migrations/0029_membership_suspension.js";
 import { MIGRATION_0030_ROW_VERSIONS } from "./migrations/0030_row_versions.js";
+import { MIGRATION_0031_ROLE_NAME_NORMALIZED } from "./migrations/0031_role_name_normalized.js";
 
 interface Migration {
   readonly id: string;
@@ -68,6 +69,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0028_support_grants", sql: MIGRATION_0028_SUPPORT_GRANTS },
   { id: "0029_membership_suspension", sql: MIGRATION_0029_MEMBERSHIP_SUSPENSION },
   { id: "0030_row_versions", sql: MIGRATION_0030_ROW_VERSIONS },
+  { id: "0031_role_name_normalized", sql: MIGRATION_0031_ROLE_NAME_NORMALIZED },
 ];
 
 /**

@@ -15,6 +15,7 @@ import {
   RoleError,
   assertExpectedVersion,
   assertNonEmptyPermissionKey,
+  normalizeRoleName,
   resolveRoleKey,
   sanitizeRoleDescription,
   sanitizeRoleName,
@@ -108,10 +109,11 @@ export function createRoleRepository(db: Queryable): RoleRepository {
       const description = sanitizeRoleDescription(input.description);
 
       try {
-        await db.query(`insert into uniora.roles (id, organization_id, name, key, is_system, description) values ($1, $2, $3, $4, $5, $6)`, [
+        await db.query(`insert into uniora.roles (id, organization_id, name, name_normalized, key, is_system, description) values ($1, $2, $3, $4, $5, $6, $7)`, [
           input.id,
           input.organizationId,
           name,
+          normalizeRoleName(name),
           key,
           input.isSystem === true,
           description ?? null,
@@ -157,8 +159,8 @@ export function createRoleRepository(db: Queryable): RoleRepository {
     async createOwnerRole(input: CreateOwnerRoleInput) {
       try {
         const result = await db.query<RoleRow>(
-          `insert into uniora.roles (id, organization_id, name, key, is_owner_role)
-           values ($1, $2, 'Owner', 'owner', true)
+          `insert into uniora.roles (id, organization_id, name, name_normalized, key, is_owner_role)
+           values ($1, $2, 'Owner', 'owner', 'owner', true)
            returning id, organization_id, name, key, is_owner_role, is_system, description, version, '{}'::text[] as permission_keys`,
           [input.id, input.organizationId],
         );
@@ -325,7 +327,7 @@ export function createRoleRepository(db: Queryable): RoleRepository {
       if (role.isSystem) throw new RoleError("Cannot rename a system role.", "role_system_protected");
       const sanitized = sanitizeRoleName(name);
       try {
-        await db.query(`update uniora.roles set name = $2, version = version + 1 where id = $1`, [roleId, sanitized]);
+        await db.query(`update uniora.roles set name = $2, name_normalized = $3, version = version + 1 where id = $1`, [roleId, sanitized, normalizeRoleName(sanitized)]);
       } catch (error) {
         if (isUniqueViolation(error)) {
           throw new RoleError(`A role named "${sanitized}" already exists in this organization.`);
@@ -350,10 +352,10 @@ export function createRoleRepository(db: Queryable): RoleRepository {
       if (setDescription && name === null && role.isOwnerRole) throw new RoleError("Cannot modify the protected Owner role.");
       try {
         const changed = await db.query(
-          `update uniora.roles set name = coalesce($2, name), description = case when $3::boolean then $4 else description end,
+          `update uniora.roles set name = coalesce($2, name), name_normalized = coalesce($6, name_normalized), description = case when $3::boolean then $4 else description end,
              version = version + 1
            where id = $1 and not is_owner_role and (not is_system or $2::text is null) and ($5::integer is null or version = $5)`,
-          [roleId, name, setDescription, description, expectedVersion],
+          [roleId, name, setDescription, description, expectedVersion, name === null ? null : normalizeRoleName(name)],
         );
         if (changed.rowCount === 0 && expectedVersion !== null) {
           throw new RoleError("The role changed since it was read.", "role_version_conflict");
@@ -428,11 +430,11 @@ export function createRoleRepository(db: Queryable): RoleRepository {
         // Role and permission copy in one statement, so a clone is never left without its permissions.
         await db.query(
           `with new_role as (
-             insert into uniora.roles (id, organization_id, name, key, description) values ($1, $2, $3, $4, $5) returning id
+             insert into uniora.roles (id, organization_id, name, name_normalized, key, description) values ($1, $2, $3, $7, $4, $5) returning id
            )
            insert into uniora.role_permissions (role_id, permission_key)
            select $1, rp.permission_key from uniora.role_permissions rp, new_role where rp.role_id = $6`,
-          [input.id, organizationId, name, key, description ?? null, roleId],
+          [input.id, organizationId, name, key, description ?? null, roleId, normalizeRoleName(name)],
         );
       } catch (error) {
         if (isUniqueViolation(error)) {

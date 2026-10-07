@@ -11,7 +11,7 @@ import { MembershipError, assertBlockUntil, sanitizeBlockReason } from "../membe
 import type { Role } from "../role/types.js";
 import type { CreateOwnerRoleInput, CreateRoleInput, RoleRepository, RoleSummary } from "../role/repository.js";
 import { RoleError } from "../role/repository.js";
-import { resolveRoleKey, sanitizeRoleDescription, sanitizeRolePermissionKeys, sanitizeRoleName, assertNonEmptyPermissionKey } from "../role/key.js";
+import { normalizeRoleName, resolveRoleKey, sanitizeRoleDescription, sanitizeRolePermissionKeys, sanitizeRoleName, assertNonEmptyPermissionKey } from "../role/key.js";
 import type { Permission } from "../permission/types.js";
 import type { PermissionRepository, RegisterPermissionInput } from "../permission/repository.js";
 import { PermissionError } from "../permission/repository.js";
@@ -657,7 +657,7 @@ export function createMemoryStorage(): UnioraStorage {
 
   function roleNameTaken(organizationId: string, name: string, excludeRoleId?: string): boolean {
     return [...roles.values()].some(
-      (r) => r.organizationId === organizationId && r.name === name && r.id !== excludeRoleId,
+      (r) => r.organizationId === organizationId && normalizeRoleName(r.name) === normalizeRoleName(name) && r.id !== excludeRoleId,
     );
   }
 
