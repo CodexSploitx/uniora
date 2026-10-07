@@ -1,6 +1,6 @@
 {
   "name": "@uniora/mailer-smtp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "SMTP delivery for UNIORA invitations: configured from .env, with professional multilingual e-mail templates",
   "license": "PolyForm-Shield-1.0.0",
   "keywords": [
