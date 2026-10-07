@@ -13,7 +13,7 @@
     "sql:export": "UPDATE_SQL=1 pnpm --filter @uniora/postgres --filter @uniora/sqlite exec vitest run src/sql-export.test.ts"
   },
   "devDependencies": {
-    "typescript": "^5.6.3",
+    "typescript": "^7.0.2",
     "publint": "^0.3.12",
     "@arethetypeswrong/cli": "^0.18.2"
   },

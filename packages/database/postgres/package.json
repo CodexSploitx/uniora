@@ -47,7 +47,7 @@
   "devDependencies": {
     "@types/pg": "^8.11.10",
     "@uniora/storage-conformance": "workspace:^",
-    "typescript": "^5.6.3",
+    "typescript": "^7.0.2",
     "vitest": "^2.1.4"
   }
 }
