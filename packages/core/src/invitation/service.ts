@@ -48,6 +48,13 @@ export interface InvitationServiceOptions {
    * secret: put it in the path (or fragment), never anywhere it would be logged.
    */
   acceptUrl: (token: string) => string;
+  /**
+   * Lets `invite()` refuse an address that already belongs to a member (`invitation_already_member`). UNIORA stores no
+   * e-mails on memberships, so the host answers "which identities own this (normalized) address?" — typically one
+   * lookup in its auth provider; return `[]` when it has none. Without it, `invite()` can't tell, and the overlap
+   * only shows on accept (`alreadyMember`).
+   */
+  findIdentitiesByEmail?: (email: string) => Promise<readonly Identity[]>;
   /** Delivers the e-mail. Without one, invitations are still created and the link is returned for you to hand over. */
   sender?: InvitationSender;
   /** Invitation lifetime. Default 7 days, capped at 30. */
@@ -70,6 +77,11 @@ export interface InviteInput {
   invitedBy: Identity;
   /** Language hint passed to the sender (e.g. `"es"`). Not stored. */
   locale?: string;
+  /**
+   * Invite an address that already belongs to a member anyway (accepting then adds the invited roles). Only matters
+   * when the service has `findIdentitiesByEmail`; by default such an invitation is refused.
+   */
+  allowExistingMember?: boolean;
 }
 
 export interface DeliveryOutcome {
@@ -305,6 +317,14 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
       const roles = await assertInvitableRoles(input.organizationId, input.roleIds);
       if (!(await storage.organizations.findById(input.organizationId))) {
         throw new InvitationError("The organization does not exist.", "bad_request");
+      }
+
+      if (options.findIdentitiesByEmail && !input.allowExistingMember) {
+        for (const candidate of await options.findIdentitiesByEmail(email)) {
+          if (await storage.memberships.findByIdentity(input.organizationId, candidate)) {
+            throw new InvitationError("This e-mail address already belongs to a member of the organization.", "already_member");
+          }
+        }
       }
 
       const token = generateInvitationToken();

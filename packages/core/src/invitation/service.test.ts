@@ -117,6 +117,50 @@ describe("invite", () => {
   });
 });
 
+describe("invite — already a member", () => {
+  const input = { organizationId: "org-1", email: "Ana@Example.com", roleIds: ["role-editor"], invitedBy: owner };
+
+  it("refuses an address that belongs to a member, with the stable invitation_already_member code", async () => {
+    const lookup = vi.fn(async (email: string) => (email === "ana@example.com" ? [invitee] : []));
+    const { service, storage } = await setup({ findIdentitiesByEmail: lookup });
+    await storage.memberships.create({ id: "m-ana", organizationId: "org-1", identity: invitee });
+
+    await expect(service.invite(input)).rejects.toMatchObject({ reason: "already_member", code: "invitation_already_member" });
+    expect(lookup).toHaveBeenCalledWith("ana@example.com");
+    expect(await storage.invitations.count("org-1")).toBe(0);
+  });
+
+  it("invites an address whose identity is not a member of THIS organization, or one nobody knows", async () => {
+    const { service, storage } = await setup({ findIdentitiesByEmail: async (email) => (email === "ana@example.com" ? [invitee] : []) });
+    await expect(service.invite(input)).resolves.toBeDefined(); // known to the host, but not a member here
+    await storage.memberships.create({ id: "m-ana", organizationId: "org-1", identity: invitee });
+    await expect(service.invite({ ...input, email: "other@example.com" })).resolves.toBeDefined();
+  });
+
+  it("allowExistingMember keeps the 'gain roles on accept' flow, and without a lookup nothing changes", async () => {
+    const { service, storage } = await setup({ findIdentitiesByEmail: async () => [invitee] });
+    await storage.memberships.create({ id: "m-ana", organizationId: "org-1", identity: invitee });
+    await expect(service.invite({ ...input, allowExistingMember: true })).resolves.toBeDefined();
+
+    const plain = await setup();
+    await plain.storage.memberships.create({ id: "m-ana", organizationId: "org-1", identity: invitee });
+    await expect(plain.service.invite(input)).resolves.toBeDefined();
+  });
+});
+
+describe("invitations.search / count (memory)", () => {
+  it("filters by e-mail substring and status, and counts the same set", async () => {
+    const { service, storage } = await setup();
+    for (const email of ["ana@example.com", "anabel@corp.io", "bob@example.com"]) {
+      await service.invite({ organizationId: "org-1", email, roleIds: ["role-editor"], invitedBy: owner });
+    }
+    expect(await storage.invitations.count("org-1")).toBe(3);
+    expect(await storage.invitations.count("org-1", { query: "ANA" })).toBe(2);
+    expect(await storage.invitations.count("org-1", { query: "ana", status: "revoked" })).toBe(0);
+    expect((await storage.invitations.search("org-1", { query: "example.com" })).map((i) => i.email).sort()).toEqual(["ana@example.com", "bob@example.com"]);
+  });
+});
+
 describe("delivery engine", () => {
   it("retries transient failures with backoff and then succeeds", async () => {
     const send = vi.fn<InvitationSender["send"]>().mockRejectedValueOnce(new Error("ECONNRESET")).mockRejectedValueOnce(new Error("timeout")).mockResolvedValue();

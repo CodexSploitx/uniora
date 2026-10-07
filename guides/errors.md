@@ -90,6 +90,7 @@ The code is `invitation_` plus the reason (`InvitationError.reason`):
 | `invitation_invalid` | 400 `invalid_invitation` | Unknown token, or one replaced by a resend. |
 | `invitation_expired`, `invitation_revoked`, `invitation_already_accepted`, `invitation_email_mismatch`, `invitation_roles_unavailable` | 400 `invalid_invitation` | Deliberately indistinguishable to the caller. Log the real code on the server. |
 | `invitation_duplicate_pending` | 409 `duplicate_pending` | That address already has a pending invitation here. |
+| `invitation_already_member` | 409 `already_member` | `invite()` found that the address already belongs to a member (only when the service has `findIdentitiesByEmail`). |
 | `invitation_rate_limited`, `invitation_cooldown` | 429 `rate_limited` | Too many invitations, or a resend too soon. |
 | `invitation_bad_request` | 400 `bad_request` | Invalid e-mail, no roles, the Owner role, a role of another organization. |
 

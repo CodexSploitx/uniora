@@ -10,7 +10,13 @@ import type {
 import { InvitationError } from "@uniora/core";
 import type { SqliteExecutor } from "../executor.js";
 import { parseList } from "../json.js";
+import { toLikePattern } from "../like.js";
 import { isForeignKeyViolation, isUniqueViolation, violatedExactly } from "../sqlite-errors.js";
+
+function likeOrNull(query: string | undefined): string | null {
+  const trimmed = query?.trim();
+  return trimmed ? toLikePattern(trimmed) : null;
+}
 
 interface InvitationRow {
   id: string;
@@ -134,11 +140,24 @@ export function createInvitationRepository(db: SqliteExecutor): InvitationReposi
          where i.organization_id = ?1
            and (?2 is null or i.status = ?2)
            and (?3 is null or (i.created_at, i.id) < (select created_at, id from uniora_invitations where id = ?3))
+           and (?5 is null or uniora_ilike(i.email, ?5))
          order by i.created_at desc, i.id desc
          limit coalesce(?4, -1)`,
-        [organizationId, options?.status ?? null, options?.after ?? null, options?.limit ?? null],
+        [organizationId, options?.status ?? null, options?.after ?? null, options?.limit ?? null, likeOrNull(options?.query)],
       );
       return result.rows.map(toInvitation);
+    },
+
+    async count(organizationId: string, options?: Pick<SearchInvitationsOptions, "status" | "query">) {
+      const result = await db.query<{ count: number }>(
+        `select count(*) as count
+         from uniora_invitations i
+         where i.organization_id = ?1
+           and (?2 is null or i.status = ?2)
+           and (?3 is null or uniora_ilike(i.email, ?3))`,
+        [organizationId, options?.status ?? null, likeOrNull(options?.query)],
+      );
+      return Number(result.rows[0]!.count);
     },
 
     async expireStale(organizationId: string, email: string, now: Date) {
