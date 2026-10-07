@@ -43,4 +43,6 @@ app.post(
 
 Every way an accept can fail (unknown, expired, revoked, used, wrong e-mail) answers the same `400 { error: "invalid_invitation" }`, so the route can't be used to probe which links or addresses exist. See [`examples/express-sqlite`](https://github.com/CodexSploitx/uniora/tree/main/examples/express-sqlite) for a complete app.
 
+Documentation: [Express, Next.js and React guide](https://github.com/CodexSploitx/uniora/blob/main/guides/frameworks.md) and the [full index](https://github.com/CodexSploitx/uniora/blob/main/guides/README.md).
+
 License: [PolyForm Shield 1.0.0](https://github.com/CodexSploitx/uniora/blob/main/LICENSE).

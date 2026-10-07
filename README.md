@@ -154,6 +154,11 @@ app.delete(
 // authorize(engine, { permission, feature, resolve }) checks both.
 ```
 
+## Documentation
+
+Full documentation lives in [`guides/`](guides/README.md):
+[Getting started](guides/getting-started.md) · [Concepts](guides/concepts.md) · [Core reference](guides/core-reference.md) · [Storage](guides/storage.md) · [Identity adapters](guides/identity-adapters.md) · [Express, Next.js and React](guides/frameworks.md) · [Invitations](guides/invitations.md) · [Audit log](guides/audit-log.md) · [CLI, Studio and configuration](guides/cli-and-studio.md) · [Errors](guides/errors.md) · [Hardening](guides/hardening.md).
+
 ## Packages
 
 | Package | What it does |

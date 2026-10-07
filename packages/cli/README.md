@@ -20,4 +20,6 @@ Every command accepts `--config <file>`, `--env <name>` and `--json` (one JSON o
 
 **Security note:** the CLI loads `uniora.config.mjs` and `.env` from the current directory, like `vite.config`. Don't run it inside a repository you don't trust. It refuses a config or `.env` file that is writable by everyone.
 
-See the [main README](https://github.com/CodexSploitx/uniora#cli) for PostgreSQL and SQLite details. License: [PolyForm Shield 1.0.0](https://github.com/CodexSploitx/uniora/blob/main/LICENSE).
+See the [main README](https://github.com/CodexSploitx/uniora#cli) for PostgreSQL and SQLite details. Documentation: [CLI, Studio and configuration guide](https://github.com/CodexSploitx/uniora/blob/main/guides/cli-and-studio.md) and the [full index](https://github.com/CodexSploitx/uniora/blob/main/guides/README.md).
+
+License: [PolyForm Shield 1.0.0](https://github.com/CodexSploitx/uniora/blob/main/LICENSE).
