@@ -9,6 +9,7 @@ import { createFeatureRepository } from "./repositories/feature.js";
 import { createAuditLogRepository } from "./repositories/audit-log.js";
 import { createIdentityLinkRepository } from "./repositories/identity-link.js";
 import { createInvitationRepository } from "./repositories/invitation.js";
+import { createOutboxRepository } from "./repositories/outbox.js";
 
 function createTransactionScope(db: SqliteExecutor): UnioraTransaction {
   // Built once and passed into `createIdentityLinkRepository` too: `link()`
@@ -25,6 +26,7 @@ function createTransactionScope(db: SqliteExecutor): UnioraTransaction {
     auditLogs,
     identityLinks: createIdentityLinkRepository(db, auditLogs),
     invitations: createInvitationRepository(db),
+    outbox: createOutboxRepository(db),
   };
 }
 

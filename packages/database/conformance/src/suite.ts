@@ -12,6 +12,7 @@ import {
   PermissionError,
   RoleError,
   applyRoleTemplates,
+  dispatchOutbox,
   leaveOrganization,
   transferOwnership,
 } from "@uniora/core";
@@ -1221,6 +1222,125 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         await storage.permissions.unregister("appointments.write");
         await storage.permissions.unregister("appointments.read");
         expect(await storage.permissions.findByKey("appointments.read")).toBeNull();
+      });
+    });
+
+    describe("outbox — eventos tras el commit", () => {
+      // Un instante justo después de "ahora": los eventos que crea la prueba ya están disponibles en at(0).
+      let base = Date.now() + 1000;
+      beforeEach(() => {
+        base = Date.now() + 1000;
+      });
+      const at = (seconds: number) => new Date(base + seconds * 1000);
+
+      it("encola con seq creciente, valida y rechaza un id repetido", async () => {
+        const { outbox } = harness.storage();
+        const first = await outbox.enqueue({ id: "e1", type: "member.blocked", organizationId: "org-1", payload: { who: "a", nested: { n: 1 } } });
+        const second = await outbox.enqueue({ id: "e2", type: "member.unblocked" });
+        expect(second.seq).toBeGreaterThan(first.seq);
+        expect(first).toMatchObject({ id: "e1", status: "pending", attempts: 0, organizationId: "org-1", payload: { who: "a", nested: { n: 1 } } });
+        expect(first.createdAt).toBeInstanceOf(Date);
+        expect(second.payload).toBeUndefined();
+        await expect(outbox.enqueue({ id: "e1", type: "x" })).rejects.toMatchObject({ code: "outbox_event_exists" });
+        await expect(outbox.enqueue({ id: "", type: "x" })).rejects.toMatchObject({ code: "outbox_event_invalid" });
+        await expect(outbox.enqueue({ id: "e3", type: "" })).rejects.toMatchObject({ code: "outbox_event_invalid" });
+        await expect(outbox.enqueue({ id: "e3", type: "t", payload: { big: "x".repeat(17 * 1024) } })).rejects.toMatchObject({ code: "outbox_payload_invalid" });
+        expect(await outbox.count()).toBe(2);
+      });
+
+      it("el evento nace con el cambio: un rollback no deja evento y un commit no lo pierde", async () => {
+        const storage = harness.storage();
+        await expect(
+          storage.transaction(async (tx) => {
+            await tx.organizations.create({ id: "org-rb", name: "Rollback" });
+            await tx.outbox.enqueue({ id: "e-rb", type: "organization.created", organizationId: "org-rb" });
+            throw new Error("boom");
+          }),
+        ).rejects.toThrow("boom");
+        expect(await storage.outbox.findById("e-rb")).toBeNull();
+        expect(await storage.organizations.findById("org-rb")).toBeNull();
+
+        await storage.transaction(async (tx) => {
+          await tx.organizations.create({ id: "org-ok", name: "Ok" });
+          await tx.outbox.enqueue({ id: "e-ok", type: "organization.created", organizationId: "org-ok" });
+        });
+        expect(await storage.outbox.findById("e-ok")).toMatchObject({ status: "pending", organizationId: "org-ok" });
+      });
+
+      it("claim arrienda los eventos por orden y filtra; el arriendo vencido los devuelve", async () => {
+        const { outbox } = harness.storage();
+        for (const [id, type, organizationId] of [["e1", "a.x", "org-1"], ["e2", "b.x", "org-2"], ["e3", "a.x", "org-2"]] as const) {
+          await outbox.enqueue({ id, type, organizationId });
+        }
+        expect((await outbox.claim({ type: "b.x", now: at(0) })).map((event) => event.id)).toEqual(["e2"]);
+        expect((await outbox.claim({ organizationId: "org-2", now: at(0) })).map((event) => event.id)).toEqual(["e3"]);
+        const mine = await outbox.claim({ limit: 5, leaseSeconds: 30, now: at(0) });
+        expect(mine.map((event) => event.id)).toEqual(["e1"]);
+        expect(mine[0]).toMatchObject({ attempts: 1, status: "pending" });
+        expect(await outbox.claim({ now: at(20) })).toEqual([]);
+        expect((await outbox.claim({ now: at(31), limit: 1 })).map((event) => [event.id, event.attempts])).toEqual([["e1", 2]]);
+        await expect(outbox.claim({ limit: 101 })).rejects.toMatchObject({ code: "outbox_claim_invalid" });
+        await expect(outbox.claim({ leaseSeconds: 0 })).rejects.toMatchObject({ code: "outbox_claim_invalid" });
+      });
+
+      it("dos trabajadores a la vez nunca reciben el mismo evento", async () => {
+        const { outbox } = harness.storage();
+        for (let index = 0; index < 12; index += 1) await outbox.enqueue({ id: `c${index}`, type: "t" });
+        const batches = await Promise.all([1, 2, 3].map(() => outbox.claim({ limit: 5, now: at(0) })));
+        const ids = batches.flat().map((event) => event.id);
+        expect(ids).toHaveLength(12);
+        expect(new Set(ids).size).toBe(12);
+        for (const batch of batches) expect(batch.map((event) => event.seq)).toEqual([...batch.map((event) => event.seq)].sort((a, b) => a - b));
+      });
+
+      it("complete, fail con reintento, dead tras maxAttempts, requeue y pruneDelivered", async () => {
+        const { outbox } = harness.storage();
+        await outbox.enqueue({ id: "e1", type: "t" });
+        await outbox.enqueue({ id: "e2", type: "t" });
+        await outbox.claim({ now: at(0) });
+        expect(await outbox.complete(["e1", "e1", "nope"], at(1))).toBe(1);
+        expect(await outbox.complete(["e1"], at(2))).toBe(0);
+        expect(await outbox.complete([], at(2))).toBe(0);
+        expect(await outbox.fail("e2", { error: "boom", retryAt: at(60), maxAttempts: 2 })).toBe("pending");
+        expect(await outbox.claim({ now: at(30) })).toEqual([]);
+        expect(await outbox.claim({ now: at(61) })).toMatchObject([{ id: "e2", attempts: 2, lastError: "boom" }]);
+        expect(await outbox.fail("e2", { error: "boom again", retryAt: at(120), maxAttempts: 2 })).toBe("dead");
+        expect(await outbox.fail("e2", { error: "x", retryAt: at(0), maxAttempts: 2 })).toBeNull();
+        expect(await outbox.claim({ now: at(500) })).toEqual([]);
+        expect((await outbox.search({ status: "dead" })).map((event) => event.id)).toEqual(["e2"]);
+        expect(await outbox.requeue("e2", at(600))).toBe(true);
+        expect(await outbox.requeue("e1", at(600))).toBe(false);
+        expect(await outbox.findById("e2")).toMatchObject({ status: "pending", attempts: 0, lastError: undefined });
+        expect(await outbox.pruneDelivered(at(1))).toBe(0);
+        expect(await outbox.pruneDelivered(at(3))).toBe(1);
+        expect(await outbox.findById("e1")).toBeNull();
+        expect(await outbox.count({ status: "pending" })).toBe(1);
+      });
+
+      it("search pagina con cursor por seq y filtra por estado, organización y tipo", async () => {
+        const { outbox } = harness.storage();
+        for (let index = 0; index < 5; index += 1) await outbox.enqueue({ id: `s${index}`, type: index % 2 ? "odd" : "even", organizationId: index < 3 ? "org-1" : "org-2" });
+        const pageOne = await outbox.search({ limit: 2 });
+        const pageTwo = await outbox.search({ limit: 2, afterSeq: pageOne.at(-1)!.seq });
+        expect([...pageOne, ...pageTwo].map((event) => event.id)).toEqual(["s0", "s1", "s2", "s3"]);
+        expect((await outbox.search({ organizationId: "org-2" })).map((event) => event.id)).toEqual(["s3", "s4"]);
+        expect(await outbox.count({ type: "odd" })).toBe(2);
+        expect(await outbox.count({ status: "delivered" })).toBe(0);
+      });
+
+      it("un storage auditado con outbox deja el evento en la misma transacción que el cambio", async () => {
+        const raw = harness.storage();
+        const audited = createAuditedStorage(raw, { actor: identity, outbox: true });
+        await audited.organizations.create({ id: "org-1", name: "Acme" });
+        await audited.permissions.register({ key: "reports.read" });
+        const events = await raw.outbox.search();
+        expect(events.map((event) => event.type)).toEqual(["organization.created", "permission.registered"]);
+        expect(events[0]).toMatchObject({ organizationId: "org-1", payload: { actor: identity, target: { type: "organization", id: "org-1" } } });
+        const delivered: string[] = [];
+        const result = await dispatchOutbox(raw.outbox, (event) => void delivered.push(event.type), { now: () => at(0) });
+        expect(result).toEqual({ claimed: 2, delivered: 2, retried: 0, dead: 0 });
+        expect(delivered).toEqual(["organization.created", "permission.registered"]);
+        expect(await raw.outbox.count({ status: "delivered" })).toBe(2);
       });
     });
 

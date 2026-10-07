@@ -21,6 +21,7 @@ const harness: StorageHarness = {
     // Children before parents: cascades need `foreign_keys = on`, which the
     // storage enables, but a plain delete in dependency order never relies on it.
     db.exec(`
+      delete from uniora_outbox;
       delete from uniora_invitation_roles;
       delete from uniora_invitations;
       delete from uniora_membership_roles;

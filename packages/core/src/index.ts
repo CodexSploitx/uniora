@@ -175,3 +175,24 @@ export type {
 export { createAuthorizationEngine } from "./authorization/engine.js";
 export type { AuthorizationSnapshot, ComputeAuthorizationSnapshotInput } from "./authorization/snapshot.js";
 export { computeAuthorizationSnapshot } from "./authorization/snapshot.js";
+
+export type { OutboxEvent, OutboxStatus } from "./outbox/types.js";
+export type {
+  ClaimOutboxOptions,
+  EnqueueOutboxInput,
+  FailOutboxInput,
+  OutboxErrorCode,
+  OutboxRepository,
+  SearchOutboxOptions,
+} from "./outbox/repository.js";
+export {
+  MAX_OUTBOX_CLAIM,
+  MAX_OUTBOX_LEASE_SECONDS,
+  MAX_OUTBOX_PAYLOAD_BYTES,
+  MAX_OUTBOX_TYPE_LENGTH,
+  OutboxError,
+  assertValidOutboxEvent,
+  resolveClaimOptions,
+} from "./outbox/repository.js";
+export type { DispatchOutboxOptions, DispatchOutboxResult } from "./outbox/dispatch.js";
+export { dispatchOutbox, outboxBackoffSeconds } from "./outbox/dispatch.js";

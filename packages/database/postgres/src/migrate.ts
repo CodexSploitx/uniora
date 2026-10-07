@@ -25,6 +25,7 @@ import { MIGRATION_0022_AUDIT_LOG_RETENTION } from "./migrations/0022_audit_log_
 import { MIGRATION_0023_ORGANIZATION_STATUS } from "./migrations/0023_organization_status.js";
 import { MIGRATION_0024_ROLE_SYSTEM_DESCRIPTION } from "./migrations/0024_role_system_description.js";
 import { MIGRATION_0025_PERMISSION_GROUPS_IMPLICATIONS } from "./migrations/0025_permission_groups_implications.js";
+import { MIGRATION_0026_OUTBOX } from "./migrations/0026_outbox.js";
 
 interface Migration {
   readonly id: string;
@@ -58,6 +59,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0023_organization_status", sql: MIGRATION_0023_ORGANIZATION_STATUS },
   { id: "0024_role_system_description", sql: MIGRATION_0024_ROLE_SYSTEM_DESCRIPTION },
   { id: "0025_permission_groups_implications", sql: MIGRATION_0025_PERMISSION_GROUPS_IMPLICATIONS },
+  { id: "0026_outbox", sql: MIGRATION_0026_OUTBOX },
 ];
 
 /**

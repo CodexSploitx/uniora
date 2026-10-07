@@ -1,11 +1,18 @@
 import type { Identity } from "../identity/types.js";
 import { randomId } from "../invitation/token.js";
 import type { FeatureChangeMeta } from "../feature/types.js";
+import { MAX_OUTBOX_PAYLOAD_BYTES } from "../outbox/repository.js";
 import type { UnioraStorage, UnioraTransaction } from "./types.js";
 
 export interface AuditedStorageOptions {
   /** Who is performing the operations recorded through this storage (e.g. the admin tool's operator). */
   actor: Identity;
+  /**
+   * Also enqueue an outbox event for each change, in the SAME transaction (type = the audit action, e.g.
+   * `member.blocked`; payload = actor, target and the audit metadata). A worker delivers them after commit with
+   * `dispatchOutbox`. Off by default. Invitations and identity links audit themselves and are not emitted here.
+   */
+  outbox?: boolean;
 }
 
 type Scope = UnioraStorage | UnioraTransaction;
@@ -20,7 +27,7 @@ type Scope = UnioraStorage | UnioraTransaction;
  * links) isn't recorded twice.
  */
 export function createAuditedStorage(storage: UnioraStorage, options: AuditedStorageOptions): UnioraStorage {
-  const { actor } = options;
+  const { actor, outbox = false } = options;
 
   async function record(
     scope: Scope,
@@ -30,6 +37,13 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
     metadata?: Record<string, unknown>,
   ): Promise<void> {
     await scope.auditLogs.record({ id: `audit:${randomId()}`, organizationId, actor, action, target, metadata });
+    if (outbox) {
+      const base = { actor: { provider: actor.provider, subject: actor.subject }, target };
+      const full = metadata ? { ...base, metadata } : base;
+      // An oversized change (thousands of keys) must not make the change itself fail: the event keeps the facts, the audit log the detail.
+      const payload = Buffer.byteLength(JSON.stringify(full), "utf8") <= MAX_OUTBOX_PAYLOAD_BYTES ? full : { ...base, metadataOmitted: true };
+      await scope.outbox.enqueue({ id: `evt:${randomId()}`, type: action, organizationId, payload });
+    }
   }
 
   /** The change's own context (who asked, why) as audit metadata — secrets never belong here. */
