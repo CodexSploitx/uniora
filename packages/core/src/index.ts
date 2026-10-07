@@ -72,6 +72,17 @@ export {
 } from "./role/key.js";
 
 export type { Permission } from "./permission/types.js";
+export {
+  MAX_IMPLICATION_DEPTH,
+  MAX_IMPLIED_PERMISSIONS,
+  MAX_PERMISSION_GROUP_LENGTH,
+  assertValidImplications,
+  expandClosure,
+  impliedByClosure,
+  implicationGraph,
+  sanitizeImplies,
+  sanitizePermissionGroup,
+} from "./permission/implications.js";
 export type { PermissionRepository, RegisterPermissionInput, SearchPermissionsOptions } from "./permission/repository.js";
 export { PermissionError } from "./permission/repository.js";
 export { assertValidPermissionKey, sanitizePermissionName } from "./permission/key.js";

@@ -5,7 +5,7 @@ import { createMemoryStorage } from "./memory.js";
 const actor = { provider: "p", subject: "operator" };
 
 /** Methods that only read (or are deliberately not audited). Anything else a repository exposes must be audited. */
-const READ_ONLY = /^(find|list|search|count|is[A-Z]|enabledKeys$|summarizeUsage$|granting|granted|get|resolve|verify)/;
+const READ_ONLY = /^(find|list|search|count|is[A-Z]|enabledKeys$|summarizeUsage$|granting|granted|get|resolve|verify|impliedBy$|expand$)/;
 /** Deliberately not audited: a heartbeat, not a change. */
 const NOT_AUDITED = new Set(["memberships.recordActivity"]);
 /** Audited by their own service/repository rather than by the wrapper (they already record themselves). */

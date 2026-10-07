@@ -18,6 +18,15 @@ export interface RegisterPermissionInput {
   key: string;
   name?: string;
   description?: string;
+  /** Catalog section, trimmed, at most 100 characters (`permission_group_invalid`). */
+  group?: string;
+  /**
+   * Permissions this one implies (e.g. `["appointments.read"]`). Each must already be registered, so register the
+   * implied ones first. No self-reference or cycle, at most 20 per permission and a chain of at most 8 levels
+   * (`permission_implication_invalid`). Like the rest of the registration this is a full upsert: re-registering
+   * without `implies` clears it.
+   */
+  implies?: string[];
 }
 
 export interface SearchPermissionsOptions {
@@ -28,6 +37,8 @@ export interface SearchPermissionsOptions {
   query?: string;
   /** Only permissions currently granted to this role. */
   grantedToRole?: string;
+  /** Only permissions of this catalog group (exact match). */
+  group?: string;
   /** Only permissions the membership holds through ANY of its roles (its effective permissions; the Owner role's flag-based full access is not a list and is not included). */
   grantedToMember?: string;
 }
@@ -58,7 +69,7 @@ export interface PermissionRepository {
    */
   search(options?: SearchPermissionsOptions): Promise<Permission[]>;
   /** Total permissions matching `query` (or all, if omitted). */
-  count(options?: { query?: string; grantedToRole?: string; grantedToMember?: string }): Promise<number>;
+  count(options?: { query?: string; group?: string; grantedToRole?: string; grantedToMember?: string }): Promise<number>;
   /**
    * For each given permission key, how many roles (across every
    * organization) currently have it granted. Keys granted to no role are
@@ -67,8 +78,19 @@ export interface PermissionRepository {
    */
   countRoleGrants(keys: string[]): Promise<Record<string, number>>;
   /**
+   * Every permission that implies `key`, directly or through others (not `key` itself), sorted. The authorization
+   * engine uses it: a role holding any of them passes a check for `key`. Empty for a key nothing implies.
+   */
+  impliedBy(key: string): Promise<string[]>;
+  /**
+   * `keys` plus everything they imply, transitively (sorted, no duplicates): what a role holding `keys` can really
+   * do. Unknown keys are returned as given. For role editors and "effective permissions" screens.
+   */
+  expand(keys: string[]): Promise<string[]>;
+  /**
    * Removes a catalog entry. Rejects (`PermissionError`) if `key` was
-   * never registered, or if it is still granted to at least one role in
+   * never registered, if another permission still implies it
+   * (`permission_has_dependents`), or if it is still granted to at least one role in
    * any organization — the caller must revoke it everywhere first. This
    * keeps a single call from silently revoking access across every
    * tenant that had it granted (uniora-security-engineering skill §59,
