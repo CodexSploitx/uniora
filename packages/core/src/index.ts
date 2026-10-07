@@ -39,6 +39,7 @@ export type {
   MembershipRepository,
   SearchMembershipsOptions,
   UnblockMembershipInput,
+  MembershipVersionOptions,
 } from "./membership/repository.js";
 export { assertBlockUntil, sanitizeBlockReason } from "./membership/repository.js";
 export { MembershipError } from "./membership/repository.js";
@@ -108,6 +109,7 @@ export type {
 export type {
   DisableEverywhereResult,
   FeatureRepository,
+  FeatureToggleOptions,
   FeatureUsage,
   RegisterFeatureInput,
   SearchFeaturesOptions,

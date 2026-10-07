@@ -456,6 +456,34 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         expect((await storage.features.listCatalog()).find((f) => f.key === "agenda")).toMatchObject({ defaultEnabled: false });
       });
 
+      it("version del override: expectedVersion 0 = aún sin override; sube con cada enable/disable; una versión vieja se rechaza", async () => {
+        const storage = harness.storage();
+        await seedOrganizations(storage, ["org-1"]);
+        await storage.features.register({ key: "reports", name: "Reports" });
+        const overrideVersion = async () => (await storage.features.listEffective("org-1")).find((f) => f.key === "reports")!.override?.version;
+
+        expect(await overrideVersion()).toBeUndefined();
+        await storage.features.enable("org-1", "reports", { expectedVersion: 0 });
+        expect(await overrideVersion()).toBe(1);
+        // Otro operador ya creó el override: quien creía que no existía pierde.
+        await expect(storage.features.disable("org-1", "reports", { expectedVersion: 0 })).rejects.toMatchObject({ code: "feature_version_conflict" });
+        expect(await storage.features.isEnabled("org-1", "reports")).toBe(true);
+        await storage.features.disable("org-1", "reports", { expectedVersion: 1 });
+        expect(await overrideVersion()).toBe(2);
+        await expect(storage.features.enable("org-1", "reports", { expectedVersion: 1 })).rejects.toMatchObject({ code: "feature_version_conflict" });
+        expect(await storage.features.isEnabled("org-1", "reports")).toBe(false);
+        // Sin expectedVersion sigue siendo incondicional, pero sube la versión.
+        await storage.features.enable("org-1", "reports");
+        expect(await overrideVersion()).toBe(3);
+
+        const results = await Promise.allSettled([
+          storage.features.disable("org-1", "reports", { expectedVersion: 3 }),
+          storage.features.disable("org-1", "reports", { expectedVersion: 3 }),
+        ]);
+        expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+        expect(await overrideVersion()).toBe(4);
+      });
+
       it("access.check y los snapshots respetan el valor por defecto", async () => {
         const storage = harness.storage();
         await seedOrganizations(storage, ["org-1"]);
@@ -633,6 +661,47 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         await new Promise((resolve) => setTimeout(resolve, 15));
         await storage.memberships.unassignRole("m-alice", "other");
         expect((await storage.memberships.findById("m-alice"))!.updatedAt.getTime()).toBeGreaterThan(afterAssign.updatedAt.getTime());
+      });
+
+      it("version: nace en 1, sube con cada cambio real y expectedVersion rechaza una copia vieja sin tocar nada", async () => {
+        const { storage, a } = await seed();
+        expect(a.version).toBe(1);
+        expect((await storage.memberships.findById("m-alice"))!.version).toBe(1);
+        await storage.roles.create({ id: "other", organizationId: "org-1", name: "Other" });
+
+        await storage.memberships.assignRole("m-alice", "other", { expectedVersion: 1 });
+        expect((await storage.memberships.findById("m-alice"))!.version).toBe(2);
+        await expect(storage.memberships.unassignRole("m-alice", "other", { expectedVersion: 1 })).rejects.toMatchObject({ code: "membership_version_conflict" });
+        expect((await storage.memberships.findById("m-alice"))!.roleIds).toContain("other");
+        await storage.memberships.unassignRole("m-alice", "other", { expectedVersion: 2 });
+        expect((await storage.memberships.findById("m-alice"))!.version).toBe(3);
+
+        await expect(storage.memberships.block("m-alice", { actor: admin, expectedVersion: 2 })).rejects.toMatchObject({ code: "membership_version_conflict" });
+        expect((await storage.memberships.findById("m-alice"))!.status).toBe("active");
+        const blocked = await storage.memberships.block("m-alice", { actor: admin, expectedVersion: 3 });
+        expect(blocked.version).toBe(4);
+        await expect(storage.memberships.unblock("m-alice", { actor: admin, expectedVersion: 3 })).rejects.toMatchObject({ code: "membership_version_conflict" });
+        expect((await storage.memberships.findById("m-alice"))!.status).toBe("blocked");
+        const unblocked = await storage.memberships.unblock("m-alice", { actor: admin, expectedVersion: 4 });
+        expect(unblocked.version).toBe(5);
+        // Sin expectedVersion sigue funcionando (last-write-wins), y la otra membresía no se tocó.
+        await storage.memberships.assignRole("m-alice", "other");
+        expect((await storage.memberships.findById("m-alice"))!.version).toBe(6);
+        expect((await storage.memberships.findById("m-bob"))!.version).toBe(2);
+      });
+
+      it("version: dos asignaciones concurrentes con la misma versión esperada — solo una gana", async () => {
+        const { storage } = await seed();
+        await storage.roles.create({ id: "r1", organizationId: "org-1", name: "R1" });
+        await storage.roles.create({ id: "r2", organizationId: "org-1", name: "R2" });
+        const results = await Promise.allSettled([
+          storage.memberships.assignRole("m-alice", "r1", { expectedVersion: 1 }),
+          storage.memberships.assignRole("m-alice", "r2", { expectedVersion: 1 }),
+        ]);
+        expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+        const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+        expect(rejected.reason).toMatchObject({ code: "membership_version_conflict" });
+        expect((await storage.memberships.findById("m-alice"))!.version).toBe(2);
       });
 
       it("bloquear no elimina: conserva roles pero el motor lo deniega todo; desbloquear lo restaura", async () => {

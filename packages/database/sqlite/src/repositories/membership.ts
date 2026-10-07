@@ -7,10 +7,11 @@ import type {
   MembershipListing,
   MembershipRepository,
   MembershipStatus,
+  MembershipVersionOptions,
   SearchMembershipsOptions,
   UnblockMembershipInput,
 } from "@uniora/core";
-import { MembershipError, assertBlockUntil, sanitizeBlockReason } from "@uniora/core";
+import { MembershipError, assertBlockUntil, assertExpectedVersion, sanitizeBlockReason } from "@uniora/core";
 import type { SqliteExecutor } from "../executor.js";
 import { countByOrganization } from "../counts.js";
 import { jsonList, parseList } from "../json.js";
@@ -26,6 +27,7 @@ interface MembershipRow {
   status: MembershipStatus;
   created_at: string;
   updated_at: string;
+  version: number;
   invited_by_provider: string | null;
   invited_by_subject: string | null;
   last_active_at: string | null;
@@ -46,7 +48,7 @@ function effectiveStatus(alias?: string): string {
 }
 
 /** Columns of `uniora_memberships` a `Membership` needs, qualified with the alias `m`. */
-const MEMBERSHIP_COLUMNS = `m.id, m.organization_id, m.provider, m.subject, ${effectiveStatus("m")} as status, m.created_at, m.updated_at,
+const MEMBERSHIP_COLUMNS = `m.id, m.organization_id, m.provider, m.subject, ${effectiveStatus("m")} as status, m.created_at, m.updated_at, m.version,
   m.invited_by_provider, m.invited_by_subject, m.last_active_at,
   m.blocked_at, m.blocked_until, m.blocked_by_provider, m.blocked_by_subject, m.block_reason`;
 
@@ -66,6 +68,7 @@ function toMembership(row: MembershipRow): Membership {
     status: row.status,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
+    version: row.version,
     ...(invitedBy ? { invitedBy } : {}),
     ...(row.last_active_at ? { lastActiveAt: new Date(row.last_active_at) } : {}),
     ...(row.status !== "active" && row.blocked_at && row.blocked_by_provider !== null && row.blocked_by_subject !== null
@@ -81,9 +84,25 @@ function toMembership(row: MembershipRow): Membership {
   };
 }
 
-/** Bumps `updated_at` after a role change. */
+/** Bumps `updated_at` and `version` after a role change. */
 async function touch(db: SqliteExecutor, membershipId: string): Promise<void> {
-  await db.query(`update uniora_memberships set updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') where id = ?1`, [membershipId]);
+  await db.query(
+    `update uniora_memberships set updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1 where id = ?1`,
+    [membershipId],
+  );
+}
+
+/**
+ * Optimistic-concurrency guard. Always called inside `db.atomic` (one writer at a time), so reading the version first
+ * and writing afterwards can't interleave with another writer. Does nothing for an unknown membership.
+ */
+async function assertNotStale(db: SqliteExecutor, membershipId: string, expectedVersion: number | undefined): Promise<void> {
+  const expected = assertExpectedVersion(expectedVersion);
+  if (expected === undefined) return;
+  const current = await db.query<{ version: number }>(`select version from uniora_memberships where id = ?1`, [membershipId]);
+  if (current.rows[0] && current.rows[0].version !== expected) {
+    throw new MembershipError("The membership changed since it was read.", "membership_version_conflict");
+  }
 }
 
 const SELECT_MEMBERSHIP_WITH_ROLES = `
@@ -188,6 +207,7 @@ async function performCreate(db: SqliteExecutor, input: CreateMembershipInput): 
     createdAt,
     updatedAt: createdAt,
     ...(input.invitedBy ? { invitedBy: input.invitedBy } : {}),
+    version: 1,
   };
 }
 
@@ -195,13 +215,14 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
   /** `block` (no `until`) and `suspend` (with one) are the same write: a timed suspension is a block that ends. */
   async function blockWithin(membershipId: string, input: BlockMembershipInput, until: Date | undefined): Promise<Membership> {
     return db.atomic(async () => {
+      await assertNotStale(db, membershipId, input.expectedVersion);
       // Count and update run inside one `begin immediate` unit (single writer), so two Owners blocking each other
       // at once can't both pass: the second sees the first's block.
       await db.query(
         `update uniora_memberships
          set status = 'blocked', blocked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), blocked_until = ?5,
              blocked_by_provider = ?2, blocked_by_subject = ?3, block_reason = ?4,
-             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1
          where id = ?1 and ${effectiveStatus()} = 'active'
            and not exists (
              select 1
@@ -400,8 +421,9 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
       return countByOrganization(db, "memberships", organizationIds);
     },
 
-    async assignRole(membershipId: string, roleId: string) {
+    async assignRole(membershipId: string, roleId: string, options?: MembershipVersionOptions) {
       await db.atomic(async () => {
+        await assertNotStale(db, membershipId, options?.expectedVersion);
         // The role's type is resolved and checked FIRST, unconditionally —
         // never skipped by an "already assigned" idempotency short-circuit
         // (Hallazgo 7): calling the wrong method must always be reported.
@@ -490,8 +512,9 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
       });
     },
 
-    async unassignRole(membershipId: string, roleId: string) {
+    async unassignRole(membershipId: string, roleId: string, options?: MembershipVersionOptions) {
       await db.atomic(async () => {
+        await assertNotStale(db, membershipId, options?.expectedVersion);
         // Role type checked first, unconditionally (Hallazgo 7). An unknown
         // `roleId` obviously isn't the Owner role that needs protecting, so it
         // falls through to the plain delete.
@@ -555,17 +578,20 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
       return blockWithin(membershipId, input, until);
     },
 
-    async unblock(membershipId: string, _input: UnblockMembershipInput) {
-      await db.query(
-        `update uniora_memberships
-         set status = 'active', blocked_at = null, blocked_until = null, blocked_by_provider = null, blocked_by_subject = null,
-             block_reason = null, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-         where id = ?1 and status = 'blocked'`,
-        [membershipId],
-      );
-      const current = await repository.findById(membershipId);
-      if (!current) throw new MembershipError(`Membership not found: ${membershipId}`);
-      return current;
+    async unblock(membershipId: string, input: UnblockMembershipInput) {
+      return db.atomic(async () => {
+        await assertNotStale(db, membershipId, input.expectedVersion);
+        await db.query(
+          `update uniora_memberships
+           set status = 'active', blocked_at = null, blocked_until = null, blocked_by_provider = null, blocked_by_subject = null,
+               block_reason = null, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1
+           where id = ?1 and status = 'blocked'`,
+          [membershipId],
+        );
+        const current = await repository.findById(membershipId);
+        if (!current) throw new MembershipError(`Membership not found: ${membershipId}`);
+        return current;
+      });
     },
 
     async recordActivity(membershipId: string, at: Date = new Date()) {

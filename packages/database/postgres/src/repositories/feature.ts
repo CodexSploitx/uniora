@@ -4,12 +4,14 @@ import type {
   FeatureChangeMeta,
   FeatureDefinition,
   FeatureRepository,
+  FeatureToggleOptions,
   FeatureUsage,
   RegisterFeatureInput,
   SearchFeaturesOptions,
 } from "@uniora/core";
 import {
   FeatureError,
+  assertExpectedVersion,
   assertEffectiveManyInput,
   assertValidFeatureParent,
   featureRequirements,
@@ -29,6 +31,7 @@ interface FeatureRow {
   updated_by_provider: string | null;
   updated_by_subject: string | null;
   reason: string | null;
+  version: number;
 }
 
 interface FeatureDefinitionRow {
@@ -40,13 +43,14 @@ interface FeatureDefinitionRow {
 }
 
 const DEFINITION_COLUMNS = "key, name, description, default_enabled, parent_key";
-const OVERRIDE_COLUMNS = "organization_id, key, enabled, updated_at, updated_by_provider, updated_by_subject, reason";
+const OVERRIDE_COLUMNS = "organization_id, key, enabled, updated_at, updated_by_provider, updated_by_subject, reason, version";
 
 function toFeature(row: FeatureRow): Feature {
   return {
     organizationId: row.organization_id,
     key: row.key,
     enabled: row.enabled,
+    version: row.version,
     ...(row.updated_at ? { updatedAt: row.updated_at } : {}),
     ...(row.updated_by_provider !== null && row.updated_by_subject !== null
       ? { updatedBy: { provider: row.updated_by_provider, subject: row.updated_by_subject } }
@@ -100,6 +104,7 @@ async function applyOverrides(
   organizationId: string,
   entries: ReadonlyArray<readonly [string, boolean]>,
   meta?: FeatureChangeMeta,
+  expectedVersion: number | null = null,
 ): Promise<void> {
   if (entries.length === 0) return;
   const keys = entries.map(([key]) => key);
@@ -109,17 +114,28 @@ async function applyOverrides(
   if (missing !== undefined) throw unknownFeature(missing);
 
   const [provider, subject, reason] = changeParams(meta);
-  await db.query(
+  // With `expectedVersion` (single key): `cur` locks the existing row (none = version 0) and the insert only goes
+  // ahead when it matches; the `where` of the update repeats the check for the case where a concurrent writer created
+  // the row in between. `version` goes up on every write.
+  const result = await db.query(
     // An invalid organizationId violates the other FK and just propagates raw, as elsewhere in this package.
-    `insert into uniora.features (organization_id, key, enabled, updated_at, updated_by_provider, updated_by_subject, reason)
+    `with cur as (
+       select version from uniora.features where organization_id = $1 and key = any($2::text[]) for update
+     )
+     insert into uniora.features (organization_id, key, enabled, updated_at, updated_by_provider, updated_by_subject, reason)
      select $1, c.key, c.enabled, date_trunc('milliseconds', now()), $4, $5, $6
      from unnest($2::text[], $3::boolean[]) as c(key, enabled)
+     where $7::integer is null or coalesce((select version from cur limit 1), 0) = $7
      on conflict (organization_id, key) do update set
        enabled = excluded.enabled, updated_at = excluded.updated_at,
        updated_by_provider = excluded.updated_by_provider, updated_by_subject = excluded.updated_by_subject,
-       reason = excluded.reason`,
-    [organizationId, keys, entries.map(([, enabled]) => enabled), provider, subject, reason],
+       reason = excluded.reason, version = uniora.features.version + 1
+     where $7::integer is null or uniora.features.version = $7`,
+    [organizationId, keys, entries.map(([, enabled]) => enabled), provider, subject, reason, expectedVersion],
   );
+  if (expectedVersion !== null && (result.rowCount ?? 0) === 0) {
+    throw new FeatureError("The feature override changed since it was read.", "feature_version_conflict");
+  }
 }
 
 export function createFeatureRepository(db: Queryable): FeatureRepository {
@@ -228,12 +244,12 @@ export function createFeatureRepository(db: Queryable): FeatureRepository {
       return loadDefinitions(db);
     },
 
-    async enable(organizationId: string, key: string, meta?: FeatureChangeMeta) {
-      await applyOverrides(db, organizationId, [[key, true]], meta);
+    async enable(organizationId: string, key: string, meta?: FeatureToggleOptions) {
+      await applyOverrides(db, organizationId, [[key, true]], meta, assertExpectedVersion(meta?.expectedVersion, 0) ?? null);
     },
 
-    async disable(organizationId: string, key: string, meta?: FeatureChangeMeta) {
-      await applyOverrides(db, organizationId, [[key, false]], meta);
+    async disable(organizationId: string, key: string, meta?: FeatureToggleOptions) {
+      await applyOverrides(db, organizationId, [[key, false]], meta, assertExpectedVersion(meta?.expectedVersion, 0) ?? null);
     },
 
     async setMany(organizationId: string, changes: Record<string, boolean>, meta?: FeatureChangeMeta) {
@@ -248,7 +264,7 @@ export function createFeatureRepository(db: Queryable): FeatureRepository {
         `with target as (select key, default_enabled from uniora.feature_definitions where key = $1 for update),
               flipped as (update uniora.feature_definitions d set default_enabled = false from target t where d.key = t.key returning d.key),
               disabled as (
-                update uniora.features f set enabled = false, updated_at = date_trunc('milliseconds', now()),
+                update uniora.features f set enabled = false, updated_at = date_trunc('milliseconds', now()), version = f.version + 1,
                   updated_by_provider = $2, updated_by_subject = $3, reason = $4
                 from target t where f.key = t.key and f.enabled returning f.organization_id
               )

@@ -25,7 +25,7 @@ import {
   sanitizePermissionGroup,
 } from "../permission/implications.js";
 import type { EffectiveFeature, Feature, FeatureChangeMeta, FeatureDefinition } from "../feature/types.js";
-import type { FeatureRepository, FeatureUsage, RegisterFeatureInput } from "../feature/repository.js";
+import type { FeatureRepository, FeatureToggleOptions, FeatureUsage, RegisterFeatureInput } from "../feature/repository.js";
 import { FeatureError, assertEffectiveManyInput, sanitizeFeatureChangeReason } from "../feature/repository.js";
 import { assertValidFeatureParent, resolveEffectiveFeatures } from "../feature/effective.js";
 import { resolveFeatureKey, sanitizeFeatureName } from "../feature/key.js";
@@ -344,7 +344,14 @@ export function createMemoryStorage(): UnioraStorage {
   }
 
   function touch(membership: Membership): void {
-    Object.assign(membership, { updatedAt: new Date() });
+    Object.assign(membership, { updatedAt: new Date(), version: membership.version + 1 });
+  }
+
+  function assertMembershipVersion(membership: Membership, expectedVersion: number | undefined): void {
+    const expected = assertExpectedVersion(expectedVersion);
+    if (expected !== undefined && membership.version !== expected) {
+      throw new MembershipError("The membership changed since it was read.", "membership_version_conflict");
+    }
   }
 
   /** A timed suspension that has ended reads as active again: lifted lazily, before any read of memberships. */
@@ -364,6 +371,7 @@ export function createMemoryStorage(): UnioraStorage {
     lapseBlocks();
     const membership = memberships.get(membershipId);
     if (!membership) throw new MembershipError(`Membership not found: ${membershipId}`);
+    assertMembershipVersion(membership, input.expectedVersion);
     if (membership.status !== "active") return membership;
     // The Owner who is blocked must not be the only ACTIVE one left: the organization would have nobody who can act.
     const ownerRoleIds = membership.roleIds.filter((roleId) => roles.get(roleId)?.isOwnerRole);
@@ -379,6 +387,7 @@ export function createMemoryStorage(): UnioraStorage {
     Object.assign(membership, {
       status: until ? ("suspended" as const) : ("blocked" as const),
       updatedAt: at,
+      version: membership.version + 1,
       blocked: { at, by: { ...input.actor }, ...(sanitizeBlockReason(input.reason) !== undefined ? { reason: sanitizeBlockReason(input.reason) } : {}), ...(until ? { until } : {}) },
     });
     return membership;
@@ -471,6 +480,7 @@ export function createMemoryStorage(): UnioraStorage {
         status: "active",
         createdAt,
         updatedAt: createdAt,
+        version: 1,
         ...(input.invitedBy ? { invitedBy: { ...input.invitedBy } } : {}),
       };
       memberships.set(membership.id, membership);
@@ -528,9 +538,10 @@ export function createMemoryStorage(): UnioraStorage {
     async countByOrganization(organizationIds) {
       return tally(organizationIds, [...memberships.values()].map((m) => m.organizationId));
     },
-    async assignRole(membershipId, roleId) {
+    async assignRole(membershipId, roleId, options) {
       const membership = memberships.get(membershipId);
       if (!membership) throw new MembershipError(`Membership not found: ${membershipId}`);
+      assertMembershipVersion(membership, options?.expectedVersion);
       // Reject assigning a role that belongs to a DIFFERENT organization than
       // the membership (uniora-security-engineering §17/§20 — an
       // organization-scoped relationship must not be creatable across
@@ -576,9 +587,10 @@ export function createMemoryStorage(): UnioraStorage {
         touch(membership);
       }
     },
-    async unassignRole(membershipId, roleId) {
+    async unassignRole(membershipId, roleId, options) {
       const membership = memberships.get(membershipId);
       if (!membership) throw new MembershipError(`Membership not found: ${membershipId}`);
+      assertMembershipVersion(membership, options?.expectedVersion);
 
       // Security fix (docs/security-pentest-2026-09-24.md Hallazgo 7): role
       // type checked BEFORE the idempotency short-circuit — an Owner role
@@ -628,12 +640,13 @@ export function createMemoryStorage(): UnioraStorage {
       if (until === undefined) throw new MembershipError("A suspension needs an end date (`until`).", "membership_block_until_invalid");
       return blockWithin(membershipId, input, until);
     },
-    async unblock(membershipId, _input) {
+    async unblock(membershipId, input) {
       const membership = memberships.get(membershipId);
       if (!membership) throw new MembershipError(`Membership not found: ${membershipId}`);
+      assertMembershipVersion(membership, input.expectedVersion);
       if (membership.status === "active") return membership;
       const { blocked: _blocked, ...rest } = membership;
-      memberships.set(membershipId, { ...rest, status: "active", updatedAt: new Date() });
+      memberships.set(membershipId, { ...rest, status: "active", updatedAt: new Date(), version: membership.version + 1 });
       return memberships.get(membershipId)!;
     },
     async recordActivity(membershipId, at = new Date()) {
@@ -1005,11 +1018,17 @@ export function createMemoryStorage(): UnioraStorage {
     return resolveEffectiveFeatures([...featureDefinitions.values()], overridesOf(organizationId));
   }
 
-  function writeOverride(organizationId: string, key: string, enabled: boolean, meta?: FeatureChangeMeta): void {
+  function writeOverride(organizationId: string, key: string, enabled: boolean, meta?: FeatureToggleOptions): void {
+    const previous = features.get(`${organizationId}:${key}`);
+    const expectedVersion = assertExpectedVersion(meta?.expectedVersion, 0);
+    if (expectedVersion !== undefined && (previous?.version ?? 0) !== expectedVersion) {
+      throw new FeatureError("The feature override changed since it was read.", "feature_version_conflict");
+    }
     features.set(`${organizationId}:${key}`, {
       organizationId,
       key,
       enabled,
+      version: (previous?.version ?? 0) + 1,
       updatedAt: new Date(),
       ...(meta?.actor ? { updatedBy: { ...meta.actor } } : {}),
       ...(sanitizeFeatureChangeReason(meta?.reason) !== undefined ? { reason: sanitizeFeatureChangeReason(meta?.reason) } : {}),

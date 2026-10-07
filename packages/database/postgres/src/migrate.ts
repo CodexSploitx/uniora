@@ -32,6 +32,7 @@ import { MIGRATION_0029_MEMBERSHIP_SUSPENSION } from "./migrations/0029_membersh
 import { MIGRATION_0030_ROW_VERSIONS } from "./migrations/0030_row_versions.js";
 import { MIGRATION_0031_ROLE_NAME_NORMALIZED } from "./migrations/0031_role_name_normalized.js";
 import { MIGRATION_0032_INVITATION_IDEMPOTENCY } from "./migrations/0032_invitation_idempotency.js";
+import { MIGRATION_0033_MEMBERSHIP_FEATURE_VERSIONS } from "./migrations/0033_membership_feature_versions.js";
 
 interface Migration {
   readonly id: string;
@@ -72,6 +73,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0030_row_versions", sql: MIGRATION_0030_ROW_VERSIONS },
   { id: "0031_role_name_normalized", sql: MIGRATION_0031_ROLE_NAME_NORMALIZED },
   { id: "0032_invitation_idempotency", sql: MIGRATION_0032_INVITATION_IDEMPOTENCY },
+  { id: "0033_membership_feature_versions", sql: MIGRATION_0033_MEMBERSHIP_FEATURE_VERSIONS },
 ];
 
 /**

@@ -115,10 +115,10 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
             await record(tx, "membership.created", created.organizationId, { type: "membership", id: created.id });
             return created;
           }),
-        assignRole: (membershipId, roleId) =>
+        assignRole: (membershipId, roleId, options) =>
           run(async (tx) => {
             const membership = await tx.memberships.findById(membershipId);
-            await tx.memberships.assignRole(membershipId, roleId);
+            await tx.memberships.assignRole(membershipId, roleId, options);
             await record(tx, "membership.role_assigned", membership?.organizationId, { type: "membership", id: membershipId }, { roleId });
           }),
         assignOwnerRole: (membershipId, roleId) =>
@@ -127,10 +127,10 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
             await tx.memberships.assignOwnerRole(membershipId, roleId);
             await record(tx, "membership.owner_role_assigned", membership?.organizationId, { type: "membership", id: membershipId }, { roleId });
           }),
-        unassignRole: (membershipId, roleId) =>
+        unassignRole: (membershipId, roleId, options) =>
           run(async (tx) => {
             const membership = await tx.memberships.findById(membershipId);
-            await tx.memberships.unassignRole(membershipId, roleId);
+            await tx.memberships.unassignRole(membershipId, roleId, options);
             await record(tx, "membership.role_unassigned", membership?.organizationId, { type: "membership", id: membershipId }, { roleId });
           }),
         unassignOwnerRole: (membershipId, roleId) =>

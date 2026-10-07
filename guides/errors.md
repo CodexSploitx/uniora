@@ -35,6 +35,8 @@ and `SqliteUrlError` (storage packages), and `TypeError`/`RangeError` for progra
 | `organization_name_invalid` / `organization_slug_invalid` | Empty, too long, wrong shape. |
 | `organization_status_invalid` | Not `active`, `suspended` or `archived`. |
 | `organization_update_empty` | `update` was called with neither a name nor a slug. |
+| `feature_version_conflict` | `enable` / `disable` was given an `expectedVersion` (0 = no override yet) and the feature override has changed since it was read. Nothing was changed: read it again and retry. |
+| `membership_version_conflict` | `assignRole`, `unassignRole`, `block` or `unblock` was given an `expectedVersion` and the membership has changed since it was read. Nothing was changed: read it again and retry. |
 | `organization_version_conflict` | `update` was given an `expectedVersion` and the organization has changed since it was read. Nothing was changed: read it again and retry. |
 | `organization_invalid` | Any other invalid input. |
 
