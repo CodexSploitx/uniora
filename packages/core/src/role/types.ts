@@ -21,5 +21,13 @@ export interface Role {
    */
   readonly key: string;
   name: string;
+  /** Free text for admins (at most 500 characters), e.g. what the role is for. */
+  description?: string;
+  /**
+   * A role the host's code defines (created from a template, see `applyRoleTemplates`) rather than one a tenant made:
+   * it cannot be renamed or deleted, but its permissions can still be changed. The protected Owner role is separate
+   * (`isOwnerRole`) and is not "system".
+   */
+  readonly isSystem: boolean;
   permissionKeys: string[];
 }

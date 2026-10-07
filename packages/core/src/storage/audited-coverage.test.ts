@@ -47,6 +47,10 @@ describe("createAuditedStorage: every mutation is audited, with standard names",
     await audited.roles.grantPermission(staff.id, "reports.read");
     await audited.roles.revokePermission(staff.id, "reports.read");
     await audited.roles.rename(staff.id, "Staff 2");
+    await audited.roles.update(staff.id, { description: "Front desk" });
+    await audited.roles.setPermissions(staff.id, ["reports.read"]);
+    const copy = await audited.roles.clone(staff.id, { id: "copy", name: "Staff copy" });
+    await audited.roles.delete(copy.id, { members: "reject" });
     const a = await audited.memberships.create({ id: "m-a", organizationId: "org", identity: { provider: "p", subject: "a" } });
     const b = await audited.memberships.create({ id: "m-b", organizationId: "org", identity: { provider: "p", subject: "b" } });
     await audited.memberships.assignOwnerRole(a.id, owner.id);

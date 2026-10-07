@@ -177,7 +177,7 @@ describe("OrganizationRepository", () => {
 
         // --- roles: summaries, scoped search/keyset, counts, granted keys
         const summaries = await storage.roles.findSummariesByIds(["r1", "ghost"]);
-        expect(summaries).toEqual([{ id: "r1", organizationId: "o1", name: "Editor", key: "editor", isOwnerRole: false }]);
+        expect(summaries).toEqual([{ id: "r1", organizationId: "o1", name: "Editor", key: "editor", isOwnerRole: false, isSystem: false }]);
         expect(Object.keys(summaries[0]!)).not.toContain("permissionKeys");
         await expect(storage.roles.search({ organizationId: "o1" })).resolves.toMatchObject([{ key: "editor" }, { key: "viewer" }]);
         await expect(storage.roles.search({ organizationId: "o1", limit: 1, after: "editor" })).resolves.toMatchObject([{ key: "viewer" }]);
