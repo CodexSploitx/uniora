@@ -7,11 +7,13 @@ import type {
   RoleRepository,
   RoleSummary,
   SearchRolesOptions,
+  SetRolePermissionsOptions,
   SetRolePermissionsResult,
   UpdateRoleInput,
 } from "@uniora/core";
 import {
   RoleError,
+  assertExpectedVersion,
   assertNonEmptyPermissionKey,
   resolveRoleKey,
   sanitizeRoleDescription,
@@ -32,6 +34,7 @@ interface RoleRow {
   is_owner_role: number;
   is_system: number;
   description: string | null;
+  version: number;
   permission_keys: string;
 }
 
@@ -45,11 +48,12 @@ function toRole(row: RoleRow): Role {
     name: row.name,
     ...(row.description !== null ? { description: row.description } : {}),
     permissionKeys: parseList(row.permission_keys),
+    version: row.version,
   };
 }
 
 const SELECT_ROLE_WITH_PERMISSIONS = `
-  select r.id, r.organization_id, r.name, r.key, r.is_owner_role, r.is_system, r.description,
+  select r.id, r.organization_id, r.name, r.key, r.is_owner_role, r.is_system, r.description, r.version,
          json_group_array(rp.permission_key order by rp.permission_key) filter (where rp.permission_key is not null) as permission_keys
   from uniora_roles r
   left join uniora_role_permissions rp on rp.role_id = r.id
@@ -62,9 +66,10 @@ interface RoleHeadRow {
   key: string;
   is_owner_role: number;
   is_system: number;
+  version: number;
 }
 
-const HEAD_COLUMNS = "id, organization_id, name, key, is_owner_role, is_system";
+const HEAD_COLUMNS = "id, organization_id, name, key, is_owner_role, is_system, version";
 
 function toRoleSummary(row: RoleHeadRow): RoleSummary {
   return {
@@ -84,6 +89,12 @@ async function findRoleHead(db: SqliteExecutor, roleId: string): Promise<RoleSum
     [roleId],
   );
   return result.rows[0] ? toRoleSummary(result.rows[0]) : null;
+}
+
+/** The stored version of a role that is known to exist. */
+async function currentVersion(db: SqliteExecutor, roleId: string): Promise<number> {
+  const result = await db.query<{ version: number }>(`select version from uniora_roles where id = ?1`, [roleId]);
+  return result.rows[0]!.version;
 }
 
 async function findRoleById(db: SqliteExecutor, roleId: string): Promise<Role | null> {
@@ -146,6 +157,7 @@ export function createRoleRepository(db: SqliteExecutor): RoleRepository {
         name,
         ...(description !== undefined ? { description } : {}),
         permissionKeys,
+        version: 1,
       };
     },
 
@@ -291,10 +303,11 @@ export function createRoleRepository(db: SqliteExecutor): RoleRepository {
         if (!role) throw new RoleError(`Role not found: ${roleId}`);
         if (role.isOwnerRole) throw new RoleError("Cannot modify permissions on the protected Owner role.");
         assertNonEmptyPermissionKey(permissionKey);
-        await db.query(
-          `insert into uniora_role_permissions (role_id, permission_key) values (?1, ?2) on conflict do nothing`,
+        const added = await db.query(
+          `insert into uniora_role_permissions (role_id, permission_key) values (?1, ?2) on conflict do nothing returning 1 as added`,
           [roleId, permissionKey],
         );
+        if (added.rows.length > 0) await db.query(`update uniora_roles set version = version + 1 where id = ?1`, [roleId]);
       });
     },
 
@@ -303,10 +316,11 @@ export function createRoleRepository(db: SqliteExecutor): RoleRepository {
         const role = await findRoleHead(db, roleId);
         if (!role) throw new RoleError(`Role not found: ${roleId}`);
         if (role.isOwnerRole) throw new RoleError("Cannot modify permissions on the protected Owner role.");
-        await db.query(`delete from uniora_role_permissions where role_id = ?1 and permission_key = ?2`, [
-          roleId,
-          permissionKey,
-        ]);
+        const removed = await db.query(
+          `delete from uniora_role_permissions where role_id = ?1 and permission_key = ?2 returning 1 as removed`,
+          [roleId, permissionKey],
+        );
+        if (removed.rows.length > 0) await db.query(`update uniora_roles set version = version + 1 where id = ?1`, [roleId]);
       });
     },
 
@@ -318,14 +332,14 @@ export function createRoleRepository(db: SqliteExecutor): RoleRepository {
         if (role.isSystem) throw new RoleError("Cannot rename a system role.", "role_system_protected");
         const sanitized = sanitizeRoleName(name);
         try {
-          await db.query(`update uniora_roles set name = ?2 where id = ?1`, [roleId, sanitized]);
+          await db.query(`update uniora_roles set name = ?2, version = version + 1 where id = ?1`, [roleId, sanitized]);
         } catch (error) {
           if (isUniqueViolation(error)) {
             throw new RoleError(`A role named "${sanitized}" already exists in this organization.`);
           }
           throw error;
         }
-        return { ...role, name: sanitized };
+        return { ...role, name: sanitized, version: role.version + 1 };
       });
     },
 
@@ -336,15 +350,19 @@ export function createRoleRepository(db: SqliteExecutor): RoleRepository {
       const name = input.name === undefined ? null : sanitizeRoleName(input.name);
       const setDescription = input.description !== undefined;
       const description = setDescription ? (sanitizeRoleDescription(input.description) ?? null) : null;
+      const expectedVersion = assertExpectedVersion(input.expectedVersion);
       return db.atomic(async () => {
         const role = await findRoleHead(db, roleId);
         if (!role) throw new RoleError(`Role not found: ${roleId}`);
+        if (expectedVersion !== undefined && (await currentVersion(db, roleId)) !== expectedVersion) {
+          throw new RoleError("The role changed since it was read.", "role_version_conflict");
+        }
         if (name !== null && role.isOwnerRole) throw new RoleError("Cannot rename the protected Owner role.");
         if (name !== null && role.isSystem) throw new RoleError("Cannot rename a system role.", "role_system_protected");
         if (setDescription && name === null && role.isOwnerRole) throw new RoleError("Cannot modify the protected Owner role.");
         try {
           await db.query(
-            `update uniora_roles set name = coalesce(?2, name), description = case when ?3 then ?4 else description end where id = ?1`,
+            `update uniora_roles set name = coalesce(?2, name), description = case when ?3 then ?4 else description end, version = version + 1 where id = ?1`,
             [roleId, name, setDescription ? 1 : 0, description],
           );
         } catch (error) {
@@ -355,11 +373,15 @@ export function createRoleRepository(db: SqliteExecutor): RoleRepository {
       });
     },
 
-    async setPermissions(roleId: string, permissionKeys: string[]): Promise<SetRolePermissionsResult> {
+    async setPermissions(roleId: string, permissionKeys: string[], options?: SetRolePermissionsOptions): Promise<SetRolePermissionsResult> {
       const wanted = sanitizeRolePermissionKeys(permissionKeys);
+      const expectedVersion = assertExpectedVersion(options?.expectedVersion);
       return db.atomic(async () => {
         const role = await findRoleHead(db, roleId);
         if (!role) throw new RoleError(`Role not found: ${roleId}`);
+        if (expectedVersion !== undefined && (await currentVersion(db, roleId)) !== expectedVersion) {
+          throw new RoleError("The role changed since it was read.", "role_version_conflict");
+        }
         if (role.isOwnerRole) throw new RoleError("Cannot modify permissions on the protected Owner role.");
         const known = await db.query<{ key: string }>(
           `select key from uniora_permissions where key in (select value from json_each(?1))`,
@@ -387,6 +409,9 @@ export function createRoleRepository(db: SqliteExecutor): RoleRepository {
             `insert into uniora_role_permissions (role_id, permission_key) select ?1, value from json_each(?2) where true on conflict do nothing`,
             [roleId, jsonList(granted)],
           );
+        }
+        if (granted.length > 0 || revoked.length > 0) {
+          await db.query(`update uniora_roles set version = version + 1 where id = ?1`, [roleId]);
         }
         return { granted, revoked };
       });

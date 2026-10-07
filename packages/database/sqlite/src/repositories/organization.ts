@@ -10,6 +10,7 @@ import type {
 import {
   OrganizationError,
   assertAuditInput,
+  assertExpectedVersion,
   assertOrganizationStatus,
   assertValidSlug,
   featureRequirements,
@@ -33,10 +34,11 @@ interface OrganizationRow {
   status_changed_by_provider: string | null;
   status_changed_by_subject: string | null;
   status_reason: string | null;
+  version: number;
 }
 
 const COLUMNS =
-  "id, name, slug, created_at, status, status_changed_at, status_changed_by_provider, status_changed_by_subject, status_reason";
+  "id, name, slug, created_at, status, status_changed_at, status_changed_by_provider, status_changed_by_subject, status_reason, version";
 
 function toOrganization(row: OrganizationRow): Organization {
   const changed =
@@ -47,6 +49,7 @@ function toOrganization(row: OrganizationRow): Organization {
     name: row.name,
     createdAt: new Date(row.created_at),
     status: row.status,
+    version: row.version,
     ...(changed
       ? {
           statusChange: {
@@ -122,7 +125,7 @@ export function createOrganizationRepository(db: SqliteExecutor): OrganizationRe
     async rename(id: string, name: string) {
       const sanitized = sanitizeOrganizationName(name);
       const result = await db.query<OrganizationRow>(
-        `update uniora_organizations set name = ?2 where id = ?1 returning ${COLUMNS}`,
+        `update uniora_organizations set name = ?2, version = version + 1 where id = ?1 returning ${COLUMNS}`,
         [id, sanitized],
       );
       return result.rows[0] ? toOrganization(result.rows[0]) : null;
@@ -134,13 +137,19 @@ export function createOrganizationRepository(db: SqliteExecutor): OrganizationRe
       }
       const name = input.name === undefined ? null : sanitizeOrganizationName(input.name);
       const slug = input.slug === undefined ? null : assertValidSlug(input.slug);
+      const expectedVersion = assertExpectedVersion(input.expectedVersion) ?? null;
       try {
         const result = await db.query<OrganizationRow>(
-          `update uniora_organizations set name = coalesce(?2, name), slug = coalesce(?3, slug)
-           where id = ?1 returning ${COLUMNS}`,
-          [id, name, slug],
+          `update uniora_organizations set name = coalesce(?2, name), slug = coalesce(?3, slug), version = version + 1
+           where id = ?1 and (?4 is null or version = ?4) returning ${COLUMNS}`,
+          [id, name, slug, expectedVersion],
         );
-        return result.rows[0] ? toOrganization(result.rows[0]) : null;
+        if (result.rows[0]) return toOrganization(result.rows[0]);
+        // No row: either there is no such organization or it is at another version.
+        if (expectedVersion !== null && (await db.query(`select 1 from uniora_organizations where id = ?1`, [id])).rows.length > 0) {
+          throw new OrganizationError("The organization changed since it was read.", "organization_version_conflict");
+        }
+        return null;
       } catch (error) {
         if (isUniqueViolation(error)) {
           throw new OrganizationError(`An organization with slug "${slug}" already exists.`, "organization_slug_taken");
@@ -157,7 +166,7 @@ export function createOrganizationRepository(db: SqliteExecutor): OrganizationRe
       const changed = await db.query<OrganizationRow>(
         `update uniora_organizations
          set status = ?2, status_changed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-             status_changed_by_provider = ?3, status_changed_by_subject = ?4, status_reason = ?5
+             status_changed_by_provider = ?3, status_changed_by_subject = ?4, status_reason = ?5, version = version + 1
          where id = ?1 and status <> ?2
          returning ${COLUMNS}`,
         [id, status, input.actor.provider, input.actor.subject, reason ?? null],

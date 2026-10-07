@@ -21,6 +21,11 @@ export interface UpdateOrganizationInput {
    * and not taken (`OrganizationError`: `organization_slug_invalid`, `organization_slug_taken`).
    */
   slug?: string;
+  /**
+   * Apply the change only if the organization is still at this `version` (see `Organization.version`); otherwise it is
+   * refused with `organization_version_conflict` and nothing changes. Omitted: last write wins, as before.
+   */
+  expectedVersion?: number;
 }
 
 export interface SetOrganizationStatusInput {

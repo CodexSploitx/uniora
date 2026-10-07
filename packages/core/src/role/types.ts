@@ -30,4 +30,10 @@ export interface Role {
    */
   readonly isSystem: boolean;
   permissionKeys: string[];
+  /**
+   * Starts at 1 and goes up by one on every change (`rename`, `update`, `setPermissions`, `grantPermission`,
+   * `revokePermission`; a call that changes nothing does not count). Pass it back as `expectedVersion` to `update` or
+   * `setPermissions` so an edit made from a stale copy fails (`role_version_conflict`) instead of overwriting a newer one.
+   */
+  version: number;
 }

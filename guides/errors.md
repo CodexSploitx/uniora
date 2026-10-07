@@ -35,6 +35,7 @@ and `SqliteUrlError` (storage packages), and `TypeError`/`RangeError` for progra
 | `organization_name_invalid` / `organization_slug_invalid` | Empty, too long, wrong shape. |
 | `organization_status_invalid` | Not `active`, `suspended` or `archived`. |
 | `organization_update_empty` | `update` was called with neither a name nor a slug. |
+| `organization_version_conflict` | `update` was given an `expectedVersion` and the organization has changed since it was read. Nothing was changed: read it again and retry. |
 | `organization_invalid` | Any other invalid input. |
 
 ### Membership
@@ -67,6 +68,7 @@ and `SqliteUrlError` (storage packages), and `TypeError`/`RangeError` for progra
 | `role_in_use` | `delete` with `members: "reject"` while someone holds the role. |
 | `role_reassign_invalid` | `reassignTo` names a role that doesn't exist or belongs to another organization. |
 | `role_update_empty` | `update` with nothing to change. |
+| `role_version_conflict` | `update` or `setPermissions` was given an `expectedVersion` and the role has changed since it was read. Nothing was changed: read it again and retry. |
 | `role_invalid` | Any other invalid input. |
 
 ### Permission

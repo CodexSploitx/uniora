@@ -22,6 +22,12 @@ export interface Organization {
   name: string;
   readonly createdAt: Date;
   status: OrganizationStatus;
+  /**
+   * Starts at 1 and goes up by one on every change (`rename`, `update`, `setStatus`). Pass it back as `expectedVersion`
+   * to `OrganizationRepository.update` so an edit made from a stale copy fails (`organization_version_conflict`)
+   * instead of overwriting a newer one.
+   */
+  readonly version: number;
   /** The last status change (see `OrganizationRepository.setStatus`). */
   statusChange?: OrganizationStatusChange;
 }
