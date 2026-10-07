@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { applyMigrations, getMigrationStatus, listMigrationIds, MigrationError } from "./migrate.js";
@@ -18,6 +21,21 @@ describe("migration ledger", () => {
       (row) => row.name,
     );
   }
+
+  it("los archivos sql/ aplicados a mano dejan el mismo esquema que el migrador, y applyMigrations los acepta después", () => {
+    const sqlDir = join(dirname(fileURLToPath(import.meta.url)), "..", "sql");
+    const schema = (database: Database.Database) =>
+      database
+        .prepare("select type, name, sql from sqlite_master where name not like 'sqlite_%' and name <> 'uniora_schema_migrations' order by type, name")
+        .all();
+    for (const id of listMigrationIds()) db.exec(readFileSync(join(sqlDir, `${id}.sql`), "utf8"));
+    const byHand = schema(db);
+
+    const reference = new Database(":memory:");
+    applyMigrations(reference);
+    expect(schema(reference)).toEqual(byHand);
+    reference.close();
+  });
 
   it("status es de solo lectura: no crea nada en una base virgen y reporta todo pendiente", () => {
     const status = getMigrationStatus(db);

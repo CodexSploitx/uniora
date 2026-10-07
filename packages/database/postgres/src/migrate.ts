@@ -114,6 +114,11 @@ export interface MigrationStatus {
   readonly unknown: readonly string[];
 }
 
+/** Todas las migraciones de esta versión (id y SQL exacto), en orden: lo que `applyMigrations` ejecuta. */
+export function listMigrations(): ReadonlyArray<{ readonly id: string; readonly sql: string }> {
+  return MIGRATIONS.map((migration) => ({ id: migration.id, sql: migration.sql }));
+}
+
 /** Ids de todas las migraciones que esta versión conoce, en orden. */
 export function listMigrationIds(): string[] {
   return MIGRATIONS.map((migration) => migration.id);
