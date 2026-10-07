@@ -21,7 +21,7 @@ const harness: StorageHarness = {
     await pool.query(
       `truncate table uniora.invitation_roles, uniora.invitations, uniora.membership_roles, uniora.role_permissions, uniora.memberships,
               uniora.roles, uniora.features, uniora.feature_definitions, uniora.permissions,
-              uniora.audit_logs, uniora.audit_log_checkpoints, uniora.identity_links, uniora.outbox, uniora.organizations cascade`,
+              uniora.audit_logs, uniora.audit_log_checkpoints, uniora.identity_links, uniora.outbox, uniora.entitlement_definitions, uniora.organizations cascade`,
     );
   },
   storage: () => createPostgresStorage(pool),

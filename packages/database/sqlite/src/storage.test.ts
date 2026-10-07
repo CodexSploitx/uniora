@@ -22,6 +22,9 @@ const harness: StorageHarness = {
     // storage enables, but a plain delete in dependency order never relies on it.
     db.exec(`
       delete from uniora_outbox;
+      delete from uniora_entitlement_usage;
+      delete from uniora_entitlement_limits;
+      delete from uniora_entitlement_definitions;
       delete from uniora_invitation_roles;
       delete from uniora_invitations;
       delete from uniora_membership_roles;

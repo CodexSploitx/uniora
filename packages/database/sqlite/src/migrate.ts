@@ -11,6 +11,7 @@ import { MIGRATION_0008_ORGANIZATION_STATUS } from "./migrations/0008_organizati
 import { MIGRATION_0009_ROLE_SYSTEM_DESCRIPTION } from "./migrations/0009_role_system_description.js";
 import { MIGRATION_0010_PERMISSION_GROUPS_IMPLICATIONS } from "./migrations/0010_permission_groups_implications.js";
 import { MIGRATION_0011_OUTBOX } from "./migrations/0011_outbox.js";
+import { MIGRATION_0012_ENTITLEMENTS } from "./migrations/0012_entitlements.js";
 
 interface Migration {
   readonly id: string;
@@ -30,6 +31,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0009_role_system_description", sql: MIGRATION_0009_ROLE_SYSTEM_DESCRIPTION },
   { id: "0010_permission_groups_implications", sql: MIGRATION_0010_PERMISSION_GROUPS_IMPLICATIONS },
   { id: "0011_outbox", sql: MIGRATION_0011_OUTBOX },
+  { id: "0012_entitlements", sql: MIGRATION_0012_ENTITLEMENTS },
 ];
 
 const LEDGER_TABLE = "uniora_schema_migrations";

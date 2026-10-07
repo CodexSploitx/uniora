@@ -1344,6 +1344,143 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
       });
     });
 
+    describe("entitlements — límites y consumo por organización", () => {
+      let base = Date.UTC(2026, 4, 15, 12, 0, 0);
+      beforeEach(() => {
+        base = Date.UTC(2026, 4, 15, 12, 0, 0);
+      });
+      const day = (offset: number) => new Date(base + offset * 24 * 3600 * 1000);
+
+      async function seed() {
+        const storage = harness.storage();
+        await storage.organizations.create({ id: "org-1", name: "Acme" });
+        await storage.organizations.create({ id: "org-2", name: "Otra" });
+        await storage.entitlements.define({ key: "seats", name: "  Puestos ", period: "lifetime", defaultLimit: 3 });
+        await storage.entitlements.define({ key: "reports_per_month", period: "monthly", defaultLimit: 2 });
+        await storage.entitlements.define({ key: "exports_per_day", period: "daily" });
+        return storage;
+      }
+
+      it("define es un upsert completo, valida y lista ordenado", async () => {
+        const storage = await seed();
+        expect(await storage.entitlements.findDefinition("seats")).toMatchObject({ key: "seats", name: "Puestos", period: "lifetime", defaultLimit: 3 });
+        expect(await storage.entitlements.findDefinition("exports_per_day")).toMatchObject({ name: "exports_per_day", defaultLimit: null });
+        expect((await storage.entitlements.listDefinitions()).map((definition) => definition.key)).toEqual(["exports_per_day", "reports_per_month", "seats"]);
+        await storage.entitlements.define({ key: "seats" });
+        expect(await storage.entitlements.findDefinition("seats")).toMatchObject({ period: "lifetime", defaultLimit: null });
+        await expect(storage.entitlements.define({ key: "Bad Key" })).rejects.toMatchObject({ code: "entitlement_key_invalid" });
+        await expect(storage.entitlements.define({ key: "x", defaultLimit: -1 })).rejects.toMatchObject({ code: "entitlement_limit_invalid" });
+        await expect(storage.entitlements.define({ key: "x", defaultLimit: 1.5 })).rejects.toMatchObject({ code: "entitlement_limit_invalid" });
+        await expect(storage.entitlements.define({ key: "x", period: "weekly" as never })).rejects.toMatchObject({ code: "entitlement_invalid" });
+        await expect(storage.entitlements.define({ key: "x", name: " " })).rejects.toMatchObject({ code: "entitlement_name_invalid" });
+      });
+
+      it("sin override rige el límite por defecto; setLimit lo cambia por organización y clearLimit lo devuelve", async () => {
+        const storage = await seed();
+        expect(await storage.entitlements.get("org-1", "seats")).toMatchObject({ limit: 3, source: "default", used: 0, remaining: 3 });
+        expect(await storage.entitlements.setLimit("org-1", "seats", 10)).toMatchObject({ limit: 10, source: "override", remaining: 10 });
+        expect(await storage.entitlements.get("org-2", "seats")).toMatchObject({ limit: 3, source: "default" });
+        expect(await storage.entitlements.setLimit("org-1", "seats", null)).toMatchObject({ limit: null, source: "override", remaining: null });
+        expect(await storage.entitlements.setLimit("org-1", "seats", 0)).toMatchObject({ limit: 0, remaining: 0 });
+        expect(await storage.entitlements.clearLimit("org-1", "seats")).toMatchObject({ limit: 3, source: "default" });
+        await expect(storage.entitlements.setLimit("org-1", "seats", -5)).rejects.toMatchObject({ code: "entitlement_limit_invalid" });
+        await expect(storage.entitlements.setLimit("org-1", "nope", 5)).rejects.toMatchObject({ code: "entitlement_unknown" });
+        await expect(storage.entitlements.setLimit("ghost", "seats", 5)).rejects.toMatchObject({ code: "entitlement_organization_unknown" });
+        await expect(storage.entitlements.get("org-1", "nope")).rejects.toMatchObject({ code: "entitlement_unknown" });
+      });
+
+      it("consume toma si cabe y no toma nada si pasaría el límite; release devuelve sin bajar de cero", async () => {
+        const storage = await seed();
+        const { entitlements } = storage;
+        expect(await entitlements.consume("org-1", "seats")).toEqual({ allowed: true, used: 1, limit: 3, remaining: 2 });
+        expect(await entitlements.consume("org-1", "seats", 2)).toEqual({ allowed: true, used: 3, limit: 3, remaining: 0 });
+        expect(await entitlements.consume("org-1", "seats")).toEqual({ allowed: false, used: 3, limit: 3, remaining: 0 });
+        expect(await entitlements.consume("org-1", "seats", 5)).toMatchObject({ allowed: false, used: 3 });
+        expect(await entitlements.consume("org-2", "seats")).toMatchObject({ allowed: true, used: 1 });
+        expect(await entitlements.release("org-1", "seats")).toMatchObject({ used: 2, remaining: 1 });
+        expect(await entitlements.consume("org-1", "seats")).toMatchObject({ allowed: true, used: 3 });
+        expect(await entitlements.release("org-1", "seats", 99)).toMatchObject({ used: 0 });
+        await expect(entitlements.consume("org-1", "seats", 0)).rejects.toMatchObject({ code: "entitlement_amount_invalid" });
+        await expect(entitlements.consume("org-1", "seats", 1.5)).rejects.toMatchObject({ code: "entitlement_amount_invalid" });
+        await expect(entitlements.consume("org-1", "nope")).rejects.toMatchObject({ code: "entitlement_unknown" });
+        await expect(entitlements.consume("ghost", "seats")).rejects.toMatchObject({ code: "entitlement_organization_unknown" });
+        await entitlements.setLimit("org-1", "seats", 0);
+        expect(await entitlements.consume("org-1", "seats")).toMatchObject({ allowed: false, used: 0, limit: 0 });
+      });
+
+      it("un límite ilimitado siempre permite y sigue contando", async () => {
+        const storage = await seed();
+        expect(await storage.entitlements.consume("org-1", "exports_per_day", 500, { now: day(0) })).toEqual({ allowed: true, used: 500, limit: null, remaining: null });
+        expect(await storage.entitlements.consume("org-1", "exports_per_day", 500, { now: day(0) })).toMatchObject({ used: 1000 });
+      });
+
+      it("el uso empieza de cero en cada ventana (mensual y diaria, UTC) y lifetime nunca", async () => {
+        const storage = await seed();
+        const { entitlements } = storage;
+        expect(await entitlements.consume("org-1", "reports_per_month", 2, { now: day(0) })).toMatchObject({ allowed: true, used: 2 });
+        expect(await entitlements.consume("org-1", "reports_per_month", 1, { now: day(5) })).toMatchObject({ allowed: false, used: 2 });
+        expect(await entitlements.consume("org-1", "reports_per_month", 1, { now: day(20) })).toMatchObject({ allowed: true, used: 1 });
+        expect(await entitlements.get("org-1", "reports_per_month", { now: day(0) })).toMatchObject({
+          used: 2,
+          windowStart: new Date(Date.UTC(2026, 4, 1)),
+          windowEnd: new Date(Date.UTC(2026, 5, 1)),
+        });
+        await entitlements.consume("org-1", "exports_per_day", 7, { now: day(0) });
+        expect(await entitlements.get("org-1", "exports_per_day", { now: day(0) })).toMatchObject({ used: 7, windowEnd: new Date(Date.UTC(2026, 4, 16)) });
+        expect(await entitlements.get("org-1", "exports_per_day", { now: day(1) })).toMatchObject({ used: 0 });
+        await entitlements.consume("org-1", "seats", 2, { now: day(0) });
+        expect(await entitlements.get("org-1", "seats", { now: day(400) })).toMatchObject({ used: 2, windowEnd: undefined });
+      });
+
+      it("list devuelve todas las definiciones con el uso de la ventana actual", async () => {
+        const storage = await seed();
+        await storage.entitlements.setLimit("org-1", "reports_per_month", 5);
+        await storage.entitlements.consume("org-1", "seats", 1, { now: day(0) });
+        await storage.entitlements.consume("org-1", "reports_per_month", 4, { now: day(0) });
+        await storage.entitlements.consume("org-1", "reports_per_month", 1, { now: day(40) });
+        const list = await storage.entitlements.list("org-1", { now: day(0) });
+        expect(list.map((status) => [status.key, status.used, status.limit, status.source])).toEqual([
+          ["exports_per_day", 0, null, "default"],
+          ["reports_per_month", 4, 5, "override"],
+          ["seats", 1, 3, "default"],
+        ]);
+        await expect(storage.entitlements.list("ghost")).rejects.toMatchObject({ code: "entitlement_organization_unknown" });
+      });
+
+      it("consumos concurrentes nunca pasan del límite", async () => {
+        const storage = await seed();
+        await storage.entitlements.setLimit("org-1", "seats", 5);
+        const results = await Promise.all(Array.from({ length: 20 }, () => storage.entitlements.consume("org-1", "seats")));
+        expect(results.filter((result) => result.allowed)).toHaveLength(5);
+        expect(await storage.entitlements.get("org-1", "seats")).toMatchObject({ used: 5, remaining: 0 });
+        const mixed = await Promise.all([3, 3, 3, 3].map(() => storage.entitlements.consume("org-2", "seats", 2)));
+        expect(mixed.filter((result) => result.allowed)).toHaveLength(1);
+      });
+
+      it("undefine borra la definición con sus límites y su uso", async () => {
+        const storage = await seed();
+        await storage.entitlements.setLimit("org-1", "seats", 9);
+        await storage.entitlements.consume("org-1", "seats");
+        await storage.entitlements.undefine("seats");
+        expect(await storage.entitlements.findDefinition("seats")).toBeNull();
+        await expect(storage.entitlements.get("org-1", "seats")).rejects.toMatchObject({ code: "entitlement_unknown" });
+        await expect(storage.entitlements.undefine("seats")).rejects.toMatchObject({ code: "entitlement_unknown" });
+        await storage.entitlements.define({ key: "seats", defaultLimit: 3 });
+        expect(await storage.entitlements.get("org-1", "seats")).toMatchObject({ used: 0, limit: 3, source: "default" });
+      });
+
+      it("un storage auditado deja rastro de definir y cambiar límites, pero no de consumir", async () => {
+        const raw = await seed();
+        const audited = createAuditedStorage(raw, { actor: identity });
+        await audited.entitlements.setLimit("org-1", "seats", 8);
+        await audited.entitlements.clearLimit("org-1", "seats");
+        await audited.entitlements.consume("org-1", "seats");
+        const entries = await raw.auditLogs.search({ actionPrefix: "entitlement." });
+        expect(entries.map((entry) => entry.action).sort()).toEqual(["entitlement.limit_changed", "entitlement.limit_cleared"]);
+        expect(entries.find((entry) => entry.action === "entitlement.limit_changed")?.metadata).toEqual({ from: 3, to: 8 });
+      });
+    });
+
     describe("audit log — search por acción, actor, objetivo y rango; actor obligatorio", () => {
       const ana = { provider: "supabase", subject: "ana" };
       const luis = { provider: "supabase", subject: "luis" };

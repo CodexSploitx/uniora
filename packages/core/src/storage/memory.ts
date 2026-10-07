@@ -56,6 +56,19 @@ import type { AuditIntegrityOptions, AuditIntegrityReport } from "../audit-log/t
 import type { OutboxEvent, OutboxStatus } from "../outbox/types.js";
 import type { OutboxRepository } from "../outbox/repository.js";
 import { OutboxError, assertValidOutboxEvent, resolveClaimOptions } from "../outbox/repository.js";
+import type { ConsumeResult, EntitlementDefinition, EntitlementStatus } from "../entitlement/types.js";
+import type { EntitlementRepository } from "../entitlement/repository.js";
+import {
+  EntitlementError,
+  assertValidEntitlementAmount,
+  assertValidEntitlementKey,
+  assertValidEntitlementLimit,
+  assertValidEntitlementPeriod,
+  buildEntitlementStatus,
+  entitlementWindow,
+  sanitizeEntitlementName,
+  toConsumeResult,
+} from "../entitlement/repository.js";
 import type { UnioraStorage, UnioraTransaction } from "./types.js";
 
 function identityKey(identity: Identity): string {
@@ -1315,6 +1328,99 @@ export function createMemoryStorage(): UnioraStorage {
     },
   };
 
+  const entitlementDefinitions = new Map<string, EntitlementDefinition>();
+  const entitlementLimits = new Map<string, number | null>(); // `${organizationId}\u0000${key}`
+  const entitlementUsage = new Map<string, number>(); // `${organizationId}\u0000${key}\u0000${windowStartMs}`
+  const entitlementId = (organizationId: string, key: string) => `${organizationId}\u0000${key}`;
+  const entitlementDefinition = (key: string): EntitlementDefinition => {
+    const definition = entitlementDefinitions.get(key);
+    if (!definition) throw new EntitlementError(`Entitlement "${key}" is not defined.`, "entitlement_unknown");
+    return definition;
+  };
+  const entitlementOrganization = (organizationId: string) => {
+    if (!organizations.has(organizationId)) throw new EntitlementError(`Organization "${organizationId}" does not exist.`, "entitlement_organization_unknown");
+  };
+  const entitlementStatus = (organizationId: string, key: string, now: Date): EntitlementStatus => {
+    const definition = entitlementDefinition(key);
+    const id = entitlementId(organizationId, key);
+    const overridden = entitlementLimits.has(id);
+    const window = entitlementWindow(definition.period, now);
+    return buildEntitlementStatus({
+      organizationId,
+      definition,
+      override: overridden ? { limit: entitlementLimits.get(id)! ?? null } : undefined,
+      used: entitlementUsage.get(`${id}\u0000${window.start.getTime()}`) ?? 0,
+      now,
+    });
+  };
+  const entitlementRepository: EntitlementRepository = {
+    async define(input) {
+      const key = assertValidEntitlementKey(input.key);
+      const definition: EntitlementDefinition = {
+        key,
+        name: sanitizeEntitlementName(input.name, key),
+        description: input.description?.trim() || undefined,
+        period: input.period === undefined ? "lifetime" : assertValidEntitlementPeriod(input.period),
+        defaultLimit: input.defaultLimit === undefined ? null : assertValidEntitlementLimit(input.defaultLimit),
+      };
+      entitlementDefinitions.set(key, definition);
+      return { ...definition };
+    },
+    async findDefinition(key) {
+      const definition = entitlementDefinitions.get(key);
+      return definition ? { ...definition } : null;
+    },
+    async listDefinitions() {
+      return [...entitlementDefinitions.values()].sort((a, b) => a.key.localeCompare(b.key)).map((definition) => ({ ...definition }));
+    },
+    async undefine(key) {
+      entitlementDefinition(key);
+      entitlementDefinitions.delete(key);
+      for (const map of [entitlementLimits, entitlementUsage]) {
+        for (const id of [...map.keys()]) if (id.split("\u0000")[1] === key) map.delete(id);
+      }
+    },
+    async setLimit(organizationId, key, limit) {
+      entitlementDefinition(key);
+      entitlementOrganization(organizationId);
+      entitlementLimits.set(entitlementId(organizationId, key), assertValidEntitlementLimit(limit));
+      return entitlementStatus(organizationId, key, new Date());
+    },
+    async clearLimit(organizationId, key) {
+      entitlementDefinition(key);
+      entitlementOrganization(organizationId);
+      entitlementLimits.delete(entitlementId(organizationId, key));
+      return entitlementStatus(organizationId, key, new Date());
+    },
+    async get(organizationId, key, options) {
+      entitlementOrganization(organizationId);
+      return entitlementStatus(organizationId, key, options?.now ?? new Date());
+    },
+    async list(organizationId, options) {
+      entitlementOrganization(organizationId);
+      const now = options?.now ?? new Date();
+      return [...entitlementDefinitions.keys()].sort().map((key) => entitlementStatus(organizationId, key, now));
+    },
+    async consume(organizationId, key, amount = 1, options) {
+      assertValidEntitlementAmount(amount);
+      entitlementOrganization(organizationId);
+      const now = options?.now ?? new Date();
+      const before = entitlementStatus(organizationId, key, now);
+      if (before.limit !== null && before.used + amount > before.limit) return toConsumeResult(before, false);
+      const slot = `${entitlementId(organizationId, key)}\u0000${before.windowStart!.getTime()}`;
+      entitlementUsage.set(slot, before.used + amount);
+      return toConsumeResult(entitlementStatus(organizationId, key, now), true);
+    },
+    async release(organizationId, key, amount = 1, options) {
+      assertValidEntitlementAmount(amount);
+      entitlementOrganization(organizationId);
+      const now = options?.now ?? new Date();
+      const before = entitlementStatus(organizationId, key, now);
+      entitlementUsage.set(`${entitlementId(organizationId, key)}\u0000${before.windowStart!.getTime()}`, Math.max(before.used - amount, 0));
+      return toConsumeResult(entitlementStatus(organizationId, key, now), true);
+    },
+  };
+
   const cloneOutboxEvent = (event: OutboxEvent): OutboxEvent => ({ ...event, payload: event.payload === undefined ? undefined : structuredClone(event.payload) });
   const outboxEvents = new Map<string, OutboxEvent>();
   const outboxLeases = new Map<string, number>(); // id -> lease expiry (ms)
@@ -1423,6 +1529,7 @@ export function createMemoryStorage(): UnioraStorage {
     identityLinks: identityLinkRepository,
     invitations: invitationRepository,
     outbox: outboxRepository,
+    entitlements: entitlementRepository,
     async transaction<T>(callback: (tx: UnioraTransaction) => Promise<T>): Promise<T> {
       // In-memory storage has no isolation to offer; adapters with a real
       // database (e.g. Postgres) must run `callback` inside a DB transaction.
@@ -1436,6 +1543,7 @@ export function createMemoryStorage(): UnioraStorage {
         identityLinks: identityLinkRepository,
         invitations: invitationRepository,
         outbox: outboxRepository,
+        entitlements: entitlementRepository,
       });
     },
   };
