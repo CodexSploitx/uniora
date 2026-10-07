@@ -9,7 +9,13 @@ import type {
 } from "@uniora/core";
 import { InvitationError } from "@uniora/core";
 import type { Queryable } from "../queryable.js";
+import { toLikePattern } from "../pg-like.js";
 import { isForeignKeyViolation, violatedConstraint } from "../pg-errors.js";
+
+function likeOrNull(query: string | undefined): string | null {
+  const trimmed = query?.trim();
+  return trimmed ? toLikePattern(trimmed) : null;
+}
 
 interface InvitationRow {
   id: string;
@@ -133,11 +139,24 @@ export function createInvitationRepository(db: Queryable): InvitationRepository 
          where i.organization_id = $1
            and ($2::text is null or i.status = $2)
            and ($3::text is null or (i.created_at, i.id) < (select created_at, id from uniora.invitations where id = $3))
+           and ($5::text is null or i.email ilike $5)
          order by i.created_at desc, i.id desc
          limit $4`,
-        [organizationId, options?.status ?? null, options?.after ?? null, options?.limit ?? null],
+        [organizationId, options?.status ?? null, options?.after ?? null, options?.limit ?? null, likeOrNull(options?.query)],
       );
       return result.rows.map(toInvitation);
+    },
+
+    async count(organizationId: string, options?: Pick<SearchInvitationsOptions, "status" | "query">) {
+      const result = await db.query<{ count: string }>(
+        `select count(*)::text as count
+         from uniora.invitations i
+         where i.organization_id = $1
+           and ($2::text is null or i.status = $2)
+           and ($3::text is null or i.email ilike $3)`,
+        [organizationId, options?.status ?? null, likeOrNull(options?.query)],
+      );
+      return Number(result.rows[0]!.count);
     },
 
     async expireStale(organizationId: string, email: string, now: Date) {

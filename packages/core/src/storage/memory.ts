@@ -84,6 +84,17 @@ function identityKey(identity: Identity): string {
  * since nothing here is persisted (docs/PROYECT.md §16 lists PostgreSQL
  * as the first real adapter).
  */
+function matchesInvitationFilter(
+  invitation: Invitation,
+  organizationId: string,
+  options?: Pick<SearchInvitationsOptions, "status" | "query">,
+): boolean {
+  if (invitation.organizationId !== organizationId) return false;
+  if (options?.status && invitation.status !== options.status) return false;
+  const query = options?.query?.trim().toLowerCase();
+  return !query || invitation.email.toLowerCase().includes(query);
+}
+
 export function createMemoryStorage(): UnioraStorage {
   const organizations = new Map<string, Organization>();
   const memberships = new Map<string, Membership>();
@@ -1261,9 +1272,12 @@ export function createMemoryStorage(): UnioraStorage {
       }
       return null;
     },
+    async count(organizationId: string, options?: Pick<SearchInvitationsOptions, "status" | "query">) {
+      return [...invitations.values()].filter((i) => matchesInvitationFilter(i, organizationId, options)).length;
+    },
     async search(organizationId: string, options?: SearchInvitationsOptions) {
       const matches = [...invitations.values()]
-        .filter((i) => i.organizationId === organizationId && (!options?.status || i.status === options.status))
+        .filter((i) => matchesInvitationFilter(i, organizationId, options))
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
       let page = matches;
       if (options?.after !== undefined) {

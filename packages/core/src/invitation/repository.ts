@@ -10,6 +10,7 @@ export type InvitationFailureReason =
   | "email_mismatch"
   | "roles_unavailable"
   | "duplicate_pending"
+  | "already_member" // `invite()` found the e-mail already belongs to a member of the organization
   | "rate_limited"
   | "cooldown"
   | "bad_request";
@@ -47,6 +48,8 @@ export interface CreateInvitationInput {
 
 export interface SearchInvitationsOptions {
   status?: InvitationStatus;
+  /** Case-insensitive substring of the invited e-mail (wildcards in it are matched literally). Blank is ignored. */
+  query?: string;
   limit?: number;
   /** Keyset cursor — the `id` of the last invitation of the previous page. Never `offset`. */
   after?: string;
@@ -73,6 +76,8 @@ export interface InvitationRepository {
   findByTokenHash(tokenHash: string): Promise<Invitation | null>;
   /** Newest first, keyset-paged on `id`. */
   search(organizationId: string, options?: SearchInvitationsOptions): Promise<Invitation[]>;
+  /** How many invitations of the organization match — same `status` / `query` filters as `search` (`after` and `limit` don't apply). */
+  count(organizationId: string, options?: Pick<SearchInvitationsOptions, "status" | "query">): Promise<number>;
   /**
    * Marks as `expired` the organization's pending invitations for `email`
    * whose `expiresAt <= now`, so a fresh invitation can take their place.

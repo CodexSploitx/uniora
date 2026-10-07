@@ -20,6 +20,8 @@ export function invitationErrorToHttp(error: unknown): InvitationHttpError | nul
     case "rate_limited":
     case "cooldown":
       return { status: 429, body: { error: "rate_limited", message: error.message } };
+    case "already_member":
+      return { status: 409, body: { error: "already_member", message: error.message } };
     case "duplicate_pending":
       return { status: 409, body: { error: "duplicate_pending", message: error.message } };
     case "bad_request":
