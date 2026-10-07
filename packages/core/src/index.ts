@@ -78,6 +78,7 @@ export {
   resolveRoleKey,
   sanitizeRoleDescription,
   sanitizeRoleName,
+  normalizeRoleName,
   sanitizeRolePermissionKeys,
 } from "./role/key.js";
 

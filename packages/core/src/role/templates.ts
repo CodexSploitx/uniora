@@ -1,5 +1,5 @@
 import { randomId } from "../invitation/token.js";
-import { sanitizeRoleName } from "./key.js";
+import { normalizeRoleName } from "./key.js";
 import type { RoleRepository } from "./repository.js";
 import type { Role } from "./types.js";
 
@@ -75,7 +75,7 @@ export async function applyRoleTemplates(
   options: ApplyRoleTemplatesOptions = {},
 ): Promise<ApplyRoleTemplatesResult> {
   const existing = new Map((await roles.listByOrganization(organizationId)).map((role) => [role.key, role]));
-  const names = new Set([...existing.values()].map((role) => role.name));
+  const names = new Set([...existing.values()].map((role) => normalizeRoleName(role.name)));
   const createOnly = options.mode === "create-missing";
   const result: ApplyRoleTemplatesResult = { created: [], synced: [], skipped: [], unchanged: [], conflicts: [], failed: [] };
   for (const template of templates) {
@@ -83,7 +83,7 @@ export async function applyRoleTemplates(
       const current = existing.get(template.key);
       if (!current) {
         // A name a tenant's role already uses would make `create` throw and, before, stop every template after this one.
-        if (names.has(sanitizeRoleName(template.name))) {
+        if (names.has(normalizeRoleName(template.name))) {
           result.conflicts.push({ key: template.key, reason: "name_taken" });
           continue;
         }
@@ -98,7 +98,7 @@ export async function applyRoleTemplates(
         });
         result.created.push(created);
         existing.set(created.key, created);
-        names.add(created.name);
+        names.add(normalizeRoleName(created.name));
       } else if (!current.isSystem) {
         result.skipped.push(template.key);
         result.conflicts.push({ key: template.key, reason: "key_taken" });

@@ -30,6 +30,16 @@ export function sanitizeRoleName(name: string): string {
   return trimmed;
 }
 
+/**
+ * The form of a role name that must be unique within an organization: lowercase, without diacritics, whitespace
+ * collapsed ("Recepción", "recepcion" and " RECEPCIÓN " are the same name). The roles repositories store it
+ * (`name_normalized`) under a unique index, so the check holds under concurrent writes too. The display `name`
+ * keeps the caller's spelling.
+ */
+export function normalizeRoleName(name: string): string {
+  return sanitizeRoleName(name).normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+}
+
 /** Validates an explicit, caller-provided key. Throws (fail-closed) if malformed or reserved. */
 export function assertValidRoleKey(key: string): string {
   if (typeof key !== "string" || key.length === 0) {

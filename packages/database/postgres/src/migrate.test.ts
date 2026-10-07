@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client, Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { applyMigrations, getMigrationStatus, listMigrationIds, MigrationError } from "./migrate.js";
+import { applyMigrations, getMigrationStatus, listMigrationIds, listMigrations, MigrationError } from "./migrate.js";
 
 /**
  * Base de datos PROPIA de este archivo (no `uniora_test`): vitest corre los
@@ -95,6 +95,29 @@ describe("migration ledger", () => {
     await pool.query("drop table uniora.schema_migrations");
     const result = await applyMigrations(pool);
     expect(result.applied).toEqual(listMigrationIds());
+  });
+
+  it("0031 normaliza los nombres de rol que ya existen y no falla con duplicados heredados", async () => {
+    const migrations = listMigrations();
+    const index = migrations.findIndex((migration) => migration.id === "0031_role_name_normalized");
+    for (const migration of migrations.slice(0, index)) await pool.query(migration.sql);
+    await pool.query("insert into uniora.organizations (id, name, slug) values ('o', 'O', 'o'), ('p', 'P', 'p')");
+    await pool.query(
+      `insert into uniora.roles (id, organization_id, name, key) values
+         ('r1', 'o', 'Recepción', 'a'), ('r2', 'o', 'RECEPCION', 'b'), ('r3', 'o', 'recepción', 'c'), ('r4', 'o', 'Ventas', 'd'), ('r5', 'p', 'Recepción', 'a')`,
+    );
+    await pool.query(migrations[index]!.sql);
+    const rows = (await pool.query("select id, name_normalized from uniora.roles order by id")).rows;
+    expect(rows).toEqual([
+      { id: "r1", name_normalized: "recepcion" },
+      { id: "r2", name_normalized: "recepcion#r2" },
+      { id: "r3", name_normalized: "recepcion#r3" },
+      { id: "r4", name_normalized: "ventas" },
+      { id: "r5", name_normalized: "recepcion" },
+    ]);
+    await expect(pool.query("insert into uniora.roles (id, organization_id, name, name_normalized, key) values ('r6', 'o', 'x', 'ventas', 'e')")).rejects.toMatchObject({
+      code: "23505",
+    });
   });
 
   it("status es de solo lectura: no crea nada en una base virgen y reporta todo pendiente", async () => {

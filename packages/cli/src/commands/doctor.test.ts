@@ -170,7 +170,7 @@ describe("runDoctor", () => {
       expect(missing.checks.find((c) => c.name === "Owners")?.message).toContain("org-1");
 
       await pool.query(
-        `insert into uniora.roles (id, organization_id, name, key, is_owner_role) values ('r1', 'org-1', 'Owner', 'owner', true);
+        `insert into uniora.roles (id, organization_id, name, name_normalized, key, is_owner_role) values ('r1', 'org-1', 'Owner', 'owner', 'owner', true);
          insert into uniora.memberships (id, organization_id, provider, subject) values ('m1', 'org-1', 'supabase', 'u1');
          insert into uniora.membership_roles (membership_id, role_id) values ('m1', 'r1');`,
       );

@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { applyMigrations, getMigrationStatus, listMigrationIds, MigrationError } from "./migrate.js";
+import { applyMigrations, getMigrationStatus, listMigrationIds, listMigrations, MigrationError } from "./migrate.js";
 
 describe("migration ledger", () => {
   let db: Database.Database;
@@ -35,6 +35,26 @@ describe("migration ledger", () => {
     applyMigrations(reference);
     expect(schema(reference)).toEqual(byHand);
     reference.close();
+  });
+
+  it("0016 normaliza los nombres de rol que ya existen y no falla con duplicados heredados", () => {
+    const migrations = listMigrations();
+    const index = migrations.findIndex((migration) => migration.id === "0016_role_name_normalized");
+    for (const migration of migrations.slice(0, index)) db.exec(migration.sql);
+    db.exec("insert into uniora_organizations (id, name, slug) values ('o', 'O', 'o'), ('p', 'P', 'p')");
+    db.exec(
+      `insert into uniora_roles (id, organization_id, name, key) values
+         ('r1', 'o', 'Recepción', 'a'), ('r2', 'o', 'RECEPCION', 'b'), ('r3', 'o', 'recepción', 'c'), ('r4', 'o', 'Ventas', 'd'), ('r5', 'p', 'Recepción', 'a')`,
+    );
+    db.exec(migrations[index]!.sql);
+    expect(db.prepare("select id, name_normalized from uniora_roles order by id").all()).toEqual([
+      { id: "r1", name_normalized: "recepcion" },
+      { id: "r2", name_normalized: "recepcion#r2" },
+      { id: "r3", name_normalized: "recepcion#r3" },
+      { id: "r4", name_normalized: "ventas" },
+      { id: "r5", name_normalized: "recepcion" },
+    ]);
+    expect(() => db.exec("insert into uniora_roles (id, organization_id, name, name_normalized, key) values ('r6', 'o', 'x', 'ventas', 'e')")).toThrow(/UNIQUE/);
   });
 
   it("status es de solo lectura: no crea nada en una base virgen y reporta todo pendiente", () => {
