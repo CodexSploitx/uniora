@@ -6,7 +6,7 @@ import type { CreateOrganizationInput, OrganizationRepository } from "../organiz
 import { OrganizationError, assertValidSlug, resolveOrganizationSlug, sanitizeOrganizationName } from "../organization/slug.js";
 import type { Membership, MembershipStatus } from "../membership/types.js";
 import type { CreateMembershipInput, MembershipListing, MembershipRepository, SearchMembershipsOptions } from "../membership/repository.js";
-import { MembershipError, sanitizeBlockReason } from "../membership/repository.js";
+import { MembershipError, assertBlockUntil, sanitizeBlockReason } from "../membership/repository.js";
 import type { Role } from "../role/types.js";
 import type { CreateOwnerRoleInput, CreateRoleInput, RoleRepository, RoleSummary } from "../role/repository.js";
 import { RoleError } from "../role/repository.js";
@@ -324,7 +324,20 @@ export function createMemoryStorage(): UnioraStorage {
     Object.assign(membership, { updatedAt: new Date() });
   }
 
+  /** A timed suspension that has ended reads as active again: lifted lazily, before any read of memberships. */
+  function lapseBlocks(): void {
+    const now = Date.now();
+    for (const [id, membership] of memberships) {
+      const until = membership.blocked?.until;
+      if (membership.status === "blocked" && until !== undefined && until.getTime() <= now) {
+        const { blocked: _blocked, ...rest } = membership;
+        memberships.set(id, { ...rest, status: "active", updatedAt: new Date() });
+      }
+    }
+  }
+
   function matchingMemberships(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus }): Membership[] {
+    lapseBlocks();
     const query = options?.query?.trim().toLowerCase();
     return [...memberships.values()].filter(
       (m) =>
@@ -417,6 +430,7 @@ export function createMemoryStorage(): UnioraStorage {
     },
     async findByIdentity(organizationId: string, identity: Identity) {
       const resolved = await identityLinkRepository.resolve(identity);
+      lapseBlocks();
       for (const membership of memberships.values()) {
         if (membership.organizationId === organizationId && sameIdentity(membership.identity, resolved)) {
           return membership;
@@ -425,9 +439,11 @@ export function createMemoryStorage(): UnioraStorage {
       return null;
     },
     async listByOrganization(organizationId) {
+      lapseBlocks();
       return [...memberships.values()].filter((m) => m.organizationId === organizationId);
     },
     async findById(id) {
+      lapseBlocks();
       return memberships.get(id) ?? null;
     },
     async search(options) {
@@ -557,6 +573,8 @@ export function createMemoryStorage(): UnioraStorage {
       touch(membership);
     },
     async block(membershipId, input) {
+      const until = assertBlockUntil(input.until);
+      lapseBlocks();
       const membership = memberships.get(membershipId);
       if (!membership) throw new MembershipError(`Membership not found: ${membershipId}`);
       if (membership.status === "blocked") return membership;
@@ -574,7 +592,7 @@ export function createMemoryStorage(): UnioraStorage {
       Object.assign(membership, {
         status: "blocked" as const,
         updatedAt: at,
-        blocked: { at, by: { ...input.actor }, ...(sanitizeBlockReason(input.reason) !== undefined ? { reason: sanitizeBlockReason(input.reason) } : {}) },
+        blocked: { at, by: { ...input.actor }, ...(sanitizeBlockReason(input.reason) !== undefined ? { reason: sanitizeBlockReason(input.reason) } : {}), ...(until ? { until } : {}) },
       });
       return membership;
     },

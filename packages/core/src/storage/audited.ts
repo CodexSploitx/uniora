@@ -144,6 +144,7 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
             const blocked = await tx.memberships.block(membershipId, input);
             await record(tx, "membership.blocked", blocked.organizationId, { type: "membership", id: membershipId }, {
               ...(blocked.blocked?.reason ? { reason: blocked.blocked.reason } : {}),
+              ...(blocked.blocked?.until ? { until: blocked.blocked.until.toISOString() } : {}),
               requestedBy: `${input.actor.provider}:${input.actor.subject}`,
             });
             return blocked;

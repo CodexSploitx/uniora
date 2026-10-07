@@ -38,7 +38,7 @@ export type {
   SearchMembershipsOptions,
   UnblockMembershipInput,
 } from "./membership/repository.js";
-export { sanitizeBlockReason } from "./membership/repository.js";
+export { assertBlockUntil, sanitizeBlockReason } from "./membership/repository.js";
 export { MembershipError } from "./membership/repository.js";
 export type { LeaveOrganizationInput, TransferOwnershipInput } from "./membership/ownership.js";
 export { leaveOrganization, transferOwnership } from "./membership/ownership.js";

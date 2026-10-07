@@ -47,6 +47,11 @@ export interface BlockMembershipInput {
   actor: Identity;
   /** Free text, trimmed and capped at 500 characters. */
   reason?: string;
+  /**
+   * Makes the block a timed suspension: the member is `active` again by themselves once this instant passes.
+   * Must be a valid date in the future (`membership_block_until_invalid`). Omit it for an indefinite block.
+   */
+  until?: Date;
 }
 
 export interface UnblockMembershipInput {
@@ -161,7 +166,9 @@ export interface MembershipRepository {
   /**
    * Blocks a member without removing them: the engine denies a blocked member everything (`can`,
    * `access.check`, snapshots) while roles, history and audit trail stay. Idempotent — blocking an
-   * already-blocked member keeps the original actor and reason. Rejects (`MembershipError`) if the
+   * already-blocked member keeps the original actor, reason and `until` (to change the date, `unblock` first). With
+   * `until` it is a timed suspension that ends by itself (see `MembershipStatus`); a suspension that already ended
+   * counts as not blocked, so blocking again starts a new one. Rejects (`MembershipError`) if the
    * membership doesn't exist (`membership_not_found`), or if it is an Owner and no OTHER active Owner would
    * remain (`last_owner`) — an organization must always keep an Owner who can still act.
    *
@@ -181,6 +188,18 @@ export interface MembershipRepository {
    * organization's Owner role and is the only membership holding it.
    */
   delete(membershipId: string): Promise<void>;
+}
+
+/** Validates the end of a timed suspension: a valid `Date` strictly after `now`. Returns it, or `undefined` when none. */
+export function assertBlockUntil(until: Date | undefined, now: Date = new Date()): Date | undefined {
+  if (until === undefined) return undefined;
+  if (!(until instanceof Date) || Number.isNaN(until.getTime())) {
+    throw new MembershipError("The end of a suspension must be a valid date.", "membership_block_until_invalid");
+  }
+  if (until.getTime() <= now.getTime()) {
+    throw new MembershipError("The end of a suspension must be in the future.", "membership_block_until_invalid");
+  }
+  return new Date(until.getTime());
 }
 
 /** Trims and caps the free-text reason of a block; `undefined` when empty. */

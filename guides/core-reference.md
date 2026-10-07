@@ -72,6 +72,7 @@ Name: up to 255 characters. Slug: lowercase alphanumerics separated by single hy
 ```ts
 await storage.memberships.create({ id, organizationId, identity, roleIds: [roleId], invitedBy? });
 await storage.memberships.block(membershipId, { actor, reason: "unpaid" }); // denied everything, roles kept
+await storage.memberships.block(membershipId, { actor, reason: "vacation", until: new Date("2026-11-01") }); // timed suspension
 ```
 
 | Method | Purpose |
@@ -84,7 +85,7 @@ await storage.memberships.block(membershipId, { actor, reason: "unpaid" }); // d
 | `countByRole(roleIds)` / `countByOrganization(ids)` | Batch counts. |
 | `assignRole(membershipId, roleId)` / `unassignRole(...)` | Regular roles only; idempotent. Refuses the Owner role and roles of other organizations. |
 | `assignOwnerRole(membershipId, roleId)` / `unassignOwnerRole(...)` | The only way to grant or remove the Owner role. `unassignOwnerRole` refuses to remove the last Owner. |
-| `block(id, { actor, reason? })` / `unblock(id, { actor })` | Idempotent. The last active Owner can't be blocked (`last_owner`). |
+| `block(id, { actor, reason?, until? })` / `unblock(id, { actor })` | Idempotent. The last active Owner can't be blocked (`last_owner`). With `until` (a future date, else `membership_block_until_invalid`) it is a timed suspension that ends by itself: from that instant the membership reads `active`, `blocked` disappears, and `can()`, snapshots and the SQL functions allow it again. Nothing runs at that moment, so there is no audit entry for the automatic reactivation (the `membership.blocked` entry records `until`). Blocking a member who is already blocked changes nothing, so to move the date `unblock` first; a suspension that already ended counts as not blocked. |
 | `recordActivity(id, at?)` | Moves `lastActiveAt` forward for a "last seen" column. |
 | `delete(id)` | Refuses to delete the last Owner. |
 

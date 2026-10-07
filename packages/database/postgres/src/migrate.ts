@@ -28,6 +28,7 @@ import { MIGRATION_0025_PERMISSION_GROUPS_IMPLICATIONS } from "./migrations/0025
 import { MIGRATION_0026_OUTBOX } from "./migrations/0026_outbox.js";
 import { MIGRATION_0027_ENTITLEMENTS } from "./migrations/0027_entitlements.js";
 import { MIGRATION_0028_SUPPORT_GRANTS } from "./migrations/0028_support_grants.js";
+import { MIGRATION_0029_MEMBERSHIP_SUSPENSION } from "./migrations/0029_membership_suspension.js";
 
 interface Migration {
   readonly id: string;
@@ -64,6 +65,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0026_outbox", sql: MIGRATION_0026_OUTBOX },
   { id: "0027_entitlements", sql: MIGRATION_0027_ENTITLEMENTS },
   { id: "0028_support_grants", sql: MIGRATION_0028_SUPPORT_GRANTS },
+  { id: "0029_membership_suspension", sql: MIGRATION_0029_MEMBERSHIP_SUSPENSION },
 ];
 
 /**

@@ -9,7 +9,7 @@ import type {
   SearchMembershipsOptions,
   UnblockMembershipInput,
 } from "@uniora/core";
-import { MembershipError, sanitizeBlockReason } from "@uniora/core";
+import { MembershipError, assertBlockUntil, sanitizeBlockReason } from "@uniora/core";
 import type { SqliteExecutor } from "../executor.js";
 import { countByOrganization } from "../counts.js";
 import { jsonList, parseList } from "../json.js";
@@ -29,15 +29,25 @@ interface MembershipRow {
   invited_by_subject: string | null;
   last_active_at: string | null;
   blocked_at: string | null;
+  blocked_until: string | null;
   blocked_by_provider: string | null;
   blocked_by_subject: string | null;
   block_reason: string | null;
 }
 
+/**
+ * The status in force right now: a timed suspension whose `blocked_until` has passed is active again, with no job to
+ * flip it (the stored `status` stays `blocked` until the next `block`/`unblock`). Same rule as the Postgres adapter.
+ */
+function effectiveStatus(alias?: string): string {
+  const prefix = alias ? `${alias}.` : "";
+  return `(case when ${prefix}status = 'blocked' and ${prefix}blocked_until is not null and ${prefix}blocked_until <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now') then 'active' else ${prefix}status end)`;
+}
+
 /** Columns of `uniora_memberships` a `Membership` needs, qualified with the alias `m`. */
-const MEMBERSHIP_COLUMNS = `m.id, m.organization_id, m.provider, m.subject, m.status, m.created_at, m.updated_at,
+const MEMBERSHIP_COLUMNS = `m.id, m.organization_id, m.provider, m.subject, ${effectiveStatus("m")} as status, m.created_at, m.updated_at,
   m.invited_by_provider, m.invited_by_subject, m.last_active_at,
-  m.blocked_at, m.blocked_by_provider, m.blocked_by_subject, m.block_reason`;
+  m.blocked_at, m.blocked_until, m.blocked_by_provider, m.blocked_by_subject, m.block_reason`;
 
 function invitedByOf(row: Pick<MembershipRow, "invited_by_provider" | "invited_by_subject">): Identity | undefined {
   return row.invited_by_provider !== null && row.invited_by_subject !== null
@@ -63,6 +73,7 @@ function toMembership(row: MembershipRow): Membership {
             at: new Date(row.blocked_at),
             by: { provider: row.blocked_by_provider, subject: row.blocked_by_subject },
             ...(row.block_reason !== null ? { reason: row.block_reason } : {}),
+            ...(row.blocked_until !== null ? { until: new Date(row.blocked_until) } : {}),
           },
         }
       : {}),
@@ -234,7 +245,7 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
              and (?2 is null or uniora_ilike(provider, ?2) or uniora_ilike(subject, ?2))
              and (?3 is null or id > ?3)
              and (?5 is null or (provider = ?5 and subject = ?6))
-             and (?7 is null or status = ?7)
+             and (?7 is null or ${effectiveStatus()} = ?7)
            order by id asc
            limit coalesce(?4, -1)
          ) m
@@ -290,13 +301,13 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
                   ) p
                 ), '[]') as roles
          from (
-           select id, organization_id, provider, subject, status, created_at, invited_by_provider, invited_by_subject, last_active_at
+           select id, organization_id, provider, subject, ${effectiveStatus()} as status, created_at, invited_by_provider, invited_by_subject, last_active_at
            from uniora_memberships
            where (?1 is null or organization_id = ?1)
              and (?2 is null or uniora_ilike(provider, ?2) or uniora_ilike(subject, ?2))
              and (?3 is null or id > ?3)
              and (?6 is null or (provider = ?6 and subject = ?7))
-             and (?8 is null or status = ?8)
+             and (?8 is null or ${effectiveStatus()} = ?8)
            order by id asc
            limit coalesce(?4, -1)
          ) m
@@ -333,7 +344,7 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
          where (?1 is null or organization_id = ?1)
            and (?2 is null or uniora_ilike(provider, ?2) or uniora_ilike(subject, ?2))
            and (?3 is null or (provider = ?3 and subject = ?4))
-           and (?5 is null or status = ?5)`,
+           and (?5 is null or ${effectiveStatus()} = ?5)`,
         [options?.organizationId ?? null, query ? toLikePattern(query) : null, options?.identity?.provider ?? null, options?.identity?.subject ?? null, options?.status ?? null],
       );
       return Number(result.rows[0]!.count);
@@ -500,14 +511,16 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
     },
 
     async block(membershipId: string, input: BlockMembershipInput) {
+      const until = assertBlockUntil(input.until);
       return db.atomic(async () => {
         // Count and update run inside one `begin immediate` unit (single writer), so two Owners blocking each other
         // at once can't both pass: the second sees the first's block.
         await db.query(
           `update uniora_memberships
-           set status = 'blocked', blocked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), blocked_by_provider = ?2,
-               blocked_by_subject = ?3, block_reason = ?4, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-           where id = ?1 and status = 'active'
+           set status = 'blocked', blocked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), blocked_until = ?5,
+               blocked_by_provider = ?2, blocked_by_subject = ?3, block_reason = ?4,
+               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+           where id = ?1 and ${effectiveStatus()} = 'active'
              and not exists (
                select 1
                from uniora_membership_roles mr
@@ -516,10 +529,10 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
                  and not exists (
                    select 1 from uniora_membership_roles other
                    join uniora_memberships om on om.id = other.membership_id
-                   where other.role_id = mr.role_id and other.membership_id <> ?1 and om.status = 'active'
+                   where other.role_id = mr.role_id and other.membership_id <> ?1 and ${effectiveStatus("om")} = 'active'
                  )
              )`,
-          [membershipId, input.actor.provider, input.actor.subject, sanitizeBlockReason(input.reason) ?? null],
+          [membershipId, input.actor.provider, input.actor.subject, sanitizeBlockReason(input.reason) ?? null, until ?? null],
         );
         const current = await repository.findById(membershipId);
         if (!current) throw new MembershipError(`Membership not found: ${membershipId}`);
@@ -534,7 +547,7 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
     async unblock(membershipId: string, _input: UnblockMembershipInput) {
       await db.query(
         `update uniora_memberships
-         set status = 'active', blocked_at = null, blocked_by_provider = null, blocked_by_subject = null,
+         set status = 'active', blocked_at = null, blocked_until = null, blocked_by_provider = null, blocked_by_subject = null,
              block_reason = null, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
          where id = ?1 and status = 'blocked'`,
         [membershipId],

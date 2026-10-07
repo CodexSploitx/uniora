@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { computeAuthorizationSnapshot, createAuthorizationEngine, createAuditedStorage } from "../index.js";
 import { createMemoryStorage } from "../storage/memory.js";
 
@@ -124,5 +124,42 @@ describe("MembershipRepository: estado, fechas y autoría", () => {
     const entries = await storage.auditLogs.listByOrganization("org");
     expect(entries.map((e) => e.action).sort()).toEqual(["membership.blocked", "membership.unblocked"]);
     expect(entries.find((e) => e.action === "membership.blocked")!.metadata).toMatchObject({ reason: "fraude" });
+  });
+});
+
+describe("MembershipRepository: suspensión con fecha de fin (memoria)", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("bloquea hasta la fecha, se reactiva sola, y se audita con la fecha", async () => {
+    vi.useFakeTimers({ now: new Date("2026-10-07T10:00:00Z") });
+    const { storage } = await setup();
+    const audited = createAuditedStorage(storage, { actor: admin });
+    const engine = createAuthorizationEngine(storage);
+    const input = { identity: alice, organizationId: "org", permission: "reports.read" };
+    const until = new Date("2026-10-07T12:00:00Z");
+
+    const suspended = await audited.memberships.block("m-alice", { actor: admin, reason: "vacaciones", until });
+    expect(suspended).toMatchObject({ status: "blocked", blocked: { reason: "vacaciones", until } });
+    expect(await engine.can(input)).toBe(false);
+    const entry = (await storage.auditLogs.listRecent()).find((e) => e.action === "membership.blocked");
+    expect(entry?.metadata).toMatchObject({ until: until.toISOString() });
+
+    vi.setSystemTime(new Date("2026-10-07T11:59:59Z"));
+    expect(await engine.can(input)).toBe(false);
+    expect(await storage.memberships.count({ organizationId: "org", status: "blocked" })).toBe(1);
+
+    vi.setSystemTime(until);
+    expect(await engine.can(input)).toBe(true);
+    expect(await storage.memberships.findById("m-alice")).toMatchObject({ status: "active" });
+    expect((await storage.memberships.findById("m-alice"))!.blocked).toBeUndefined();
+    expect(await storage.memberships.count({ organizationId: "org", status: "blocked" })).toBe(0);
+    expect(await storage.memberships.search({ organizationId: "org", status: "blocked" })).toEqual([]);
+  });
+
+  it("valida la fecha y no suspende al último Owner activo", async () => {
+    const { storage } = await setup();
+    await expect(storage.memberships.block("m-alice", { actor: admin, until: new Date(Date.now() - 1) })).rejects.toMatchObject({ code: "membership_block_until_invalid" });
+    await expect(storage.memberships.block("m-alice", { actor: admin, until: new Date("x") })).rejects.toMatchObject({ code: "membership_block_until_invalid" });
+    await expect(storage.memberships.block("m-bob", { actor: admin, until: new Date(Date.now() + 60_000) })).rejects.toMatchObject({ code: "last_owner" });
   });
 });

@@ -13,6 +13,7 @@ import { MIGRATION_0010_PERMISSION_GROUPS_IMPLICATIONS } from "./migrations/0010
 import { MIGRATION_0011_OUTBOX } from "./migrations/0011_outbox.js";
 import { MIGRATION_0012_ENTITLEMENTS } from "./migrations/0012_entitlements.js";
 import { MIGRATION_0013_SUPPORT_GRANTS } from "./migrations/0013_support_grants.js";
+import { MIGRATION_0014_MEMBERSHIP_SUSPENSION } from "./migrations/0014_membership_suspension.js";
 
 interface Migration {
   readonly id: string;
@@ -34,6 +35,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0011_outbox", sql: MIGRATION_0011_OUTBOX },
   { id: "0012_entitlements", sql: MIGRATION_0012_ENTITLEMENTS },
   { id: "0013_support_grants", sql: MIGRATION_0013_SUPPORT_GRANTS },
+  { id: "0014_membership_suspension", sql: MIGRATION_0014_MEMBERSHIP_SUSPENSION },
 ];
 
 const LEDGER_TABLE = "uniora_schema_migrations";

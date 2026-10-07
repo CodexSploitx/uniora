@@ -50,6 +50,7 @@ and `SqliteUrlError` (storage packages), and `TypeError`/`RangeError` for progra
 | `last_owner` | The change would leave the organization without an active Owner. |
 | `identity_aliased` | The identity is linked as an alias of another one. |
 | `identity_link_busy` | Too much concurrent identity linking; retry. |
+| `membership_block_until_invalid` | The end date of a suspension is not a valid date, or is not in the future. |
 | `membership_invalid` | Any other invalid input. |
 
 ### Role
