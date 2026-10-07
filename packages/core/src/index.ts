@@ -62,7 +62,14 @@ export type {
   SetRolePermissionsResult,
   UpdateRoleInput,
 } from "./role/repository.js";
-export { applyRoleTemplates, type ApplyRoleTemplatesOptions, type ApplyRoleTemplatesResult, type RoleTemplate } from "./role/templates.js";
+export {
+  applyRoleTemplates,
+  type ApplyRoleTemplatesOptions,
+  type ApplyRoleTemplatesResult,
+  type RoleTemplate,
+  type RoleTemplateConflict,
+  type RoleTemplateFailure,
+} from "./role/templates.js";
 export { RoleError } from "./role/repository.js";
 export {
   assertNonEmptyPermissionKey,
