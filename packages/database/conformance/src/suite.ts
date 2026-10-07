@@ -648,14 +648,16 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         const input = { identity: alice, organizationId: "org-1", permission: "reports.read" };
 
         const until = new Date(Date.now() + 700);
-        const suspended = await storage.memberships.block(a.id, { actor: admin, reason: "vacaciones", until });
-        expect(suspended).toMatchObject({ status: "blocked", blocked: { by: admin, reason: "vacaciones" } });
+        const suspended = await storage.memberships.suspend(a.id, { actor: admin, reason: "vacaciones", until });
+        expect(suspended).toMatchObject({ status: "suspended", blocked: { by: admin, reason: "vacaciones" } });
         expect(suspended.blocked!.until!.getTime()).toBe(until.getTime());
         expect(await engine.can(input)).toBe(false);
         expect((await storage.memberships.findById(a.id))!.blocked!.until!.getTime()).toBe(until.getTime());
-        expect(await storage.memberships.count({ organizationId: "org-1", status: "blocked" })).toBe(1);
-        // Ya bloqueado: conserva la fecha original (idempotente).
-        expect((await storage.memberships.block(a.id, { actor: bob, until: new Date(Date.now() + 3_600_000) })).blocked!.until!.getTime()).toBe(until.getTime());
+        expect(await storage.memberships.count({ organizationId: "org-1", status: "suspended" })).toBe(1);
+        expect(await storage.memberships.count({ organizationId: "org-1", status: "blocked" })).toBe(0);
+        expect((await storage.memberships.searchListing({ organizationId: "org-1", rolesPerMember: 1, status: "suspended" })).map((m) => m.id)).toEqual(["m-alice"]);
+        // Ya suspendido: conserva la fecha original (idempotente).
+        expect((await storage.memberships.suspend(a.id, { actor: bob, until: new Date(Date.now() + 3_600_000) })).blocked!.until!.getTime()).toBe(until.getTime());
 
         await new Promise((resolve) => setTimeout(resolve, 900));
         const lapsed = (await storage.memberships.findById(a.id))!;
@@ -664,10 +666,10 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         expect(await engine.can(input)).toBe(true);
         expect((await storage.memberships.findByIdentity("org-1", alice))!.status).toBe("active");
         expect((await storage.memberships.listByOrganization("org-1")).every((m) => m.status === "active")).toBe(true);
-        expect(await storage.memberships.count({ organizationId: "org-1", status: "blocked" })).toBe(0);
+        expect(await storage.memberships.count({ organizationId: "org-1", status: "suspended" })).toBe(0);
         expect(await storage.memberships.count({ organizationId: "org-1", status: "active" })).toBe(2);
         expect((await storage.memberships.search({ organizationId: "org-1", status: "active" })).map((m) => m.id)).toEqual(["m-alice", "m-bob"]);
-        expect((await storage.memberships.searchListing({ organizationId: "org-1", rolesPerMember: 1, status: "blocked" }))).toEqual([]);
+        expect((await storage.memberships.searchListing({ organizationId: "org-1", rolesPerMember: 1, status: "suspended" }))).toEqual([]);
 
         // Una suspensión vencida cuenta como "no bloqueado": se puede volver a suspender, o bloquear sin fecha.
         const again = await storage.memberships.block(a.id, { actor: admin });
@@ -680,13 +682,13 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
       it("rechaza una fecha de fin pasada o inválida, y no suspende por tiempo al último Owner activo", async () => {
         const { storage, owner, a, b } = await seed();
         const future = new Date(Date.now() + 60_000);
-        await expect(storage.memberships.block(a.id, { actor: admin, until: new Date(Date.now() - 1000) })).rejects.toMatchObject({ code: "membership_block_until_invalid" });
-        await expect(storage.memberships.block(a.id, { actor: admin, until: new Date("nope") })).rejects.toMatchObject({ code: "membership_block_until_invalid" });
+        await expect(storage.memberships.suspend(a.id, { actor: admin, until: new Date(Date.now() - 1000) })).rejects.toMatchObject({ code: "membership_block_until_invalid" });
+        await expect(storage.memberships.suspend(a.id, { actor: admin, until: new Date("nope") })).rejects.toMatchObject({ code: "membership_block_until_invalid" });
         expect((await storage.memberships.findById(a.id))!.status).toBe("active");
 
-        await expect(storage.memberships.block(b.id, { actor: admin, until: future })).rejects.toMatchObject({ code: "last_owner" });
+        await expect(storage.memberships.suspend(b.id, { actor: admin, until: future })).rejects.toMatchObject({ code: "last_owner" });
         await storage.memberships.assignOwnerRole(a.id, owner.id);
-        await storage.memberships.block(b.id, { actor: admin, until: future });
+        await storage.memberships.suspend(b.id, { actor: admin, until: future });
         await expect(storage.memberships.block(a.id, { actor: admin })).rejects.toMatchObject({ code: "last_owner" });
       });
 

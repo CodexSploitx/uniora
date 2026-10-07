@@ -1,5 +1,6 @@
 import type {
   BlockMembershipInput,
+  SuspendMembershipInput,
   CreateMembershipInput,
   Identity,
   Membership,
@@ -41,7 +42,7 @@ interface MembershipRow {
  */
 function effectiveStatus(alias?: string): string {
   const prefix = alias ? `${alias}.` : "";
-  return `(case when ${prefix}status = 'blocked' and ${prefix}blocked_until is not null and ${prefix}blocked_until <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now') then 'active' else ${prefix}status end)`;
+  return `(case when ${prefix}status = 'blocked' and ${prefix}blocked_until is not null then (case when ${prefix}blocked_until <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now') then 'active' else 'suspended' end) else ${prefix}status end)`;
 }
 
 /** Columns of `uniora_memberships` a `Membership` needs, qualified with the alias `m`. */
@@ -67,7 +68,7 @@ function toMembership(row: MembershipRow): Membership {
     updatedAt: new Date(row.updated_at),
     ...(invitedBy ? { invitedBy } : {}),
     ...(row.last_active_at ? { lastActiveAt: new Date(row.last_active_at) } : {}),
-    ...(row.status === "blocked" && row.blocked_at && row.blocked_by_provider !== null && row.blocked_by_subject !== null
+    ...(row.status !== "active" && row.blocked_at && row.blocked_by_provider !== null && row.blocked_by_subject !== null
       ? {
           blocked: {
             at: new Date(row.blocked_at),
@@ -191,6 +192,40 @@ async function performCreate(db: SqliteExecutor, input: CreateMembershipInput): 
 }
 
 export function createMembershipRepository(db: SqliteExecutor): MembershipRepository {
+  /** `block` (no `until`) and `suspend` (with one) are the same write: a timed suspension is a block that ends. */
+  async function blockWithin(membershipId: string, input: BlockMembershipInput, until: Date | undefined): Promise<Membership> {
+    return db.atomic(async () => {
+      // Count and update run inside one `begin immediate` unit (single writer), so two Owners blocking each other
+      // at once can't both pass: the second sees the first's block.
+      await db.query(
+        `update uniora_memberships
+         set status = 'blocked', blocked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), blocked_until = ?5,
+             blocked_by_provider = ?2, blocked_by_subject = ?3, block_reason = ?4,
+             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         where id = ?1 and ${effectiveStatus()} = 'active'
+           and not exists (
+             select 1
+             from uniora_membership_roles mr
+             join uniora_roles r on r.id = mr.role_id
+             where mr.membership_id = ?1 and r.is_owner_role = 1
+               and not exists (
+                 select 1 from uniora_membership_roles other
+                 join uniora_memberships om on om.id = other.membership_id
+                 where other.role_id = mr.role_id and other.membership_id <> ?1 and ${effectiveStatus("om")} = 'active'
+               )
+           )`,
+        [membershipId, input.actor.provider, input.actor.subject, sanitizeBlockReason(input.reason) ?? null, until ?? null],
+      );
+      const current = await repository.findById(membershipId);
+      if (!current) throw new MembershipError(`Membership not found: ${membershipId}`);
+      if (current.status !== "active") return current; // changed now, or was already blocked or suspended (idempotent)
+      throw new MembershipError(
+        "Cannot block the organization's last active Owner — every organization must keep at least one.",
+        "last_owner",
+      );
+    });
+  }
+
   const repository: MembershipRepository = {
     async create(input: CreateMembershipInput) {
       return db.atomic(() => performCreate(db, input));
@@ -511,37 +546,13 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
     },
 
     async block(membershipId: string, input: BlockMembershipInput) {
+      return blockWithin(membershipId, input, undefined);
+    },
+
+    async suspend(membershipId: string, input: SuspendMembershipInput) {
       const until = assertBlockUntil(input.until);
-      return db.atomic(async () => {
-        // Count and update run inside one `begin immediate` unit (single writer), so two Owners blocking each other
-        // at once can't both pass: the second sees the first's block.
-        await db.query(
-          `update uniora_memberships
-           set status = 'blocked', blocked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), blocked_until = ?5,
-               blocked_by_provider = ?2, blocked_by_subject = ?3, block_reason = ?4,
-               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-           where id = ?1 and ${effectiveStatus()} = 'active'
-             and not exists (
-               select 1
-               from uniora_membership_roles mr
-               join uniora_roles r on r.id = mr.role_id
-               where mr.membership_id = ?1 and r.is_owner_role = 1
-                 and not exists (
-                   select 1 from uniora_membership_roles other
-                   join uniora_memberships om on om.id = other.membership_id
-                   where other.role_id = mr.role_id and other.membership_id <> ?1 and ${effectiveStatus("om")} = 'active'
-                 )
-             )`,
-          [membershipId, input.actor.provider, input.actor.subject, sanitizeBlockReason(input.reason) ?? null, until ?? null],
-        );
-        const current = await repository.findById(membershipId);
-        if (!current) throw new MembershipError(`Membership not found: ${membershipId}`);
-        if (current.status === "blocked") return current; // changed now, or was already blocked (idempotent)
-        throw new MembershipError(
-          "Cannot block the organization's last active Owner — every organization must keep at least one.",
-          "last_owner",
-        );
-      });
+      if (until === undefined) throw new MembershipError("A suspension needs an end date (`until`).", "membership_block_until_invalid");
+      return blockWithin(membershipId, input, until);
     },
 
     async unblock(membershipId: string, _input: UnblockMembershipInput) {

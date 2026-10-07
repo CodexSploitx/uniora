@@ -159,7 +159,7 @@ describe("uniora.* functions for row-level security", () => {
   it("una suspensión con fecha de fin deja de ser miembro hasta esa fecha y vuelve sola, igual que en el motor", async () => {
     const engine = createAuthorizationEngine(storage);
     const staffMembership = (await storage.memberships.findByIdentity("org-1", staff))!;
-    await storage.memberships.block(staffMembership.id, { actor: owner, until: new Date(Date.now() + 700) });
+    await storage.memberships.suspend(staffMembership.id, { actor: owner, until: new Date(Date.now() + 700) });
     try {
       expect(await engine.access.check({ identity: staff, organizationId: "org-1" })).toBe(false);
       expect(await asProbe(staff, "select uniora.is_member('org-1') as v")).toBe(false);

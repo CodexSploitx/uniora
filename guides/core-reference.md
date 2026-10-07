@@ -72,7 +72,7 @@ Name: up to 255 characters. Slug: lowercase alphanumerics separated by single hy
 ```ts
 await storage.memberships.create({ id, organizationId, identity, roleIds: [roleId], invitedBy? });
 await storage.memberships.block(membershipId, { actor, reason: "unpaid" }); // denied everything, roles kept
-await storage.memberships.block(membershipId, { actor, reason: "vacation", until: new Date("2026-11-01") }); // timed suspension
+await storage.memberships.suspend(membershipId, { actor, reason: "vacation", until: new Date("2026-11-01") }); // status "suspended" until then
 ```
 
 | Method | Purpose |
@@ -85,7 +85,8 @@ await storage.memberships.block(membershipId, { actor, reason: "vacation", until
 | `countByRole(roleIds)` / `countByOrganization(ids)` | Batch counts. |
 | `assignRole(membershipId, roleId)` / `unassignRole(...)` | Regular roles only; idempotent. Refuses the Owner role and roles of other organizations. |
 | `assignOwnerRole(membershipId, roleId)` / `unassignOwnerRole(...)` | The only way to grant or remove the Owner role. `unassignOwnerRole` refuses to remove the last Owner. |
-| `block(id, { actor, reason?, until? })` / `unblock(id, { actor })` | Idempotent. The last active Owner can't be blocked (`last_owner`). With `until` (a future date, else `membership_block_until_invalid`) it is a timed suspension that ends by itself: from that instant the membership reads `active`, `blocked` disappears, and `can()`, snapshots and the SQL functions allow it again. Nothing runs at that moment, so there is no audit entry for the automatic reactivation (the `membership.blocked` entry records `until`). Blocking a member who is already blocked changes nothing, so to move the date `unblock` first; a suspension that already ended counts as not blocked. |
+| `block(id, { actor, reason? })` / `unblock(id, { actor })` | Idempotent. The last active Owner can't be blocked (`last_owner`). `unblock` lifts both a block and a suspension. |
+| `suspend(id, { actor, until, reason? })` | Like `block`, but only until `until` (a future date, else `membership_block_until_invalid`). The status is `suspended` meanwhile (`blocked.until` has the date); from that instant it reads `active`, `blocked` disappears, and `can()`, snapshots and the SQL functions allow it again. Nothing runs at that moment, so the automatic reactivation has no audit entry (`membership.suspended` records `until`). Blocking or suspending someone already blocked or suspended changes nothing, so `unblock` first to change the date or turn a suspension into a block; a suspension that already ended counts as not blocked. |
 | `recordActivity(id, at?)` | Moves `lastActiveAt` forward for a "last seen" column. |
 | `delete(id)` | Refuses to delete the last Owner. |
 

@@ -68,6 +68,8 @@ describe("createAuditedStorage: every mutation is audited, with standard names",
     await audited.memberships.unassignRole(a.id, staff.id);
     await audited.memberships.block(b.id, { actor });
     await audited.memberships.unblock(b.id, { actor });
+    await audited.memberships.suspend(b.id, { actor, until: new Date(Date.now() + 60_000) });
+    await audited.memberships.unblock(b.id, { actor });
     await audited.memberships.unassignOwnerRole(b.id, owner.id);
     await audited.memberships.delete(b.id);
     await audited.roles.delete(staff.id);

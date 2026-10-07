@@ -32,6 +32,7 @@ export { OrganizationError, assertValidSlug, resolveOrganizationSlug, sanitizeOr
 export type { Membership, MembershipBlock, MembershipStatus } from "./membership/types.js";
 export type {
   BlockMembershipInput,
+  SuspendMembershipInput,
   CreateMembershipInput,
   MembershipListing,
   MembershipRepository,

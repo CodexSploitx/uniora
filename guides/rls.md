@@ -67,7 +67,7 @@ trusted server code, e.g. a job that checks someone other than the caller. **Don
 
 ## 3. Match the engine
 
-- A blocked member is denied everything, Owner included — in the engine and here. A timed suspension (`block(id, { until })`) ends by itself in the SQL functions too: they compare `until` with the database clock, so a policy and `can()` agree before and after the date.
+- A blocked member is denied everything, Owner included — in the engine and here. A suspension (`suspend(id, { until })`) ends by itself in the SQL functions too: they compare `until` with the database clock, so a policy and `can()` agree before and after the date.
 - If you run the engine with `ownerRequiresRegisteredPermission: true`, set the same in the database so a policy and
   `can()` agree: `alter database app set uniora.owner_requires_registered_permission = 'on';`
 - Implied permissions (`register({ key, implies })`): `has_permission` also passes when a role holds a permission that implies `key`, through the whole chain, like `can()`.

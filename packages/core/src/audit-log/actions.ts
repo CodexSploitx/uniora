@@ -13,6 +13,7 @@ export const AUDIT_ACTIONS = [
   "membership.deleted",
   "membership.left",
   "membership.blocked",
+  "membership.suspended",
   "membership.unblocked",
   "membership.role_assigned",
   "membership.role_unassigned",
