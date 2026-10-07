@@ -82,6 +82,8 @@ export interface InviteInput {
    * when the service has `findIdentitiesByEmail`; by default such an invitation is refused.
    */
   allowExistingMember?: boolean;
+  /** Lifetime of THIS invitation's link, instead of the service's `ttlMs` (e.g. 24 hours). Greater than zero, 30 days at most. */
+  ttlMs?: number;
 }
 
 export interface DeliveryOutcome {
@@ -138,7 +140,7 @@ export interface InvitationService {
    * Issues a NEW link (the old one stops working), extends the expiry and sends again. An
    * invitation that doesn't belong to `ref.organizationId` is reported exactly like a missing one.
    */
-  resend(ref: InvitationRef, options?: { locale?: string }): Promise<InviteResult>;
+  resend(ref: InvitationRef, options?: { locale?: string; ttlMs?: number }): Promise<InviteResult>;
   revoke(ref: InvitationRef): Promise<Invitation>;
   /** What an accept page may show before sign-in. `null` for any unusable token — no reason is leaked. */
   preview(token: string): Promise<InvitationPreview | null>;
@@ -173,6 +175,15 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
   const generateId = options.generateId ?? randomId;
   const ttlMs = Math.min(positive(options.ttlMs, 7 * DAY_MS, "ttlMs"), 30 * DAY_MS);
   if (ttlMs <= 0) throw new RangeError("ttlMs must be greater than zero.");
+
+  /** A per-call lifetime (`invite` / `resend`), validated like the service's own; the service default when absent. */
+  function lifetimeOf(requested: number | undefined): number {
+    if (requested === undefined) return ttlMs;
+    if (typeof requested !== "number" || !Number.isFinite(requested) || requested <= 0) {
+      throw new InvitationError("ttlMs must be a number greater than zero.", "bad_request");
+    }
+    return Math.min(requested, 30 * DAY_MS);
+  }
   const limits = {
     perEmailPerHour: positive(options.rateLimits?.perEmailPerHour, 5, "perEmailPerHour"),
     perEmailGlobalPerHour: positive(options.rateLimits?.perEmailGlobalPerHour, 50, "perEmailGlobalPerHour"),
@@ -314,6 +325,7 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
   return {
     async invite(input) {
       const email = normalizeInvitationEmail(input.email);
+      const lifetime = lifetimeOf(input.ttlMs);
       const roles = await assertInvitableRoles(input.organizationId, input.roleIds);
       if (!(await storage.organizations.findById(input.organizationId))) {
         throw new InvitationError("The organization does not exist.", "bad_request");
@@ -345,7 +357,7 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
             tokenHash,
             invitedBy: input.invitedBy,
             createdAt: at,
-            expiresAt: new Date(at.getTime() + ttlMs),
+            expiresAt: new Date(at.getTime() + lifetime),
           });
           await auditEvent(tx, input.invitedBy, "invitation.created", created, { roles: roles.map((role) => role.name) });
           return created;
@@ -365,13 +377,14 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
         throw new InvitationError("This invitation was sent a moment ago. Wait a minute before resending.", "cooldown");
       }
 
+      const lifetime = lifetimeOf(resendOptions?.ttlMs);
       const token = generateInvitationToken();
       const at = now();
       const tokenHash = await hashInvitationToken(token);
       const rotated = await storage.transaction(async (tx) => {
         const next = await tx.invitations.rotateToken(existing.id, {
           tokenHash,
-          expiresAt: new Date(at.getTime() + ttlMs),
+          expiresAt: new Date(at.getTime() + lifetime),
         });
         if (next) await auditEvent(tx, ref.actor, "invitation.resent", next);
         return next;

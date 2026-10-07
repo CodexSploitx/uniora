@@ -25,7 +25,7 @@ const invitations = createInvitationService({
 | `storage` | required | Where invitations, memberships and the audit log live. |
 | `acceptUrl(token)` | required | Builds the link for the person. |
 | `sender` | none | Delivers the message. Without one the invitation is still created and you get the link back to deliver yourself. |
-| `ttlMs` | 7 days | Lifetime of a link (maximum 30 days). |
+| `ttlMs` | 7 days | Lifetime of a link (maximum 30 days). `invite({ …, ttlMs })` and `resend(ref, { ttlMs })` override it for one invitation (e.g. 24 hours); `resend` without it uses the service default. |
 | `rateLimits` | see below | `perEmailPerHour` 5, `perEmailGlobalPerHour` 50, `perOrganizationPerHour` 200, `resendCooldownMs` 60 000. |
 | `retry` | 3 attempts | `{ maxAttempts, baseDelayMs, maxDelayMs, attemptTimeoutMs }`: jittered backoff and a time budget per attempt. |
 | `now`, `generateId`, `sleep`, `random` | real ones | Injection points for tests. |

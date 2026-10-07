@@ -117,6 +117,32 @@ describe("invite", () => {
   });
 });
 
+describe("invite — per-invitation lifetime", () => {
+  const input = { organizationId: "org-1", email: "a@b.co", roleIds: ["role-editor"], invitedBy: owner };
+  const HOUR = 3_600_000;
+
+  it("ttlMs on invite() overrides the service default, capped at 30 days; resend takes its own or the default", async () => {
+    const { service, clock } = await setup();
+    const short = await service.invite({ ...input, ttlMs: 24 * HOUR });
+    expect(short.invitation.expiresAt.getTime()).toBe(clock.time + 24 * HOUR);
+    const long = await service.invite({ ...input, email: "c@d.co", ttlMs: 999 * 24 * HOUR });
+    expect(long.invitation.expiresAt.getTime()).toBe(clock.time + 30 * 24 * HOUR);
+    const dflt = await service.invite({ ...input, email: "e@f.co" });
+    expect(dflt.invitation.expiresAt.getTime()).toBe(clock.time + 7 * 24 * HOUR);
+
+    clock.time += 2 * 60_000; // past the resend cooldown
+    const again = await service.resend({ organizationId: "org-1", invitationId: short.invitation.id, actor: owner }, { ttlMs: 2 * HOUR });
+    expect(again.invitation.expiresAt.getTime()).toBe(clock.time + 2 * HOUR);
+    const plain = await service.resend({ organizationId: "org-1", invitationId: dflt.invitation.id, actor: owner });
+    expect(plain.invitation.expiresAt.getTime()).toBe(clock.time + 7 * 24 * HOUR);
+  });
+
+  it.each([0, -5, Number.NaN, Number.POSITIVE_INFINITY])("rejects ttlMs %s", async (ttlMs) => {
+    const { service } = await setup();
+    await expect(service.invite({ ...input, ttlMs })).rejects.toMatchObject({ reason: "bad_request" });
+  });
+});
+
 describe("invite — already a member", () => {
   const input = { organizationId: "org-1", email: "Ana@Example.com", roleIds: ["role-editor"], invitedBy: owner };
 
