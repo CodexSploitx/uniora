@@ -9,9 +9,10 @@ import type {
   MembershipRepository,
   MembershipStatus,
   SearchMembershipsOptions,
+  MembershipVersionOptions,
   UnblockMembershipInput,
 } from "@uniora/core";
-import { MembershipError, assertBlockUntil, sanitizeBlockReason } from "@uniora/core";
+import { MembershipError, assertBlockUntil, assertExpectedVersion, sanitizeBlockReason } from "@uniora/core";
 import type { Queryable } from "../queryable.js";
 import { countByOrganization } from "../pg-counts.js";
 import { toLikePattern } from "../pg-like.js";
@@ -33,6 +34,7 @@ interface MembershipRow {
   status: MembershipStatus;
   created_at: Date;
   updated_at: Date;
+  version: number;
   invited_by_provider: string | null;
   invited_by_subject: string | null;
   last_active_at: Date | null;
@@ -54,7 +56,7 @@ function effectiveStatus(alias?: string): string {
 }
 
 /** Columns of `uniora.memberships` a `Membership` needs, qualified with the alias `m`. */
-const MEMBERSHIP_COLUMNS = `m.id, m.organization_id, m.provider, m.subject, ${effectiveStatus("m")} as status, m.created_at, m.updated_at,
+const MEMBERSHIP_COLUMNS = `m.id, m.organization_id, m.provider, m.subject, ${effectiveStatus("m")} as status, m.created_at, m.updated_at, m.version,
   m.invited_by_provider, m.invited_by_subject, m.last_active_at,
   m.blocked_at, m.blocked_until, m.blocked_by_provider, m.blocked_by_subject, m.block_reason`;
 
@@ -74,6 +76,7 @@ function toMembership(row: MembershipRow): Membership {
     status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    version: row.version,
     ...(invitedBy ? { invitedBy } : {}),
     ...(row.last_active_at ? { lastActiveAt: row.last_active_at } : {}),
     ...(row.status !== "active" && row.blocked_at && row.blocked_by_provider !== null && row.blocked_by_subject !== null
@@ -216,13 +219,26 @@ async function performCreate(db: Queryable, input: CreateMembershipInput): Promi
     status: "active",
     createdAt,
     updatedAt: createdAt,
+    version: 1,
     ...(input.invitedBy ? { invitedBy: input.invitedBy } : {}),
   };
 }
 
-/** Bumps `updated_at` after a role change. Kept out of the concurrency-guarded statements on purpose. */
+/**
+ * After a guarded write changed nothing: if the caller passed `expectedVersion` and the membership is at another
+ * version, that is why (`membership_version_conflict`). Does nothing for an unknown membership or a matching version.
+ */
+async function assertNotStale(db: Queryable, membershipId: string, expectedVersion: number | null): Promise<void> {
+  if (expectedVersion === null) return;
+  const current = await db.query<{ version: number }>(`select version from uniora.memberships where id = $1`, [membershipId]);
+  if (current.rows[0] && current.rows[0].version !== expectedVersion) {
+    throw new MembershipError("The membership changed since it was read.", "membership_version_conflict");
+  }
+}
+
+/** Bumps `updated_at` and `version` after a role change. Kept out of the concurrency-guarded statements on purpose. */
 async function touch(db: Queryable, membershipId: string): Promise<void> {
-  await db.query(`update uniora.memberships set updated_at = date_trunc('milliseconds', now()) where id = $1`, [membershipId]);
+  await db.query(`update uniora.memberships set updated_at = date_trunc('milliseconds', now()), version = version + 1 where id = $1`, [membershipId]);
 }
 
 /**
@@ -236,10 +252,11 @@ async function touch(db: Queryable, membershipId: string): Promise<void> {
 export function createMembershipRepository(db: Queryable, pool?: Pool): MembershipRepository {
   /** `block` (no `until`) and `suspend` (with one) are the same write: a timed suspension is a block that ends. */
   async function blockWithin(membershipId: string, input: BlockMembershipInput, until: Date | undefined): Promise<Membership> {
+    const expectedVersion = assertExpectedVersion(input.expectedVersion) ?? null;
     // Same write-skew defence as `unassignOwnerRole`: lock every membership holding one of this member's Owner
     // roles (ordered, so two concurrent blockers contend in the same order) BEFORE counting the ACTIVE ones, so
     // two Owners blocking each other at the same instant can't leave nobody able to act.
-    await db.query(
+    const changed = await db.query(
       `with owner_role_ids as (
          select mr.role_id
          from uniora.membership_roles mr
@@ -257,17 +274,20 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
        update uniora.memberships m
        set status = 'blocked', blocked_at = date_trunc('milliseconds', now()), blocked_until = $5::timestamptz,
            blocked_by_provider = $2, blocked_by_subject = $3, block_reason = $4,
-           updated_at = date_trunc('milliseconds', now())
-       where m.id = $1 and ${effectiveStatus("m")} = 'active'
+           updated_at = date_trunc('milliseconds', now()), version = m.version + 1
+       where m.id = $1 and ${effectiveStatus("m")} = 'active' and ($6::integer is null or m.version = $6)
          and not exists (
            select 1 from owner_role_ids o
            where (select count(*) from locked l where l.role_id = o.role_id and l.status = 'active' and l.membership_id <> $1) < 1
          )
        returning m.id`,
-      [membershipId, input.actor.provider, input.actor.subject, sanitizeBlockReason(input.reason) ?? null, until ?? null],
+      [membershipId, input.actor.provider, input.actor.subject, sanitizeBlockReason(input.reason) ?? null, until ?? null, expectedVersion],
     );
     const current = await repository.findById(membershipId);
     if (!current) throw new MembershipError(`Membership not found: ${membershipId}`);
+    if ((changed.rowCount ?? 0) === 0 && expectedVersion !== null && current.version !== expectedVersion) {
+      throw new MembershipError("The membership changed since it was read.", "membership_version_conflict");
+    }
     if (current.status !== "active") return current; // changed now, or was already blocked or suspended (idempotent)
     throw new MembershipError(
       "Cannot block the organization's last active Owner — every organization must keep at least one.",
@@ -384,7 +404,7 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
          left join uniora.membership_roles mr on mr.membership_id = m.id
          group by m.id, m.organization_id, m.provider, m.subject, m.status, m.created_at, m.updated_at,
                   m.invited_by_provider, m.invited_by_subject, m.last_active_at,
-                  m.blocked_at, m.blocked_until, m.blocked_by_provider, m.blocked_by_subject, m.block_reason
+                  m.blocked_at, m.blocked_until, m.blocked_by_provider, m.blocked_by_subject, m.block_reason, m.version
          order by m.id asc`,
         [options?.organizationId ?? null, query ? toLikePattern(query) : null, options?.after ?? null, options?.limit ?? null, options?.identity?.provider ?? null, options?.identity?.subject ?? null, options?.status ?? null],
       );
@@ -491,7 +511,8 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
       return countByOrganization(db, "memberships", organizationIds);
     },
 
-    async assignRole(membershipId: string, roleId: string) {
+    async assignRole(membershipId: string, roleId: string, options?: MembershipVersionOptions) {
+      const expectedVersion = assertExpectedVersion(options?.expectedVersion) ?? null;
       // Security fix (docs/security-pentest-2026-09-24.md Hallazgo 7): the
       // role's type is resolved and checked FIRST, unconditionally — never
       // skipped by an "already assigned" idempotency short-circuit. Without
@@ -528,21 +549,28 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
       // ABA window entirely (the org-match decision and the insert are now
       // atomic against current data, not a captured value). `on conflict
       // do nothing` keeps this idempotent.
+      // ONE statement: the membership row is locked (and its version checked) before the role is attached and the
+      // version goes up, so two callers holding the same `expectedVersion` can't both win.
       const result = await db.query(
-        `insert into uniora.membership_roles (membership_id, role_id)
-         select $1, $2
-         where exists (
-           select 1 from uniora.memberships m
+        `with target as (
+           select m.id from uniora.memberships m
            join uniora.roles r on r.id = $2
-           where m.id = $1 and m.organization_id = r.organization_id
+           where m.id = $1 and m.organization_id = r.organization_id and ($3::integer is null or m.version = $3)
+           for update of m
+         ),
+         inserted as (
+           insert into uniora.membership_roles (membership_id, role_id)
+           select $1, $2 from target
+           on conflict do nothing
+           returning 1
          )
-         on conflict do nothing`,
-        [membershipId, roleId],
+         update uniora.memberships set updated_at = date_trunc('milliseconds', now()), version = version + 1
+         where id = $1 and exists (select 1 from inserted)`,
+        [membershipId, roleId, expectedVersion],
       );
-      if ((result.rowCount ?? 0) > 0) {
-        await touch(db, membershipId); // newly assigned
-        return;
-      }
+      if ((result.rowCount ?? 0) > 0) return; // newly assigned
+
+      await assertNotStale(db, membershipId, expectedVersion);
 
       const alreadyAssigned = await db.query(
         `select 1 from uniora.membership_roles where membership_id = $1 and role_id = $2`,
@@ -597,7 +625,8 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
       );
     },
 
-    async unassignRole(membershipId: string, roleId: string) {
+    async unassignRole(membershipId: string, roleId: string, options?: MembershipVersionOptions) {
+      const expectedVersion = assertExpectedVersion(options?.expectedVersion) ?? null;
       // Security fix (docs/security-pentest-2026-09-24.md Hallazgo 7): role
       // type checked first, unconditionally — same reasoning as
       // `assignRole` above (an already-not-assigned Owner role must still
@@ -614,8 +643,20 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
         );
       }
 
-      const removed = await db.query(`delete from uniora.membership_roles where membership_id = $1 and role_id = $2`, [membershipId, roleId]);
-      if ((removed.rowCount ?? 0) > 0) await touch(db, membershipId);
+      const removed = await db.query(
+        `with target as (
+           select id from uniora.memberships where id = $1 and ($3::integer is null or version = $3) for update
+         ),
+         deleted as (
+           delete from uniora.membership_roles
+           where membership_id = $1 and role_id = $2 and exists (select 1 from target)
+           returning 1
+         )
+         update uniora.memberships set updated_at = date_trunc('milliseconds', now()), version = version + 1
+         where id = $1 and exists (select 1 from deleted)`,
+        [membershipId, roleId, expectedVersion],
+      );
+      if ((removed.rowCount ?? 0) === 0) await assertNotStale(db, membershipId, expectedVersion);
     },
 
     async unassignOwnerRole(membershipId: string, roleId: string) {
@@ -690,16 +731,20 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
       return blockWithin(membershipId, input, until);
     },
 
-    async unblock(membershipId: string, _input: UnblockMembershipInput) {
-      await db.query(
+    async unblock(membershipId: string, input: UnblockMembershipInput) {
+      const expectedVersion = assertExpectedVersion(input.expectedVersion) ?? null;
+      const changed = await db.query(
         `update uniora.memberships
          set status = 'active', blocked_at = null, blocked_until = null, blocked_by_provider = null, blocked_by_subject = null,
-             block_reason = null, updated_at = date_trunc('milliseconds', now())
-         where id = $1 and status = 'blocked'`,
-        [membershipId],
+             block_reason = null, updated_at = date_trunc('milliseconds', now()), version = version + 1
+         where id = $1 and status = 'blocked' and ($2::integer is null or version = $2)`,
+        [membershipId, expectedVersion],
       );
       const current = await repository.findById(membershipId);
       if (!current) throw new MembershipError(`Membership not found: ${membershipId}`);
+      if ((changed.rowCount ?? 0) === 0 && expectedVersion !== null && current.version !== expectedVersion) {
+        throw new MembershipError("The membership changed since it was read.", "membership_version_conflict");
+      }
       return current;
     },
 

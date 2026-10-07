@@ -4,12 +4,14 @@ import type {
   FeatureChangeMeta,
   FeatureDefinition,
   FeatureRepository,
+  FeatureToggleOptions,
   FeatureUsage,
   RegisterFeatureInput,
   SearchFeaturesOptions,
 } from "@uniora/core";
 import {
   FeatureError,
+  assertExpectedVersion,
   assertEffectiveManyInput,
   assertValidFeatureParent,
   featureRequirements,
@@ -30,6 +32,7 @@ interface FeatureRow {
   updated_by_provider: string | null;
   updated_by_subject: string | null;
   reason: string | null;
+  version: number;
 }
 
 interface FeatureDefinitionRow {
@@ -41,13 +44,14 @@ interface FeatureDefinitionRow {
 }
 
 const DEFINITION_COLUMNS = "key, name, description, default_enabled, parent_key";
-const OVERRIDE_COLUMNS = "organization_id, key, enabled, updated_at, updated_by_provider, updated_by_subject, reason";
+const OVERRIDE_COLUMNS = "organization_id, key, enabled, updated_at, updated_by_provider, updated_by_subject, reason, version";
 
 function toFeature(row: FeatureRow): Feature {
   return {
     organizationId: row.organization_id,
     key: row.key,
     enabled: row.enabled === 1,
+    version: row.version,
     ...(row.updated_at ? { updatedAt: new Date(row.updated_at) } : {}),
     ...(row.updated_by_provider !== null && row.updated_by_subject !== null
       ? { updatedBy: { provider: row.updated_by_provider, subject: row.updated_by_subject } }
@@ -94,6 +98,7 @@ async function applyOverrides(
   organizationId: string,
   entries: ReadonlyArray<readonly [string, boolean]>,
   meta?: FeatureChangeMeta,
+  expectedVersion: number | null = null,
 ): Promise<void> {
   if (entries.length === 0) return;
   const reason = sanitizeFeatureChangeReason(meta?.reason) ?? null;
@@ -105,6 +110,16 @@ async function applyOverrides(
       const registered = await db.query(`select 1 from uniora_feature_definitions where key = ?1`, [key]);
       if (registered.rowCount === 0) throw unknownFeature(key);
     }
+    if (expectedVersion !== null) {
+      // One writer at a time inside `atomic`, so reading the version first can't interleave with another writer.
+      const current = await db.query<{ version: number }>(
+        `select version from uniora_features where organization_id = ?1 and key = ?2`,
+        [organizationId, entries[0]![0]],
+      );
+      if ((current.rows[0]?.version ?? 0) !== expectedVersion) {
+        throw new FeatureError("The feature override changed since it was read.", "feature_version_conflict");
+      }
+    }
     for (const [key, enabled] of entries) {
       await db.query(
         `insert into uniora_features (organization_id, key, enabled, updated_at, updated_by_provider, updated_by_subject, reason)
@@ -112,7 +127,7 @@ async function applyOverrides(
          on conflict (organization_id, key) do update set
            enabled = excluded.enabled, updated_at = excluded.updated_at,
            updated_by_provider = excluded.updated_by_provider, updated_by_subject = excluded.updated_by_subject,
-           reason = excluded.reason`,
+           reason = excluded.reason, version = uniora_features.version + 1`,
         [organizationId, key, enabled, meta?.actor?.provider ?? null, meta?.actor?.subject ?? null, reason],
       );
     }
@@ -222,12 +237,12 @@ export function createFeatureRepository(db: SqliteExecutor): FeatureRepository {
       return loadDefinitions(db);
     },
 
-    async enable(organizationId: string, key: string, meta?: FeatureChangeMeta) {
-      await applyOverrides(db, organizationId, [[key, true]], meta);
+    async enable(organizationId: string, key: string, meta?: FeatureToggleOptions) {
+      await applyOverrides(db, organizationId, [[key, true]], meta, assertExpectedVersion(meta?.expectedVersion, 0) ?? null);
     },
 
-    async disable(organizationId: string, key: string, meta?: FeatureChangeMeta) {
-      await applyOverrides(db, organizationId, [[key, false]], meta);
+    async disable(organizationId: string, key: string, meta?: FeatureToggleOptions) {
+      await applyOverrides(db, organizationId, [[key, false]], meta, assertExpectedVersion(meta?.expectedVersion, 0) ?? null);
     },
 
     async setMany(organizationId: string, changes: Record<string, boolean>, meta?: FeatureChangeMeta) {
@@ -241,7 +256,7 @@ export function createFeatureRepository(db: SqliteExecutor): FeatureRepository {
         const definition = await db.query<FeatureDefinitionRow>(`select ${DEFINITION_COLUMNS} from uniora_feature_definitions where key = ?1`, [key]);
         if (definition.rows.length === 0) throw unknownFeature(key);
         const disabled = await db.query(
-          `update uniora_features set enabled = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+          `update uniora_features set enabled = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1,
              updated_by_provider = ?2, updated_by_subject = ?3, reason = ?4
            where key = ?1 and enabled = 1`,
           [key, meta?.actor?.provider ?? null, meta?.actor?.subject ?? null, reason],

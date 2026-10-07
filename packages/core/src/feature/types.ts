@@ -15,6 +15,12 @@ export interface Feature {
   readonly updatedBy?: Identity;
   /** Why it was changed, when the caller said so. */
   readonly reason?: string;
+  /**
+   * Starts at 1 when the override is created and goes up by one every time `enable`, `disable`, `setMany` or
+   * `disableEverywhere` writes it (the same writes that refresh `updatedAt`). Pass it back as `expectedVersion` to
+   * `enable` / `disable`; `0` stands for "no override yet".
+   */
+  readonly version: number;
 }
 
 /**
@@ -67,5 +73,5 @@ export interface EffectiveFeature {
   /** The nearest ancestor that is switched off, when `reason` is `parent_disabled`. */
   readonly blockedBy?: string;
   /** The override that decided it, if there is one. */
-  readonly override?: { enabled: boolean; updatedAt?: Date; updatedBy?: Identity; reason?: string };
+  readonly override?: { enabled: boolean; updatedAt?: Date; updatedBy?: Identity; reason?: string; version: number };
 }

@@ -83,9 +83,9 @@ await storage.memberships.suspend(membershipId, { actor, reason: "vacation", unt
 | `searchListing({ ..., rolesPerMember })` | Each row carries a bounded role preview and the total role count. |
 | `listByOrganization(organizationId)` | Internal use. |
 | `countByRole(roleIds)` / `countByOrganization(ids)` | Batch counts. |
-| `assignRole(membershipId, roleId)` / `unassignRole(...)` | Regular roles only; idempotent. Refuses the Owner role and roles of other organizations. |
+| `assignRole(membershipId, roleId, { expectedVersion? })` / `unassignRole(...)` | Regular roles only; idempotent. Refuses the Owner role and roles of other organizations. With `expectedVersion`, refused (`membership_version_conflict`) if the membership changed since you read it (`Membership.version`). |
 | `assignOwnerRole(membershipId, roleId)` / `unassignOwnerRole(...)` | The only way to grant or remove the Owner role. `unassignOwnerRole` refuses to remove the last Owner. |
-| `block(id, { actor, reason? })` / `unblock(id, { actor })` | Idempotent. The last active Owner can't be blocked (`last_owner`). `unblock` lifts both a block and a suspension. |
+| `block(id, { actor, reason?, expectedVersion? })` / `unblock(id, { actor, expectedVersion? })` | Idempotent. The last active Owner can't be blocked (`last_owner`). `unblock` lifts both a block and a suspension. |
 | `suspend(id, { actor, until, reason? })` | Like `block`, but only until `until` (a future date, else `membership_block_until_invalid`). The status is `suspended` meanwhile (`blocked.until` has the date); from that instant it reads `active`, `blocked` disappears, and `can()`, snapshots and the SQL functions allow it again. Nothing runs at that moment, so the automatic reactivation has no audit entry (`membership.suspended` records `until`). Blocking or suspending someone already blocked or suspended changes nothing, so `unblock` first to change the date or turn a suspension into a block; a suspension that already ended counts as not blocked. |
 | `recordActivity(id, at?)` | Moves `lastActiveAt` forward for a "last seen" column. |
 | `delete(id)` | Refuses to delete the last Owner. |
@@ -184,7 +184,7 @@ const effective = await storage.features.listEffective(orgId); // [{ key, enable
 | Method | Purpose |
 | --- | --- |
 | `register({ key?, name, description?, defaultEnabled?, parentKey? })` | **Full upsert**; the key is derived from the name when omitted. |
-| `enable` / `disable(organizationId, key, meta?)` | An explicit override. Unknown key: `feature_unknown`. `meta` is `{ actor?, reason? }`. |
+| `enable` / `disable(organizationId, key, meta?)` | An explicit override. Unknown key: `feature_unknown`. `meta` is `{ actor?, reason?, expectedVersion? }`; `expectedVersion` is the override's `version` (0 = no override yet) and a stale one fails with `feature_version_conflict`. |
 | `setMany(organizationId, { key: boolean }, meta?)` | Atomic: all or nothing. |
 | `disableEverywhere(key, meta?)` | Kill switch: every override off, default off. |
 | `isEnabled(organizationId, key)` | Effective answer. Unknown key is `false`. |

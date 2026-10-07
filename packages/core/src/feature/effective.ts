@@ -41,7 +41,7 @@ export function resolveEffectiveFeatures(
       defaultEnabled: definition.defaultEnabled,
       ...(definition.parentKey !== undefined ? { parentKey: definition.parentKey } : {}),
       ...(row
-        ? { override: { enabled: row.enabled, updatedAt: row.updatedAt, updatedBy: row.updatedBy, reason: row.reason } }
+        ? { override: { enabled: row.enabled, updatedAt: row.updatedAt, updatedBy: row.updatedBy, reason: row.reason, version: row.version } }
         : {}),
     };
 

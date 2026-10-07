@@ -47,6 +47,8 @@ export interface BlockMembershipInput {
   actor: Identity;
   /** Free text, trimmed and capped at 500 characters. */
   reason?: string;
+  /** Apply only if the membership is still at this `version`; otherwise `membership_version_conflict` and nothing changes. */
+  expectedVersion?: number;
 }
 
 export interface SuspendMembershipInput extends BlockMembershipInput {
@@ -56,6 +58,13 @@ export interface SuspendMembershipInput extends BlockMembershipInput {
 
 export interface UnblockMembershipInput {
   actor: Identity;
+  /** Apply only if the membership is still at this `version`; otherwise `membership_version_conflict` and nothing changes. */
+  expectedVersion?: number;
+}
+
+export interface MembershipVersionOptions {
+  /** Apply only if the membership is still at this `version` (see `Membership.version`); otherwise `membership_version_conflict`. */
+  expectedVersion?: number;
 }
 
 /**
@@ -129,7 +138,7 @@ export interface MembershipRepository {
    * `IdentityLinkRepository.link()` (uniora-security-engineering §71-72
    * "Unsafe APIs"; docs/security-pentest-2026-09-24.md Hallazgo 3).
    */
-  assignRole(membershipId: string, roleId: string): Promise<void>;
+  assignRole(membershipId: string, roleId: string, options?: MembershipVersionOptions): Promise<void>;
   /**
    * The ONLY way to grant the organization's protected Owner role to an
    * existing membership — see `assignRole` for why this is a separate
@@ -151,7 +160,7 @@ export interface MembershipRepository {
    * protected Owner role — use `unassignOwnerRole` for that (same split, and
    * the same reasoning, as `assignRole`/`assignOwnerRole` above).
    */
-  unassignRole(membershipId: string, roleId: string): Promise<void>;
+  unassignRole(membershipId: string, roleId: string, options?: MembershipVersionOptions): Promise<void>;
   /**
    * The ONLY way to remove the organization's protected Owner role from a
    * membership. Idempotent. Rejects (`MembershipError`) if `roleId` isn't
