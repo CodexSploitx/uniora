@@ -13,7 +13,7 @@
     "@uniora/postgres": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^22.10.2",
+    "@types/node": "^26.6.4",
     "@types/pg": "^8.11.10",
     "pg": "^8.23.1",
     "typescript": "^5.6.3",
