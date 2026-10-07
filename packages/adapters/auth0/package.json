@@ -1,6 +1,6 @@
 {
   "name": "@uniora/auth0",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Auth0 adapter for @uniora/core: turns an Auth0 access token into an Identity",
   "license": "PolyForm-Shield-1.0.0",
   "keywords": [
