@@ -6,10 +6,13 @@ import type {
   AuditIntegrityOptions,
   AuditIntegrityReport,
   ListRecentAuditLogOptions,
+  PruneAuditLogInput,
+  PruneAuditLogResult,
   RecordAuditLogInput,
   SearchAuditLogOptions,
 } from "@uniora/core";
-import { applyAnchor, assertAuditInput, computeAuditEntryHash } from "@uniora/core";
+import { randomUUID } from "node:crypto";
+import { applyAnchor, assertAuditInput, assertPruneCutoff, computeAuditEntryHash } from "@uniora/core";
 import type { ChainedAuditFields } from "@uniora/core";
 import type { SqliteExecutor } from "../executor.js";
 
@@ -44,7 +47,7 @@ const SELECT_COLUMNS =
   "id, organization_id, actor_provider, actor_subject, action, target_type, target_id, metadata, created_at";
 
 export function createAuditLogRepository(db: SqliteExecutor): AuditLogRepository {
-  return {
+  const repository: AuditLogRepository = {
     async record(input: RecordAuditLogInput) {
       assertAuditInput(input);
       // Read the previous hash and insert in ONE all-or-nothing step (`begin immediate` under the
@@ -156,6 +159,51 @@ export function createAuditLogRepository(db: SqliteExecutor): AuditLogRepository
       return result.rows.map(toEntry);
     },
 
+    async pruneBefore(input: PruneAuditLogInput): Promise<PruneAuditLogResult> {
+      const before = assertPruneCutoff(input.before);
+      assertAuditInput({ actor: input.actor, action: "audit_log.pruned" });
+      return db.atomic(async () => {
+        const head = await db.query<{ rowid: number }>("select max(rowid) as rowid from uniora_audit_logs");
+        const headRowid = head.rows[0]?.rowid ?? null;
+        if (headRowid === null) return { removed: 0 };
+        // A contiguous prefix: everything before the first entry that is not old enough; never the newest entry.
+        const kept = await db.query<{ rowid: number | null }>(
+          "select min(rowid) as rowid from uniora_audit_logs where created_at >= ?1",
+          [before.toISOString()],
+        );
+        const limit = Math.min(kept.rows[0]?.rowid ?? headRowid, headRowid);
+        const through = await db.query<{ rowid: number; hash: string }>(
+          "select rowid, hash from uniora_audit_logs where rowid < ?1 order by rowid desc limit 1",
+          [limit],
+        );
+        const last = through.rows[0];
+        if (!last) return { removed: 0 };
+
+        // The only DELETE the log ever allows. Triggers are transactional in SQLite: a failure below puts it back.
+        await db.query("drop trigger if exists uniora_audit_logs_no_delete");
+        const deleted = await db.query("delete from uniora_audit_logs where rowid < ?1", [limit]);
+        await db.query(
+          `create trigger if not exists uniora_audit_logs_no_delete before delete on uniora_audit_logs
+           begin
+             select raise(abort, 'uniora_audit_logs is append-only: DELETE is not allowed');
+           end`,
+        );
+        const removed = deleted.rowCount;
+        await db.query(
+          `insert into uniora_audit_log_checkpoints (through_seq, through_hash, removed, cutoff, created_at)
+           values (?1, ?2, ?3, ?4, ?5)`,
+          [last.rowid, last.hash, removed, before.toISOString(), new Date().toISOString()],
+        );
+        await repository.record({
+          id: `audit-pruned:${randomUUID()}`,
+          actor: input.actor,
+          action: "audit_log.pruned",
+          metadata: { before: before.toISOString(), removed, throughPosition: last.rowid },
+        });
+        return { removed, through: { position: last.rowid, hash: last.hash } };
+      });
+    },
+
     async verifyIntegrity(options?: AuditIntegrityOptions): Promise<AuditIntegrityReport> {
       const report = await verifyChain();
       return applyAnchor(report, options?.anchor, async (position) => {
@@ -164,6 +212,7 @@ export function createAuditLogRepository(db: SqliteExecutor): AuditLogRepository
       });
     },
   };
+  return repository;
 
   async function verifyChain(): Promise<AuditIntegrityReport> {
       interface ChainRow {
@@ -180,9 +229,10 @@ export function createAuditLogRepository(db: SqliteExecutor): AuditLogRepository
         prev_hash: string | null;
         hash: string;
       }
-      let prev: string | null = null;
+      const pruned = await prunedSummary();
+      let prev: string | null = pruned.pruned?.through.hash ?? null;
       let checked = 0;
-      let position = 0;
+      let position = pruned.pruned?.through.position ?? 0;
       let cursor = 0;
       for (;;) {
         const page = await db.query<ChainRow>(
@@ -193,7 +243,7 @@ export function createAuditLogRepository(db: SqliteExecutor): AuditLogRepository
         );
         if (page.rows.length === 0) break;
         for (const row of page.rows) {
-          if (row.prev_hash !== prev) return { ok: false, checked, broken: { id: row.id, reason: "chain_broken" } };
+          if (row.prev_hash !== prev) return { ok: false, checked, broken: { id: row.id, reason: "chain_broken" }, ...pruned };
           const fields: ChainedAuditFields = {
             id: row.id,
             organizationId: row.organization_id,
@@ -206,7 +256,7 @@ export function createAuditLogRepository(db: SqliteExecutor): AuditLogRepository
             createdAt: row.created_at,
           };
           if (row.hash !== (await computeAuditEntryHash(prev, fields))) {
-            return { ok: false, checked, broken: { id: row.id, reason: "content_mismatch" } };
+            return { ok: false, checked, broken: { id: row.id, reason: "content_mismatch" }, ...pruned };
           }
           prev = row.hash;
           checked += 1;
@@ -214,6 +264,17 @@ export function createAuditLogRepository(db: SqliteExecutor): AuditLogRepository
           cursor = row.rowid;
         }
       }
-      return { ok: true, checked, head: prev === null ? undefined : { position, hash: prev } };
+      return { ok: true, checked, head: prev === null ? undefined : { position, hash: prev }, ...pruned };
+  }
+
+  /** The newest retention checkpoint and the total removed so far, or nothing when the log was never pruned. */
+  async function prunedSummary(): Promise<{ pruned?: AuditIntegrityReport["pruned"] }> {
+    const result = await db.query<{ through_seq: number; through_hash: string; removed: number }>(
+      `select through_seq, through_hash, (select sum(removed) from uniora_audit_log_checkpoints) as removed
+       from uniora_audit_log_checkpoints order by through_seq desc limit 1`,
+    );
+    const row = result.rows[0];
+    if (!row) return {};
+    return { pruned: { through: { position: row.through_seq, hash: row.through_hash }, removed: row.removed } };
   }
 }

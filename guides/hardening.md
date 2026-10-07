@@ -37,6 +37,12 @@ for production.
 
 - The audit log is append-only and hash-chained in Postgres, SQLite and memory. `npx uniora doctor` verifies the
   chain, and `auditLogs.verifyIntegrity()` does the same from code.
+- Retention: keep the trail as long as your obligations say (CLIMASY-style five years, for example) and drop only what is older, with
+  `applyAuditRetention(storage, { keep: { years: 5 }, actor })` from a scheduled job. It never removes the newest entry, records a
+  checkpoint so the chain still verifies, and writes an `audit_log.pruned` entry. Export what you must keep (`auditLogs.search`) BEFORE
+  it runs, and re-take your external anchor (`verifyIntegrity().head`) afterwards: an anchor older than the checkpoint can no longer be
+  checked and reads `anchor: "pruned"`. In Postgres the pruning function is `revoked from public`: grant it to the role of the retention
+  job only (`grant execute on function uniora.prune_audit_logs(timestamptz, text, text, text) to uniora_retention;`), never to `uniora_app`.
 - A chain alone can't detect that the *newest* entries were deleted. Periodically export the head
   (`verifyIntegrity()` returns it as `head: { position, hash }`) to somewhere the database admin can't
   rewrite (a write-once bucket, another system) and verify it later with

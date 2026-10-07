@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import { defineStorageConformance, type StorageHarness } from "@uniora/storage-conformance";
 import { applyMigrations } from "./migrate.js";
 import { AUDIT_APPEND_ONLY_TRIGGERS } from "./migrations/0003_audit_log_integrity.js";
+import { AUDIT_CHECKPOINT_TRIGGERS } from "./migrations/0007_audit_log_retention.js";
 import { createSqliteStorage } from "./storage.js";
 
 let db: Database.Database;
@@ -31,11 +32,14 @@ const harness: StorageHarness = {
       delete from uniora_feature_definitions;
       delete from uniora_permissions;
       drop trigger if exists uniora_audit_logs_no_delete;
+      drop trigger if exists uniora_audit_log_checkpoints_no_delete;
+      delete from uniora_audit_log_checkpoints;
       delete from uniora_audit_logs;
       delete from uniora_identity_links;
       delete from uniora_organizations;
     `);
     db.exec(AUDIT_APPEND_ONLY_TRIGGERS);
+    db.exec(AUDIT_CHECKPOINT_TRIGGERS);
   },
   storage: () => createSqliteStorage(db),
   probe: {

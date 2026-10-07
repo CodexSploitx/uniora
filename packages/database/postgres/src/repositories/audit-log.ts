@@ -6,10 +6,13 @@ import type {
   AuditIntegrityOptions,
   AuditIntegrityReport,
   ListRecentAuditLogOptions,
+  PruneAuditLogInput,
+  PruneAuditLogResult,
   RecordAuditLogInput,
   SearchAuditLogOptions,
 } from "@uniora/core";
-import { applyAnchor, assertAuditInput } from "@uniora/core";
+import { randomUUID } from "node:crypto";
+import { applyAnchor, assertAuditInput, assertPruneCutoff } from "@uniora/core";
 import type { Queryable } from "../queryable.js";
 
 interface AuditLogRow {
@@ -138,6 +141,19 @@ export function createAuditLogRepository(db: Queryable): AuditLogRepository {
       return result.rows.map(toEntry);
     },
 
+    async pruneBefore(input: PruneAuditLogInput): Promise<PruneAuditLogResult> {
+      const before = assertPruneCutoff(input.before);
+      assertAuditInput({ actor: input.actor, action: "audit_log.pruned" });
+      const result = await db.query<{ removed: string; through_seq: string | null; through_hash: string | null }>(
+        "select removed::text, through_seq::text, through_hash from uniora.prune_audit_logs($1, $2, $3, $4)",
+        [before, input.actor.provider, input.actor.subject, `audit-pruned:${randomUUID()}`],
+      );
+      const row = result.rows[0];
+      const removed = row ? Number(row.removed) : 0;
+      if (!row || removed === 0 || row.through_seq === null || row.through_hash === null) return { removed: 0 };
+      return { removed, through: { position: Number(row.through_seq), hash: row.through_hash } };
+    },
+
     async verifyIntegrity(options?: AuditIntegrityOptions): Promise<AuditIntegrityReport> {
       const report = await verifyChain();
       return applyAnchor(report, options?.anchor, async (position) => {
@@ -148,23 +164,37 @@ export function createAuditLogRepository(db: Queryable): AuditLogRepository {
   };
 
   async function verifyChain(): Promise<AuditIntegrityReport> {
-      const result = await db.query<{
-        checked: string;
-        head_seq: string | null;
-        head_hash: string | null;
-        broken_id: string | null;
-        broken_reason: "content_mismatch" | "chain_broken" | null;
-      }>("select checked::text, head_seq::text, head_hash, broken_id, broken_reason from uniora.verify_audit_chain()");
-      const row = result.rows[0];
-      if (!row) throw new Error("uniora.verify_audit_chain() returned no row");
-      const checked = Number(row.checked);
-      if (row.broken_id !== null && row.broken_reason !== null) {
-        return { ok: false, checked, broken: { id: row.broken_id, reason: row.broken_reason } };
-      }
-      return {
-        ok: true,
-        checked,
-        head: row.head_hash !== null && row.head_seq !== null ? { position: Number(row.head_seq), hash: row.head_hash } : undefined,
-      };
+    const result = await db.query<{
+      checked: string;
+      head_seq: string | null;
+      head_hash: string | null;
+      broken_id: string | null;
+      broken_reason: "content_mismatch" | "chain_broken" | null;
+    }>("select checked::text, head_seq::text, head_hash, broken_id, broken_reason from uniora.verify_audit_chain()");
+    const row = result.rows[0];
+    if (!row) throw new Error("uniora.verify_audit_chain() returned no row");
+    const checked = Number(row.checked);
+    const pruned = await prunedSummary();
+    if (row.broken_id !== null && row.broken_reason !== null) {
+      return { ok: false, checked, broken: { id: row.broken_id, reason: row.broken_reason }, ...pruned };
+    }
+    return {
+      ok: true,
+      checked,
+      head: row.head_hash !== null && row.head_seq !== null ? { position: Number(row.head_seq), hash: row.head_hash } : undefined,
+      ...pruned,
+    };
+  }
+
+  /** The newest retention checkpoint and the total removed so far, or nothing when the log was never pruned. */
+  async function prunedSummary(): Promise<{ pruned?: AuditIntegrityReport["pruned"] }> {
+    const result = await db.query<{ through_seq: string; through_hash: string; removed: string }>(
+      `select through_seq::text, through_hash,
+              (select sum(removed) from uniora.audit_log_checkpoints)::text as removed
+       from uniora.audit_log_checkpoints order by through_seq desc limit 1`,
+    );
+    const row = result.rows[0];
+    if (!row) return {};
+    return { pruned: { through: { position: Number(row.through_seq), hash: row.through_hash }, removed: Number(row.removed) } };
   }
 }

@@ -57,6 +57,9 @@ export async function applyAnchor(
   hashAt: (position: number) => Promise<string | null>,
 ): Promise<AuditIntegrityReport> {
   if (!anchor || !report.ok) return report;
+  // An anchor at or below the retention checkpoint points at entries removed on purpose: it can no longer be checked
+  // (re-anchor with a newer `head`), and that is not a tampering signal.
+  if (report.pruned && anchor.position <= report.pruned.through.position) return { ...report, anchor: "pruned" };
   const found = await hashAt(anchor.position);
   const status = found === null ? "missing" : found === anchor.hash ? "valid" : "mismatch";
   return { ...report, anchor: status, ok: status === "valid" };

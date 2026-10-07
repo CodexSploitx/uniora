@@ -10,7 +10,17 @@ const [file, operation, payloadJson, startAtText] = process.argv.slice(2);
 const payload = JSON.parse(payloadJson);
 
 const db = new Database(file);
-db.pragma("journal_mode = WAL");
+// Several workers switch a brand-new file to WAL at the same moment; SQLite answers SQLITE_BUSY at once (the
+// busy timeout is not consulted for that switch), so retry a few times instead of failing the whole test.
+for (let attempt = 0; ; attempt++) {
+  try {
+    db.pragma("journal_mode = WAL");
+    break;
+  } catch (error) {
+    if (error?.code !== "SQLITE_BUSY" || attempt >= 50) throw error;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
 
 try {
   const storage = createSqliteStorage(db);
