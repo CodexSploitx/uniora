@@ -9,7 +9,8 @@
     "typecheck": "pnpm -r typecheck",
     "release:check": "node scripts/check-release.mjs",
     "lint": "pnpm -r --if-present lint",
-    "check:packages": "node scripts/check-packages.mjs"
+    "check:packages": "node scripts/check-packages.mjs",
+    "sql:export": "UPDATE_SQL=1 pnpm --filter @uniora/postgres --filter @uniora/sqlite exec vitest run src/sql-export.test.ts"
   },
   "devDependencies": {
     "typescript": "^5.6.3",

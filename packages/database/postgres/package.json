@@ -31,7 +31,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "sql"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

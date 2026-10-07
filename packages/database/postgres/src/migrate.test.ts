@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Client, Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { applyMigrations, getMigrationStatus, listMigrationIds, MigrationError } from "./migrate.js";
@@ -61,6 +64,37 @@ describe("migration ledger", () => {
 
   beforeEach(async () => {
     await pool.query("drop schema if exists uniora cascade");
+  });
+
+  it("los archivos sql/ aplicados a mano dejan el mismo esquema que el migrador, y applyMigrations los acepta después", async () => {
+    const sqlDir = join(dirname(fileURLToPath(import.meta.url)), "..", "sql");
+    const shape = async () =>
+      (
+        await pool.query(
+          `select table_name, column_name, data_type, is_nullable from information_schema.columns
+           where table_schema = 'uniora' and table_name <> 'schema_migrations' order by 1, 2`,
+        )
+      ).rows;
+    const objects = async () =>
+      (
+        await pool.query(
+          `select 'function' as kind, p.proname as name from pg_proc p where p.pronamespace = 'uniora'::regnamespace
+           union all select 'index', indexname from pg_indexes where schemaname = 'uniora' and tablename <> 'schema_migrations'
+           union all select 'trigger', tgname from pg_trigger t join pg_class c on c.oid = t.tgrelid where c.relnamespace = 'uniora'::regnamespace and not t.tgisinternal
+           order by 1, 2`,
+        )
+      ).rows;
+    for (const id of listMigrationIds()) await pool.query(readFileSync(join(sqlDir, `${id}.sql`), "utf8"));
+    const byHand = { columns: await shape(), objects: await objects() };
+
+    await pool.query("drop schema uniora cascade");
+    await applyMigrations(pool);
+    expect({ columns: await shape(), objects: await objects() }).toEqual(byHand);
+
+    // A database prepared with the .sql files has no ledger: the migrator re-runs everything once, safely, and records it.
+    await pool.query("drop table uniora.schema_migrations");
+    const result = await applyMigrations(pool);
+    expect(result.applied).toEqual(listMigrationIds());
   });
 
   it("status es de solo lectura: no crea nada en una base virgen y reporta todo pendiente", async () => {
