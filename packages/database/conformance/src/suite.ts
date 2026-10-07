@@ -403,7 +403,171 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
       await storage.features.register({ key: "advanced_reports", name: "Advanced Reports v2", description: "..." });
 
       const catalog = await storage.features.listCatalog();
-      expect(catalog).toContainEqual({ key: "advanced_reports", name: "Advanced Reports v2", description: "..." });
+      expect(catalog).toContainEqual({ key: "advanced_reports", name: "Advanced Reports v2", description: "...", defaultEnabled: false });
+    });
+
+    describe("features — valor por defecto, jerarquía, operaciones masivas y metadatos", () => {
+      const operator = { provider: "supabase", subject: "operator" };
+
+      async function seedOrganizations(storage: ReturnType<StorageHarness["storage"]>, ids = ["org-1", "org-2", "org-3"]) {
+        for (const id of ids) await storage.organizations.create({ id, name: `Org ${id}` });
+      }
+
+      it("una función con defaultEnabled nace activa sin filas; un override explícito gana en los dos sentidos", async () => {
+        const storage = harness.storage();
+        await seedOrganizations(storage);
+        await storage.features.register({ key: "agenda", name: "Agenda", defaultEnabled: true });
+        await storage.features.register({ key: "reports", name: "Reports" });
+
+        expect(await storage.features.isEnabled("org-1", "agenda")).toBe(true);
+        expect(await storage.features.isEnabled("org-1", "reports")).toBe(false);
+        expect(await storage.features.enabledKeys("org-1", ["agenda", "reports", "ghost"])).toEqual(["agenda"]);
+        expect(await storage.features.listByOrganization("org-1")).toEqual([]);
+
+        await storage.features.disable("org-1", "agenda");
+        await storage.features.enable("org-1", "reports");
+        expect(await storage.features.isEnabled("org-1", "agenda")).toBe(false);
+        expect(await storage.features.isEnabled("org-2", "agenda")).toBe(true);
+        expect(await storage.features.isEnabled("org-1", "reports")).toBe(true);
+
+        expect((await storage.features.listCatalog()).find((f) => f.key === "agenda")).toMatchObject({ defaultEnabled: true });
+        // Registrar de nuevo sin defaultEnabled lo resetea (upsert completo).
+        await storage.features.register({ key: "agenda", name: "Agenda" });
+        expect((await storage.features.listCatalog()).find((f) => f.key === "agenda")).toMatchObject({ defaultEnabled: false });
+      });
+
+      it("access.check y los snapshots respetan el valor por defecto", async () => {
+        const storage = harness.storage();
+        await seedOrganizations(storage, ["org-1"]);
+        const owner = await storage.roles.createOwnerRole({ id: "r", organizationId: "org-1" });
+        const membership = await storage.memberships.create({ id: "m", organizationId: "org-1", identity });
+        await storage.memberships.assignOwnerRole(membership.id, owner.id);
+        await storage.features.register({ key: "agenda", name: "Agenda", defaultEnabled: true });
+        const engine = createAuthorizationEngine(storage);
+
+        expect(await engine.access.check({ identity, organizationId: "org-1", feature: "agenda" })).toBe(true);
+        await storage.features.disable("org-1", "agenda");
+        expect(await engine.access.check({ identity, organizationId: "org-1", feature: "agenda" })).toBe(false);
+      });
+
+      it("jerarquía: apagar el padre apaga a los hijos; listEffective explica el motivo", async () => {
+        const storage = harness.storage();
+        await seedOrganizations(storage, ["org-1", "org-2"]);
+        await storage.features.register({ key: "workspace", name: "Workspace", defaultEnabled: true });
+        await storage.features.register({ key: "workspace_chat", name: "Chat", defaultEnabled: true, parentKey: "workspace" });
+        await storage.features.register({ key: "workspace_files", name: "Files", parentKey: "workspace" });
+        await storage.features.enable("org-1", "workspace_files");
+
+        await storage.features.disable("org-1", "workspace", { actor: operator, reason: "impago" });
+
+        expect(await storage.features.isEnabled("org-1", "workspace_chat")).toBe(false);
+        expect(await storage.features.isEnabled("org-1", "workspace_files")).toBe(false);
+        expect(await storage.features.isEnabled("org-2", "workspace_chat")).toBe(true);
+        const byKey = Object.fromEntries((await storage.features.listEffective("org-1")).map((f) => [f.key, f]));
+        expect(byKey.workspace_chat).toMatchObject({ enabled: false, reason: "parent_disabled", blockedBy: "workspace", parentKey: "workspace" });
+        expect(byKey.workspace_files).toMatchObject({ enabled: false, reason: "parent_disabled" });
+        expect(byKey.workspace).toMatchObject({ enabled: false, reason: "disabled", override: { enabled: false, reason: "impago", updatedBy: operator } });
+        expect((await storage.features.listEffective("org-2")).map((f) => [f.key, f.reason])).toEqual([
+          ["workspace", "default"],
+          ["workspace_chat", "default"],
+          ["workspace_files", "default"],
+        ]);
+
+        // El uso agregado y los filtros cuentan el estado EFECTIVO.
+        expect(await storage.features.countEnabledByOrganization(["org-1", "org-2"])).toEqual({ "org-1": 0, "org-2": 2 });
+        expect(await storage.features.summarizeUsage(["workspace_chat", "workspace_files", "workspace", "ghost"], 5)).toEqual({
+          workspace: { enabledCount: 1, sampleOrganizationIds: ["org-2"] },
+          workspace_chat: { enabledCount: 1, sampleOrganizationIds: ["org-2"] },
+          workspace_files: { enabledCount: 0, sampleOrganizationIds: [] },
+          ghost: { enabledCount: 0, sampleOrganizationIds: [] },
+        });
+        expect((await storage.features.search({ enabledIn: "org-2" })).map((f) => f.key)).toEqual(["workspace", "workspace_chat"]);
+        expect(await storage.features.count({ enabledIn: "org-1" })).toBe(0);
+        expect(await storage.features.summarizeUsage(["workspace"], 0)).toEqual({ workspace: { enabledCount: 1, sampleOrganizationIds: [] } });
+      });
+
+      it("rechaza padres desconocidos, a sí mismo, ciclos; y no deja desregistrar un padre con hijos", async () => {
+        const storage = harness.storage();
+        await storage.features.register({ key: "root", name: "Root" });
+        await storage.features.register({ key: "child", name: "Child", parentKey: "root" });
+
+        await expect(storage.features.register({ key: "orphan", name: "O", parentKey: "ghost" })).rejects.toMatchObject({ code: "feature_parent_invalid" });
+        await expect(storage.features.register({ key: "root", name: "R", parentKey: "root" })).rejects.toMatchObject({ code: "feature_parent_invalid" });
+        await expect(storage.features.register({ key: "root", name: "R", parentKey: "child" })).rejects.toMatchObject({ code: "feature_parent_invalid" });
+        await expect(storage.features.unregister("root")).rejects.toMatchObject({ code: "feature_has_children" });
+        await storage.features.unregister("child");
+        await storage.features.unregister("root");
+      });
+
+      it("setMany aplica todo o nada y registra quién, cuándo y por qué", async () => {
+        const storage = harness.storage();
+        await seedOrganizations(storage, ["org-1"]);
+        await storage.features.register({ key: "a", name: "A" });
+        await storage.features.register({ key: "b", name: "B", defaultEnabled: true });
+
+        await expect(storage.features.setMany("org-1", { a: true, ghost: true })).rejects.toMatchObject({ code: "feature_unknown" });
+        expect(await storage.features.isEnabled("org-1", "a")).toBe(false);
+        expect(await storage.features.listByOrganization("org-1")).toEqual([]);
+
+        const before = Date.now() - 1000;
+        await storage.features.setMany("org-1", { a: true, b: false }, { actor: operator, reason: "  plan Pro  " });
+        expect(await storage.features.isEnabled("org-1", "a")).toBe(true);
+        expect(await storage.features.isEnabled("org-1", "b")).toBe(false);
+        const rows = await storage.features.listByOrganization("org-1");
+        expect(rows).toHaveLength(2);
+        for (const row of rows) {
+          expect(row).toMatchObject({ updatedBy: operator, reason: "plan Pro" });
+          expect(row.updatedAt!.getTime()).toBeGreaterThanOrEqual(before);
+        }
+        // Sin metadatos: el cambio igual queda fechado, pero sin autor ni motivo.
+        await storage.features.enable("org-1", "b");
+        const plain = (await storage.features.listByOrganization("org-1")).find((f) => f.key === "b")!;
+        expect(plain.updatedAt).toBeInstanceOf(Date);
+        expect(plain.updatedBy).toBeUndefined();
+        expect(plain.reason).toBeUndefined();
+        await storage.features.setMany("org-1", {});
+      });
+
+      it("setMany dentro de una transacción que falla no deja nada (atomicidad real)", async () => {
+        const storage = harness.storage();
+        await seedOrganizations(storage, ["org-1"]);
+        await storage.features.register({ key: "a", name: "A" });
+        await expect(
+          storage.transaction(async (tx) => {
+            await tx.features.setMany("org-1", { a: true });
+            throw new Error("boom");
+          }),
+        ).rejects.toThrow("boom");
+        expect(await storage.features.isEnabled("org-1", "a")).toBe(false);
+      });
+
+      it("disableEverywhere apaga la función en todas las organizaciones, también donde no había fila, y permite desregistrarla", async () => {
+        const storage = harness.storage();
+        await seedOrganizations(storage, ["org-1", "org-2"]);
+        await storage.features.register({ key: "agenda", name: "Agenda", defaultEnabled: true });
+        await storage.features.enable("org-1", "agenda");
+        await expect(storage.features.unregister("agenda")).rejects.toMatchObject({ code: "feature_in_use" });
+
+        expect(await storage.features.disableEverywhere("agenda", { actor: operator, reason: "incidente" })).toEqual({
+          disabledOverrides: 1,
+          defaultWasEnabled: true,
+        });
+        expect(await storage.features.isEnabled("org-1", "agenda")).toBe(false);
+        expect(await storage.features.isEnabled("org-2", "agenda")).toBe(false);
+        expect((await storage.features.listByOrganization("org-1"))[0]).toMatchObject({ enabled: false, reason: "incidente", updatedBy: operator });
+        await expect(storage.features.disableEverywhere("ghost")).rejects.toMatchObject({ code: "feature_unknown" });
+        await storage.features.unregister("agenda");
+      });
+
+      it("una función activa por defecto no se desregistra mientras alguna organización la tenga efectivamente activa", async () => {
+        const storage = harness.storage();
+        await seedOrganizations(storage, ["org-1"]);
+        await storage.features.register({ key: "agenda", name: "Agenda", defaultEnabled: true });
+        await expect(storage.features.unregister("agenda")).rejects.toMatchObject({ code: "feature_in_use" });
+        await storage.features.disable("org-1", "agenda");
+        // Todas las organizaciones existentes la tienen apagada → se puede desregistrar.
+        await storage.features.unregister("agenda");
+      });
     });
 
     it("permission.unregister() rechaza un key nunca registrado, y uno todavía otorgado a algún role", async () => {

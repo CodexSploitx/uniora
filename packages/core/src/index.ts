@@ -47,9 +47,22 @@ export type { PermissionRepository, RegisterPermissionInput, SearchPermissionsOp
 export { PermissionError } from "./permission/repository.js";
 export { assertValidPermissionKey, sanitizePermissionName } from "./permission/key.js";
 
-export type { Feature, FeatureDefinition } from "./feature/types.js";
-export type { FeatureRepository, FeatureUsage, RegisterFeatureInput, SearchFeaturesOptions } from "./feature/repository.js";
-export { FeatureError } from "./feature/repository.js";
+export type {
+  EffectiveFeature,
+  EffectiveFeatureReason,
+  Feature,
+  FeatureChangeMeta,
+  FeatureDefinition,
+} from "./feature/types.js";
+export type {
+  DisableEverywhereResult,
+  FeatureRepository,
+  FeatureUsage,
+  RegisterFeatureInput,
+  SearchFeaturesOptions,
+} from "./feature/repository.js";
+export { FeatureError, sanitizeFeatureChangeReason } from "./feature/repository.js";
+export { MAX_FEATURE_DEPTH, assertValidFeatureParent, featureChain, featureRequirements, resolveEffectiveFeatures } from "./feature/effective.js";
 export { assertValidFeatureKey, resolveFeatureKey, sanitizeFeatureName } from "./feature/key.js";
 
 export type { AuditIntegrityOptions, AuditIntegrityReport, AuditLogEntry, AuditLogTarget } from "./audit-log/types.js";

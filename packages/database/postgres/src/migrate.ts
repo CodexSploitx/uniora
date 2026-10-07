@@ -17,6 +17,7 @@ import { MIGRATION_0014_NULLABLE_AUDIT_ORGANIZATION } from "./migrations/0014_nu
 import { MIGRATION_0015_IDENTITY_LINKS_TO_INDEX } from "./migrations/0015_identity_links_to_index.js";
 import { MIGRATION_0016_INVITATIONS } from "./migrations/0016_invitations.js";
 import { MIGRATION_0017_AUDIT_LOG_INTEGRITY } from "./migrations/0017_audit_log_integrity.js";
+import { MIGRATION_0018_FEATURE_DEFAULTS_HIERARCHY } from "./migrations/0018_feature_defaults_hierarchy.js";
 
 interface Migration {
   readonly id: string;
@@ -42,6 +43,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0015_identity_links_to_index", sql: MIGRATION_0015_IDENTITY_LINKS_TO_INDEX },
   { id: "0016_invitations", sql: MIGRATION_0016_INVITATIONS },
   { id: "0017_audit_log_integrity", sql: MIGRATION_0017_AUDIT_LOG_INTEGRITY },
+  { id: "0018_feature_defaults_hierarchy", sql: MIGRATION_0018_FEATURE_DEFAULTS_HIERARCHY },
 ];
 
 /**

@@ -7,8 +7,6 @@ const COUNT_BY_ORGANIZATION = {
                 from uniora_memberships where organization_id in (select value from json_each(?1)) group by organization_id`,
   roles: `select organization_id, count(*) as count
           from uniora_roles where organization_id in (select value from json_each(?1)) group by organization_id`,
-  enabledFeatures: `select organization_id, count(*) as count
-                    from uniora_features where enabled = 1 and organization_id in (select value from json_each(?1)) group by organization_id`,
 } as const;
 
 /**
