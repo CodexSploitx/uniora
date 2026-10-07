@@ -43,7 +43,9 @@ jobs:
       - run: node scripts/check-release.mjs "${GITHUB_REF_NAME}"
 
       # pnpm (no npm) publica: convierte "workspace:^" en la versión real. Omite lo ya publicado y lo private.
+      # Sin NPM_TOKEN: se autentica con OIDC (Trusted Publishing). Cada paquete @uniora/* debe tener
+      # configurado en npmjs.com (Settings → Trusted Publisher) este repo, el workflow `release.yml`
+      # y el environment `npm`.
       - run: pnpm -r publish --access public --no-git-checks
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"
