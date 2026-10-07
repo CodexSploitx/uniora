@@ -118,6 +118,12 @@ export interface FeatureRepository {
    * Optionally restricted to `keys`.
    */
   listEffective(organizationId: string, options?: { keys?: string[] }): Promise<EffectiveFeature[]>;
+  /**
+   * `listEffective` for MANY organizations in one call (at most 500 ids; `feature_invalid` beyond that): a map from
+   * every requested organization id to its resolved features, optionally restricted to `keys`. Use it for an admin
+   * table ("which of these 50 organizations has Chat and Files on?") instead of one call per organization.
+   */
+  listEffectiveMany(organizationIds: string[], options?: { keys?: string[] }): Promise<Record<string, EffectiveFeature[]>>;
   /** The organization's explicit overrides only (rows), not the effective state — use `listEffective` for that. */
   listByOrganization(organizationId: string): Promise<Feature[]>;
   /**
@@ -130,6 +136,17 @@ export interface FeatureRepository {
    * disabled for this key are removed as part of the same operation.
    */
   unregister(key: string): Promise<void>;
+}
+
+/** The most organizations `listEffectiveMany` resolves in one call. */
+export const MAX_EFFECTIVE_MANY = 500;
+
+/** Throws `FeatureError` (`feature_invalid`) when `listEffectiveMany` is asked for too many organizations. */
+export function assertEffectiveManyInput(organizationIds: string[]): void {
+  if (!Array.isArray(organizationIds)) throw new FeatureError("organizationIds must be a list.", "feature_invalid");
+  if (organizationIds.length > MAX_EFFECTIVE_MANY) {
+    throw new FeatureError(`At most ${MAX_EFFECTIVE_MANY} organizations per call.`, "feature_invalid");
+  }
 }
 
 /** Trims and caps the free-text `reason` of a change; `undefined` when empty. */

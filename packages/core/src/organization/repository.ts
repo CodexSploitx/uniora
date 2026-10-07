@@ -44,6 +44,11 @@ export interface SearchOrganizationsOptions {
   query?: string;
   /** Only organizations in this status (or any of these). Omitted matches every status. */
   status?: OrganizationStatus | OrganizationStatus[];
+  /**
+   * Only organizations where this feature is (or, with `enabled: false`, is not) EFFECTIVELY on: their override, else
+   * the feature's default, and every parent on. An unregistered key is on nowhere. Combines with `status` and `query`.
+   */
+  feature?: { key: string; enabled?: boolean };
 }
 
 export interface OrganizationRepository {
@@ -92,5 +97,5 @@ export interface OrganizationRepository {
    */
   search(options?: SearchOrganizationsOptions): Promise<Organization[]>;
   /** Total organizations matching `query` (or all, if omitted) — for result counts/badges without loading every row. */
-  count(options?: { query?: string; status?: OrganizationStatus | OrganizationStatus[] }): Promise<number>;
+  count(options?: Pick<SearchOrganizationsOptions, "query" | "status" | "feature">): Promise<number>;
 }

@@ -812,6 +812,87 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         await expect(storage.organizations.search({ status: "gone" as never })).rejects.toMatchObject({ code: "organization_status_invalid" });
       });
 
+      describe("consultas entre organizaciones (por función efectiva y en lote)", () => {
+        async function seedFleet() {
+          const storage = harness.storage();
+          for (const id of ["o1", "o2", "o3", "o4"]) {
+            await storage.organizations.create({ id, name: `Org ${id}` });
+            await new Promise((resolve) => setTimeout(resolve, 3));
+          }
+          await storage.features.register({ key: "agenda", name: "Agenda", defaultEnabled: true });
+          await storage.features.register({ key: "agenda_chat", name: "Chat", defaultEnabled: true, parentKey: "agenda" });
+          await storage.features.register({ key: "agenda_files", name: "Files", parentKey: "agenda" });
+          await storage.features.register({ key: "reports", name: "Reports" });
+          await storage.features.disable("o2", "agenda");
+          await storage.features.enable("o2", "agenda_files"); // padre apagado: no cuenta
+          await storage.features.enable("o3", "agenda_files");
+          await storage.features.enable("o3", "reports");
+          await storage.features.enable("o4", "reports");
+          await storage.organizations.setStatus("o4", { status: "archived", actor: { provider: "p", subject: "op" } });
+          return storage;
+        }
+        const ids = (list: Array<{ id: string }>) => list.map((organization) => organization.id);
+
+        it("search({ feature }) devuelve las organizaciones donde está efectivamente activa (override, defecto y padres)", async () => {
+          const storage = await seedFleet();
+          const on = async (key: string) => ids(await storage.organizations.search({ feature: { key } }));
+          expect(await on("agenda")).toEqual(["o1", "o3", "o4"]);
+          expect(await on("agenda_chat")).toEqual(["o1", "o3", "o4"]);
+          expect(await on("agenda_files")).toEqual(["o3"]);
+          expect(await on("reports")).toEqual(["o3", "o4"]);
+          expect(await on("nope")).toEqual([]);
+        });
+
+        it("con enabled: false devuelve las que NO la tienen, y combina con estado, texto y paginación", async () => {
+          const storage = await seedFleet();
+          const off = (key: string) => storage.organizations.search({ feature: { key, enabled: false } }).then(ids);
+          expect(await off("agenda")).toEqual(["o2"]);
+          expect(await off("agenda_files")).toEqual(["o1", "o2", "o4"]);
+          expect(await off("reports")).toEqual(["o1", "o2"]);
+          expect(await off("nope")).toEqual(["o1", "o2", "o3", "o4"]);
+
+          expect(ids(await storage.organizations.search({ feature: { key: "reports" }, status: "active" }))).toEqual(["o3"]);
+          expect(ids(await storage.organizations.search({ feature: { key: "agenda" }, query: "o3" }))).toEqual(["o3"]);
+          expect(ids(await storage.organizations.search({ feature: { key: "agenda" }, limit: 2 }))).toEqual(["o1", "o3"]);
+          const third = (await storage.organizations.search({ feature: { key: "agenda" }, limit: 2 }))[1]!;
+          expect(
+            ids(await storage.organizations.search({ feature: { key: "agenda" }, after: { createdAt: third.createdAt, id: third.id } })),
+          ).toEqual(["o4"]);
+        });
+
+        it("count({ feature }) coincide con search", async () => {
+          const storage = await seedFleet();
+          expect(await storage.organizations.count({ feature: { key: "agenda" } })).toBe(3);
+          expect(await storage.organizations.count({ feature: { key: "agenda", enabled: false } })).toBe(1);
+          expect(await storage.organizations.count({ feature: { key: "reports" }, status: "archived" })).toBe(1);
+          expect(await storage.organizations.count({ feature: { key: "nope" } })).toBe(0);
+        });
+
+        it("features.listEffectiveMany resuelve varias organizaciones en una llamada, igual que listEffective", async () => {
+          const storage = await seedFleet();
+          const many = await storage.features.listEffectiveMany(["o1", "o2", "o3", "ghost", "o1"], { keys: ["agenda", "agenda_files"] });
+          expect(Object.keys(many).sort()).toEqual(["ghost", "o1", "o2", "o3"]);
+          for (const organizationId of ["o1", "o2", "o3"]) {
+            expect(many[organizationId]).toEqual(await storage.features.listEffective(organizationId, { keys: ["agenda", "agenda_files"] }));
+          }
+          expect(Object.fromEntries(many.o2!.map((feature) => [feature.key, [feature.enabled, feature.reason]]))).toEqual({
+            agenda: [false, "disabled"],
+            agenda_files: [false, "parent_disabled"],
+          });
+          expect(many.ghost!.every((feature) => feature.override === undefined)).toBe(true);
+          expect(await storage.features.listEffectiveMany([])).toEqual({});
+          const everything = await storage.features.listEffectiveMany(["o3"]);
+          expect(everything.o3).toHaveLength(4);
+        });
+
+        it("listEffectiveMany rechaza más de 500 organizaciones por llamada", async () => {
+          const storage = harness.storage();
+          await expect(
+            storage.features.listEffectiveMany(Array.from({ length: 501 }, (_, n) => `org-${n}`)),
+          ).rejects.toMatchObject({ code: "feature_invalid" });
+        });
+      });
+
       it("update cambia nombre y/o slug a la vez, valida y devuelve null si no existe", async () => {
         const storage = harness.storage();
         await storage.organizations.create({ id: "org-1", name: "Acme Motors" });

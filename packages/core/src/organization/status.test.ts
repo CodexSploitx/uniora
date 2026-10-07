@@ -76,4 +76,28 @@ describe("organization status (memory)", () => {
     expect(await storage.organizations.count({ status: ["active", "archived"] })).toBe(2);
     expect(await storage.organizations.count({ status: "suspended" })).toBe(0);
   });
+
+  it("search({ feature }) and features.listEffectiveMany use the effective state (default, override, parents)", async () => {
+    const storage = createMemoryStorage();
+    for (const id of ["o1", "o2", "o3"]) {
+      await storage.organizations.create({ id, name: `Org ${id}` });
+      await new Promise((resolve) => setTimeout(resolve, 3));
+    }
+    await storage.features.register({ key: "agenda", name: "Agenda", defaultEnabled: true });
+    await storage.features.register({ key: "agenda_files", name: "Files", parentKey: "agenda" });
+    await storage.features.disable("o2", "agenda");
+    await storage.features.enable("o2", "agenda_files");
+    await storage.features.enable("o3", "agenda_files");
+    const ids = (list: Array<{ id: string }>) => list.map((o) => o.id);
+    expect(ids(await storage.organizations.search({ feature: { key: "agenda" } }))).toEqual(["o1", "o3"]);
+    expect(ids(await storage.organizations.search({ feature: { key: "agenda_files" } }))).toEqual(["o3"]);
+    expect(ids(await storage.organizations.search({ feature: { key: "agenda_files", enabled: false } }))).toEqual(["o1", "o2"]);
+    expect(await storage.organizations.count({ feature: { key: "nope" } })).toBe(0);
+
+    const many = await storage.features.listEffectiveMany(["o1", "o2"], { keys: ["agenda_files"] });
+    expect(many.o2?.[0]).toMatchObject({ enabled: false, reason: "parent_disabled" });
+    await expect(storage.features.listEffectiveMany(Array.from({ length: 501 }, (_, n) => `x${n}`))).rejects.toMatchObject({
+      code: "feature_invalid",
+    });
+  });
 });
