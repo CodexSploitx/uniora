@@ -125,7 +125,7 @@ export function createOrganizationRepository(db: SqliteExecutor): OrganizationRe
     async rename(id: string, name: string) {
       const sanitized = sanitizeOrganizationName(name);
       const result = await db.query<OrganizationRow>(
-        `update uniora_organizations set name = ?2, version = version + 1 where id = ?1 returning ${COLUMNS}`,
+        `update uniora_organizations set name = ?2, version = version + (case when name is not ?2 then 1 else 0 end) where id = ?1 returning ${COLUMNS}`,
         [id, sanitized],
       );
       return result.rows[0] ? toOrganization(result.rows[0]) : null;
@@ -140,7 +140,8 @@ export function createOrganizationRepository(db: SqliteExecutor): OrganizationRe
       const expectedVersion = assertExpectedVersion(input.expectedVersion) ?? null;
       try {
         const result = await db.query<OrganizationRow>(
-          `update uniora_organizations set name = coalesce(?2, name), slug = coalesce(?3, slug), version = version + 1
+          `update uniora_organizations set name = coalesce(?2, name), slug = coalesce(?3, slug),
+             version = version + (case when name is not coalesce(?2, name) or slug is not coalesce(?3, slug) then 1 else 0 end)
            where id = ?1 and (?4 is null or version = ?4) returning ${COLUMNS}`,
           [id, name, slug, expectedVersion],
         );

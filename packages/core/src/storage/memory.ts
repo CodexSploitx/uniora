@@ -212,6 +212,14 @@ export function createMemoryStorage(): UnioraStorage {
     },
   };
 
+  /**
+   * Every record leaves the store as a copy (and enters as one): a caller that holds a role,
+   * membership or organization read earlier must not see it change when a later write
+   * touches the stored one — that is how the SQL adapters behave, and what `version` and
+   * `expectedVersion` rely on.
+   */
+  const copy = <T>(value: T): T => structuredClone(value);
+
   const statusSet = (status: OrganizationStatus | OrganizationStatus[] | undefined): Set<OrganizationStatus> | undefined =>
     status === undefined ? undefined : new Set((Array.isArray(status) ? status : [status]).map(assertOrganizationStatus));
 
@@ -238,17 +246,20 @@ export function createMemoryStorage(): UnioraStorage {
 
       const organization: Organization = { id: input.id, slug, name, createdAt: new Date(), status: "active", version: 1 };
       organizations.set(organization.id, organization);
-      return organization;
+      return copy(organization);
     },
     async findById(id) {
-      return organizations.get(id) ?? null;
+      const found = organizations.get(id);
+      return found ? copy(found) : null;
     },
     async rename(id, name) {
       const existing = organizations.get(id);
       if (!existing) return null;
-      const updated: Organization = { ...existing, name: sanitizeOrganizationName(name), version: existing.version + 1 };
+      const sanitized = sanitizeOrganizationName(name);
+      if (sanitized === existing.name) return copy(existing);
+      const updated: Organization = { ...existing, name: sanitized, version: existing.version + 1 };
       organizations.set(id, updated);
-      return updated;
+      return copy(updated);
     },
     async update(id, input) {
       const existing = organizations.get(id);
@@ -271,8 +282,9 @@ export function createMemoryStorage(): UnioraStorage {
         ...(slug !== undefined ? { slug } : {}),
         version: existing.version + 1,
       };
+      if (updated.name === existing.name && updated.slug === existing.slug) return copy(existing);
       organizations.set(id, updated);
-      return updated;
+      return copy(updated);
     },
     async setStatus(id, input) {
       const status = assertOrganizationStatus(input.status);
@@ -280,7 +292,7 @@ export function createMemoryStorage(): UnioraStorage {
       assertAuditInput({ actor: input.actor, action: "organization.status_changed" });
       const existing = organizations.get(id);
       if (!existing) return null;
-      if (existing.status === status) return existing;
+      if (existing.status === status) return copy(existing);
       const updated: Organization = {
         ...existing,
         status,
@@ -288,13 +300,13 @@ export function createMemoryStorage(): UnioraStorage {
         version: existing.version + 1,
       };
       organizations.set(id, updated);
-      return updated;
+      return copy(updated);
     },
     async findByIds(ids) {
-      return ids.flatMap((id) => organizations.get(id) ?? []);
+      return ids.flatMap((id) => organizations.get(id) ?? []).map(copy);
     },
     async list() {
-      return [...organizations.values()];
+      return [...organizations.values()].map(copy);
     },
     async search(options) {
       const query = options?.query?.trim().toLowerCase();
@@ -317,7 +329,7 @@ export function createMemoryStorage(): UnioraStorage {
               (organization.createdAt.getTime() === after.createdAt.getTime() && organization.id > after.id),
           )
         : sorted;
-      return options?.limit !== undefined ? page.slice(0, options.limit) : page;
+      return (options?.limit !== undefined ? page.slice(0, options.limit) : page).map(copy);
     },
     async count(options) {
       const query = options?.query?.trim().toLowerCase();
@@ -372,7 +384,7 @@ export function createMemoryStorage(): UnioraStorage {
     const membership = memberships.get(membershipId);
     if (!membership) throw new MembershipError(`Membership not found: ${membershipId}`);
     assertMembershipVersion(membership, input.expectedVersion);
-    if (membership.status !== "active") return membership;
+    if (membership.status !== "active") return copy(membership);
     // The Owner who is blocked must not be the only ACTIVE one left: the organization would have nobody who can act.
     const ownerRoleIds = membership.roleIds.filter((roleId) => roles.get(roleId)?.isOwnerRole);
     for (const roleId of ownerRoleIds) {
@@ -390,7 +402,7 @@ export function createMemoryStorage(): UnioraStorage {
       version: membership.version + 1,
       blocked: { at, by: { ...input.actor }, ...(sanitizeBlockReason(input.reason) !== undefined ? { reason: sanitizeBlockReason(input.reason) } : {}), ...(until ? { until } : {}) },
     });
-    return membership;
+    return copy(membership);
   }
 
   function matchingMemberships(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus }): Membership[] {
@@ -475,7 +487,7 @@ export function createMemoryStorage(): UnioraStorage {
       const membership: Membership = {
         id: input.id,
         organizationId: input.organizationId,
-        identity: input.identity,
+        identity: { ...input.identity },
         roleIds,
         status: "active",
         createdAt,
@@ -484,31 +496,32 @@ export function createMemoryStorage(): UnioraStorage {
         ...(input.invitedBy ? { invitedBy: { ...input.invitedBy } } : {}),
       };
       memberships.set(membership.id, membership);
-      return membership;
+      return copy(membership);
     },
     async findByIdentity(organizationId: string, identity: Identity) {
       const resolved = await identityLinkRepository.resolve(identity);
       lapseBlocks();
       for (const membership of memberships.values()) {
         if (membership.organizationId === organizationId && sameIdentity(membership.identity, resolved)) {
-          return membership;
+          return copy(membership);
         }
       }
       return null;
     },
     async listByOrganization(organizationId) {
       lapseBlocks();
-      return [...memberships.values()].filter((m) => m.organizationId === organizationId);
+      return [...memberships.values()].filter((m) => m.organizationId === organizationId).map(copy);
     },
     async findById(id) {
       lapseBlocks();
-      return memberships.get(id) ?? null;
+      const found = memberships.get(id);
+      return found ? copy(found) : null;
     },
     async search(options) {
       const matches = matchingMemberships(options).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
       const after = options?.after;
       const page = after === undefined ? matches : matches.filter((m) => m.id > after);
-      return options?.limit !== undefined ? page.slice(0, options.limit) : page;
+      return (options?.limit !== undefined ? page.slice(0, options.limit) : page).map(copy);
     },
     async searchListing(options) {
       const rows = await membershipRepository.search(options);
@@ -519,11 +532,11 @@ export function createMemoryStorage(): UnioraStorage {
         return {
           id: m.id,
           organizationId: m.organizationId,
-          identity: m.identity,
+          identity: { ...m.identity },
           roleCount: held.length,
           status: m.status,
           createdAt: m.createdAt,
-          ...(m.invitedBy ? { invitedBy: m.invitedBy } : {}),
+          ...(m.invitedBy ? { invitedBy: { ...m.invitedBy } } : {}),
           ...(m.lastActiveAt ? { lastActiveAt: m.lastActiveAt } : {}),
           roles: held.slice(0, options.rolesPerMember).map(toRoleSummary),
         };
@@ -644,10 +657,10 @@ export function createMemoryStorage(): UnioraStorage {
       const membership = memberships.get(membershipId);
       if (!membership) throw new MembershipError(`Membership not found: ${membershipId}`);
       assertMembershipVersion(membership, input.expectedVersion);
-      if (membership.status === "active") return membership;
+      if (membership.status === "active") return copy(membership);
       const { blocked: _blocked, ...rest } = membership;
       memberships.set(membershipId, { ...rest, status: "active", updatedAt: new Date(), version: membership.version + 1 });
-      return memberships.get(membershipId)!;
+      return copy(memberships.get(membershipId)!);
     },
     async recordActivity(membershipId, at = new Date()) {
       const membership = memberships.get(membershipId);
@@ -725,7 +738,7 @@ export function createMemoryStorage(): UnioraStorage {
         version: 1,
       };
       roles.set(role.id, role);
-      return role;
+      return copy(role);
     },
     async createOwnerRole(input: CreateOwnerRoleInput) {
       const alreadyHasOwner = [...roles.values()].some(
@@ -745,13 +758,13 @@ export function createMemoryStorage(): UnioraStorage {
         version: 1,
       };
       roles.set(role.id, role);
-      return role;
+      return copy(role);
     },
     async findByIds(ids) {
-      return ids.map((id) => roles.get(id)).filter((role): role is Role => role !== undefined);
+      return ids.map((id) => roles.get(id)).filter((role): role is Role => role !== undefined).map(copy);
     },
     async listByOrganization(organizationId) {
-      return [...roles.values()].filter((r) => r.organizationId === organizationId);
+      return [...roles.values()].filter((r) => r.organizationId === organizationId).map(copy);
     },
     async findSummariesByIds(ids) {
       return ids.flatMap((id) => {
@@ -816,9 +829,11 @@ export function createMemoryStorage(): UnioraStorage {
       if (roleNameTaken(role.organizationId, sanitized, roleId)) {
         throw new RoleError(`A role named "${sanitized}" already exists in this organization.`);
       }
-      role.name = sanitized;
-      role.version += 1;
-      return role;
+      if (role.name !== sanitized) {
+        role.name = sanitized;
+        role.version += 1;
+      }
+      return copy(role);
     },
     async update(roleId, input) {
       if (input.name === undefined && input.description === undefined) {
@@ -832,21 +847,25 @@ export function createMemoryStorage(): UnioraStorage {
       if (expectedVersion !== undefined && role.version !== expectedVersion) {
         throw new RoleError("The role changed since it was read.", "role_version_conflict");
       }
+      let changed = false;
       if (name !== undefined) {
         if (role.isOwnerRole) throw new RoleError("Cannot rename the protected Owner role.");
         if (role.isSystem) throw new RoleError("Cannot rename a system role.", "role_system_protected");
         if (roleNameTaken(role.organizationId, name, roleId)) {
           throw new RoleError(`A role named "${name}" already exists in this organization.`);
         }
+        if (role.name !== name) changed = true;
         role.name = name;
       }
       if (input.description !== undefined) {
         if (role.isOwnerRole && name === undefined) throw new RoleError("Cannot modify the protected Owner role.");
+        if (role.description !== description) changed = true;
         if (description === undefined) delete role.description;
         else role.description = description;
       }
-      role.version += 1;
-      return role;
+      // A call that changes nothing does not count (see `Role.version`).
+      if (changed) role.version += 1;
+      return copy(role);
     },
     async setPermissions(roleId, permissionKeys, options) {
       const role = roles.get(roleId);
@@ -952,19 +971,20 @@ export function createMemoryStorage(): UnioraStorage {
         ...(implies.length > 0 ? { implies } : {}),
       };
       permissions.set(permission.key, permission);
-      return permission;
+      return copy(permission);
     },
     async findByKey(key) {
-      return permissions.get(key) ?? null;
+      const found = permissions.get(key);
+      return found ? copy(found) : null;
     },
     async list() {
-      return [...permissions.values()];
+      return [...permissions.values()].map(copy);
     },
     async search(options) {
       const matches = matchingPermissions(options).sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
       const after = options?.after;
       const page = after === undefined ? matches : matches.filter((permission) => permission.key > after);
-      return options?.limit !== undefined ? page.slice(0, options.limit) : page;
+      return (options?.limit !== undefined ? page.slice(0, options.limit) : page).map(copy);
     },
     async count(options) {
       return matchingPermissions(options).length;
@@ -1068,16 +1088,16 @@ export function createMemoryStorage(): UnioraStorage {
         ...(input.parentKey !== undefined ? { parentKey: input.parentKey } : {}),
       };
       featureDefinitions.set(key, definition);
-      return definition;
+      return copy(definition);
     },
     async listCatalog() {
-      return [...featureDefinitions.values()];
+      return [...featureDefinitions.values()].map(copy);
     },
     async search(options) {
       const matches = matchingFeatures(options).sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
       const after = options?.after;
       const page = after === undefined ? matches : matches.filter((definition) => definition.key > after);
-      return options?.limit !== undefined ? page.slice(0, options.limit) : page;
+      return (options?.limit !== undefined ? page.slice(0, options.limit) : page).map(copy);
     },
     async count(options) {
       return matchingFeatures(options).length;
@@ -1129,19 +1149,19 @@ export function createMemoryStorage(): UnioraStorage {
     },
     async listEffective(organizationId, options) {
       const all = effectiveFor(organizationId).sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-      return options?.keys ? all.filter((f) => options.keys!.includes(f.key)) : all;
+      return (options?.keys ? all.filter((f) => options.keys!.includes(f.key)) : all).map(copy);
     },
     async listEffectiveMany(organizationIds, options) {
       assertEffectiveManyInput(organizationIds);
       return Object.fromEntries(
         [...new Set(organizationIds)].map((organizationId) => {
           const all = effectiveFor(organizationId).sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-          return [organizationId, options?.keys ? all.filter((f) => options.keys!.includes(f.key)) : all];
+          return [organizationId, (options?.keys ? all.filter((f) => options.keys!.includes(f.key)) : all).map(copy)];
         }),
       );
     },
     async listByOrganization(organizationId) {
-      return overridesOf(organizationId);
+      return overridesOf(organizationId).map(copy);
     },
     async unregister(key) {
       if (!featureDefinitions.has(key)) {

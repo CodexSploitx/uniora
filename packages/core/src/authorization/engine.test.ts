@@ -46,14 +46,21 @@ describe("createAuthorizationEngine", () => {
     // `MembershipRepository.create`/`assignRole` both reject a cross-org
     // roleId at the source (docs/security-pentest-2026-09-24.md Hallazgo 2)
     // — so a corrupted/forged reference like this can no longer be produced
-    // through the public API. Simulate it by mutating the stored object
-    // directly (the memory adapter returns live references, not copies),
-    // exactly as if the data had been corrupted some other way, to prove
-    // the Engine's own defense-in-depth still holds regardless.
-    const raw = await storage.memberships.findById(membership.id);
-    raw!.roleIds.push("role-other-org");
+    // through the public API, and the memory adapter returns copies. Simulate
+    // it with a storage whose reads return the forged membership, exactly as
+    // if the data had been corrupted some other way, to prove the Engine's own
+    // defense-in-depth still holds regardless.
+    const forged = { ...membership, roleIds: [...membership.roleIds, "role-other-org"] };
+    const corrupted: typeof storage = {
+      ...storage,
+      memberships: {
+        ...storage.memberships,
+        findByIdentity: async () => forged,
+        findById: async () => forged,
+      },
+    };
 
-    const engine = createAuthorizationEngine(storage);
+    const engine = createAuthorizationEngine(corrupted);
     const allowed = await engine.can({ identity, organizationId: "org-1", permission: "vehicles.create" });
 
     expect(allowed).toBe(false);

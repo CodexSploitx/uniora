@@ -327,14 +327,18 @@ export function createRoleRepository(db: Queryable): RoleRepository {
       if (role.isSystem) throw new RoleError("Cannot rename a system role.", "role_system_protected");
       const sanitized = sanitizeRoleName(name);
       try {
-        await db.query(`update uniora.roles set name = $2, name_normalized = $3, version = version + 1 where id = $1`, [roleId, sanitized, normalizeRoleName(sanitized)]);
+        // The version goes up only when the name really changes.
+        await db.query(
+          `update uniora.roles set name = $2, name_normalized = $3, version = version + (case when name is distinct from $2 then 1 else 0 end) where id = $1`,
+          [roleId, sanitized, normalizeRoleName(sanitized)],
+        );
       } catch (error) {
         if (isUniqueViolation(error)) {
           throw new RoleError(`A role named "${sanitized}" already exists in this organization.`);
         }
         throw error;
       }
-      return { ...role, name: sanitized, version: role.version + 1 };
+      return { ...role, name: sanitized, version: sanitized === role.name ? role.version : role.version + 1 };
     },
 
     async update(roleId: string, input: UpdateRoleInput) {
@@ -353,7 +357,7 @@ export function createRoleRepository(db: Queryable): RoleRepository {
       try {
         const changed = await db.query(
           `update uniora.roles set name = coalesce($2, name), name_normalized = coalesce($6, name_normalized), description = case when $3::boolean then $4 else description end,
-             version = version + 1
+             version = version + (case when name is distinct from coalesce($2, name) or description is distinct from (case when $3::boolean then $4 else description end) then 1 else 0 end)
            where id = $1 and not is_owner_role and (not is_system or $2::text is null) and ($5::integer is null or version = $5)`,
           [roleId, name, setDescription, description, expectedVersion, name === null ? null : normalizeRoleName(name)],
         );

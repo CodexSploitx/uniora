@@ -4,6 +4,11 @@ All notable changes to UNIORA. Packages are released in lockstep, so one version
 
 ## Unreleased
 
+### Fixed
+
+- **The in-memory storage returns copies**: `createMemoryStorage` used to hand out the very objects it keeps (roles from `listByOrganization` / `findByIds`, memberships, permissions, feature definitions and overrides, and what the writes return), so a record read earlier changed under the caller after `roles.update`, `assignRole`, `block` and so on, and an `expectedVersion` conflict (`role_version_conflict`, `membership_version_conflict`) could never be reproduced in tests. Every read and every write result is now a copy, as with the PostgreSQL and SQLite backends. **Behaviour change (0.x):** code that mutated a returned object and relied on the store seeing it will no longer work; use the repository methods. The conformance suite now checks it for all backends.
+- **`roles.update` / `roles.rename` no longer bump `version` when nothing changes**, as `Role.version` always documented: re-saving the same name and description leaves the version alone (and a stale `expectedVersion` is still refused). The same now holds for `organizations.rename` / `update`. Applies to memory, PostgreSQL and SQLite; no migration. A real change to any field still counts. Feature overrides keep bumping on every write, as documented.
+
 ## 0.4.0 - 2026-10-07
 
 ### Added
