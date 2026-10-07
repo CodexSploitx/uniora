@@ -50,7 +50,7 @@
     "@uniora/sqlite": "workspace:^",
     "@uniora/studio": "workspace:^",
     "better-sqlite3": "^13.0.3",
-    "pg": "^8.13.1"
+    "pg": "^8.23.1"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
