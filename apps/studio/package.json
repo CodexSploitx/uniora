@@ -46,7 +46,7 @@
     "@uniora/postgres": "workspace:^",
     "@uniora/sqlite": "workspace:^",
     "better-sqlite3": "^13.0.3",
-    "next": "16.3.6",
+    "next": "16.3.8",
     "pg": "^8.13.1",
     "react": "19.2.8",
     "react-dom": "19.2.8"
