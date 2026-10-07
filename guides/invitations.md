@@ -25,7 +25,7 @@ const invitations = createInvitationService({
 | `storage` | required | Where invitations, memberships and the audit log live. |
 | `acceptUrl(token)` | required | Builds the link for the person. |
 | `sender` | none | Delivers the message. Without one the invitation is still created and you get the link back to deliver yourself. |
-| `ttlMs` | 7 days | Lifetime of a link (maximum 30 days). |
+| `ttlMs` | 7 days | Lifetime of a link (maximum 30 days). `invite({ …, ttlMs })` and `resend(ref, { ttlMs })` override it for one invitation (e.g. 24 hours); `resend` without it uses the service default. |
 | `rateLimits` | see below | `perEmailPerHour` 5, `perEmailGlobalPerHour` 50, `perOrganizationPerHour` 200, `resendCooldownMs` 60 000. |
 | `retry` | 3 attempts | `{ maxAttempts, baseDelayMs, maxDelayMs, attemptTimeoutMs }`: jittered backoff and a time budget per attempt. |
 | `now`, `generateId`, `sleep`, `random` | real ones | Injection points for tests. |
@@ -54,7 +54,19 @@ await invitations.revoke({ organizationId, invitationId: invitation.id, actor })
 - **A mail failure never fails `invite()`.** The outcome is stored on the invitation (`invitation.delivery`) and recorded in the audit log as `invitation.delivery_failed`; call `resend` to try again.
 - `resend` and `revoke` treat another organization's invitation as missing.
 - Hitting a rate limit raises `invitation_rate_limited` (or `invitation_cooldown` for a quick resend).
-- List them for a screen with `storage.invitations.search(organizationId, { … })`.
+- List them for a screen with `storage.invitations.search(organizationId, { status?, query?, limit?, after? })`: `query` is a case-insensitive part of the invited e-mail (`%` and `_` are matched literally), newest first with a keyset cursor. `storage.invitations.count(organizationId, { status?, query? })` returns the total for the same filters, for a "42 invitations" header or page count.
+- **Already a member?** UNIORA stores no e-mail on memberships, so it can't know on its own. Give the service a lookup and `invite()` refuses an address that belongs to a member with `invitation_already_member` (HTTP 409 through `invitationErrorToHttp`), instead of leaving the discovery for accept time:
+
+  ```ts
+  createInvitationService({
+    storage,
+    acceptUrl,
+    // your auth provider: which identities own this normalized address? `[]` when none.
+    findIdentitiesByEmail: async (email) => (await findUsersByEmail(email)).map((u) => ({ provider: "supabase", subject: u.id })),
+  });
+  ```
+
+  Pass `allowExistingMember: true` to `invite()` to deliberately invite a member anyway (accepting then adds the invited roles). Without the lookup nothing changes.
 
 ## Preview and accept
 

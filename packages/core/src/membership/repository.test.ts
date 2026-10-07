@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createMemoryStorage } from "../storage/memory.js";
 import { MembershipError } from "./repository.js";
+import { createOrganizationWithOwner } from "../organization/create-with-owner.js";
 
 const identity = { provider: "supabase", subject: "user-1" };
 
@@ -291,5 +292,22 @@ describe("MembershipRepository.create() — boundary collapse vía identity link
     await expect(
       storage.memberships.create({ id: "m-y-2", organizationId: "org-2", identity: y, roleIds: [] }),
     ).resolves.toMatchObject({ organizationId: "org-2" });
+  });
+});
+
+describe("MembershipRepository.delete — stable error codes", () => {
+  it("el último Owner da last_owner y un id desconocido membership_not_found", async () => {
+    const storage = createMemoryStorage();
+    const { membership, ownerRole } = await createOrganizationWithOwner(storage, {
+      organizationId: "org-1",
+      organizationName: "Acme",
+      ownerRoleId: "role-owner",
+      membershipId: "m-1",
+      ownerIdentity: identity,
+    });
+
+    await expect(storage.memberships.delete(membership.id)).rejects.toMatchObject({ code: "last_owner" });
+    await expect(storage.memberships.unassignOwnerRole(membership.id, ownerRole.id)).rejects.toMatchObject({ code: "last_owner" });
+    await expect(storage.memberships.delete("nope")).rejects.toMatchObject({ code: "membership_not_found" });
   });
 });

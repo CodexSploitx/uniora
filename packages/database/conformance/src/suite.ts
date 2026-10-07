@@ -307,6 +307,23 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
       expect(found?.roleIds).toEqual([ownerRole.id]);
     });
 
+    it("delete() y unassignOwnerRole() del último Owner fallan con el código estable last_owner (no membership_not_found)", async () => {
+      const storage = harness.storage();
+      const { ownerRole, membership } = await createOrganizationWithOwner(storage, {
+        organizationId: "org-1",
+        organizationName: "Acme Motors",
+        ownerRoleId: "role-owner",
+        membershipId: "m-1",
+        ownerIdentity: identity,
+      });
+
+      await expect(storage.memberships.delete(membership.id)).rejects.toMatchObject({ code: "last_owner" });
+      await expect(storage.memberships.unassignOwnerRole(membership.id, ownerRole.id)).rejects.toMatchObject({ code: "last_owner" });
+      await expect(storage.memberships.delete("no-such")).rejects.toMatchObject({ code: "membership_not_found" });
+      // Nada debe haber cambiado.
+      expect(await storage.memberships.findById(membership.id)).not.toBeNull();
+    });
+
     it("permite unassignRole/delete del Owner role cuando otro membership también lo tiene", async () => {
       const storage = harness.storage();
       const { ownerRole, membership } = await createOrganizationWithOwner(storage, {
@@ -2946,6 +2963,25 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         expect(second.map((i) => i.id)).toEqual(["inv-3", "inv-2"]);
         expect((await storage.invitations.search("org-1", { status: "revoked" })).map((i) => i.id)).toEqual(["inv-2"]);
         expect(await storage.invitations.search("org-1", { after: "ghost" })).toEqual([]);
+      });
+
+      it("counts and searches by e-mail substring (case-insensitive, wildcards literal), combined with status", async () => {
+        const storage = await seed();
+        const emails = ["ana@example.com", "anabel@corp.io", "bob_x@example.com", "bobyx@example.com"];
+        for (const [n, email] of emails.entries()) {
+          await storage.invitations.create(base({ id: `inv-${n}`, tokenHash: `h${n}`, email, createdAt: new Date(Date.UTC(2026, 0, n + 1)) }));
+        }
+        await storage.invitations.revoke("inv-1", new Date());
+        expect(await storage.invitations.count("org-1")).toBe(4);
+        expect(await storage.invitations.count("org-1", { status: "revoked" })).toBe(1);
+        expect(await storage.invitations.count("org-1", { query: "ANA" })).toBe(2);
+        expect(await storage.invitations.count("org-1", { query: "ana", status: "pending" })).toBe(1);
+        expect(await storage.invitations.count("org-1", { query: "_x@" })).toBe(1); // "_" is not a wildcard
+        expect(await storage.invitations.count("org-1", { query: "%" })).toBe(0);
+        expect(await storage.invitations.count("org-1", { query: "   " })).toBe(4);
+        expect(await storage.invitations.count("other")).toBe(0);
+        expect((await storage.invitations.search("org-1", { query: "example.com", limit: 2 })).map((i) => i.id)).toEqual(["inv-3", "inv-2"]);
+        expect((await storage.invitations.search("org-1", { query: "ana" })).map((i) => i.id)).toEqual(["inv-1", "inv-0"]);
       });
 
       it("countCreatedSince filters by e-mail, organization and time", async () => {
