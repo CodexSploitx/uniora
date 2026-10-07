@@ -32,6 +32,9 @@ describe("createAuditedStorage: every mutation is audited, with standard names",
     const audited = createAuditedStorage(raw, { actor });
     await audited.organizations.create({ id: "org", name: "Acme" });
     await audited.organizations.rename("org", "Acme 2");
+    await audited.organizations.update("org", { name: "Acme 3", slug: "acme-3" });
+    await audited.organizations.setStatus("org", { status: "suspended", actor, reason: "unpaid" });
+    await audited.organizations.setStatus("org", { status: "active", actor });
     await audited.permissions.register({ key: "reports.read" });
     await audited.features.register({ key: "agenda", name: "Agenda" });
     await audited.features.register({ key: "agenda_chat", name: "Chat", parentKey: "agenda" });

@@ -213,6 +213,36 @@ describe("uniora.* functions for row-level security", () => {
     }
   });
 
+  it("una organización suspendida o archivada se niega igual que en el motor, y al reactivarla vuelve", async () => {
+    const engine = createAuthorizationEngine(storage);
+    const compare = async (label: string) => {
+      for (const identity of [owner, staff, alias]) {
+        expect(await asProbe(identity, "select uniora.is_member('org-1') as v"), `${label} member ${identity.subject}`).toBe(
+          await engine.access.check({ identity, organizationId: "org-1" }),
+        );
+        expect(await asProbe(identity, "select uniora.has_permission('org-1', 'vehicles.read') as v"), `${label} permission ${identity.subject}`).toBe(
+          await engine.can({ identity, organizationId: "org-1", permission: "vehicles.read" }),
+        );
+        expect(await asProbe(identity, "select uniora.has_access('org-1', null, 'agenda') as v"), `${label} access ${identity.subject}`).toBe(
+          await engine.access.check({ identity, organizationId: "org-1", feature: "agenda" }),
+        );
+      }
+    };
+    try {
+      for (const status of ["suspended", "archived"] as const) {
+        await storage.organizations.setStatus("org-1", { status, actor: owner });
+        await compare(status);
+        expect(await asProbe(owner, "select uniora.is_member('org-1') as v")).toBe(false);
+        expect(await asProbe(owner, "select uniora.has_permission('org-1', 'anything.at_all') as v")).toBe(false);
+        expect(await asProbe(other, "select uniora.is_member('org-2') as v")).toBe(true); // otra organización: intacta
+      }
+    } finally {
+      await storage.organizations.setStatus("org-1", { status: "active", actor: owner });
+    }
+    await compare("active");
+    expect(await asProbe(owner, "select uniora.is_member('org-1') as v")).toBe(true);
+  });
+
   it("sin identidad actual todo se niega, y nada lanza con entradas raras", async () => {
     expect(await asProbe(undefined, "select uniora.is_member('org-1') as v")).toBe(false);
     expect(await asProbe(undefined, "select uniora.has_permission('org-1', 'vehicles.read') as v")).toBe(false);

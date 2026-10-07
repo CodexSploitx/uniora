@@ -1,8 +1,9 @@
 import type { Identity } from "../identity/types.js";
 import { sameIdentity } from "../identity/types.js";
-import type { Organization } from "../organization/types.js";
+import type { Organization, OrganizationStatus } from "../organization/types.js";
+import { assertOrganizationStatus, sanitizeStatusReason } from "../organization/status.js";
 import type { CreateOrganizationInput, OrganizationRepository } from "../organization/repository.js";
-import { OrganizationError, resolveOrganizationSlug, sanitizeOrganizationName } from "../organization/slug.js";
+import { OrganizationError, assertValidSlug, resolveOrganizationSlug, sanitizeOrganizationName } from "../organization/slug.js";
 import type { Membership, MembershipStatus } from "../membership/types.js";
 import type { CreateMembershipInput, MembershipListing, MembershipRepository, SearchMembershipsOptions } from "../membership/repository.js";
 import { MembershipError, sanitizeBlockReason } from "../membership/repository.js";
@@ -171,6 +172,9 @@ export function createMemoryStorage(): UnioraStorage {
     },
   };
 
+  const statusSet = (status: OrganizationStatus | OrganizationStatus[] | undefined): Set<OrganizationStatus> | undefined =>
+    status === undefined ? undefined : new Set((Array.isArray(status) ? status : [status]).map(assertOrganizationStatus));
+
   const organizationRepository: OrganizationRepository = {
     async create(input: CreateOrganizationInput) {
       const name = sanitizeOrganizationName(input.name);
@@ -185,7 +189,7 @@ export function createMemoryStorage(): UnioraStorage {
         );
       }
 
-      const organization: Organization = { id: input.id, slug, name, createdAt: new Date() };
+      const organization: Organization = { id: input.id, slug, name, createdAt: new Date(), status: "active" };
       organizations.set(organization.id, organization);
       return organization;
     },
@@ -199,6 +203,36 @@ export function createMemoryStorage(): UnioraStorage {
       organizations.set(id, updated);
       return updated;
     },
+    async update(id, input) {
+      const existing = organizations.get(id);
+      if (input.name === undefined && input.slug === undefined) {
+        throw new OrganizationError("Pass a name and/or a slug to update.", "organization_update_empty");
+      }
+      const name = input.name === undefined ? undefined : sanitizeOrganizationName(input.name);
+      const slug = input.slug === undefined ? undefined : assertValidSlug(input.slug);
+      if (!existing) return null;
+      if (slug !== undefined && [...organizations.values()].some((o) => o.id !== id && o.slug === slug)) {
+        throw new OrganizationError(`An organization with slug "${slug}" already exists.`, "organization_slug_taken");
+      }
+      const updated: Organization = { ...existing, ...(name !== undefined ? { name } : {}), ...(slug !== undefined ? { slug } : {}) };
+      organizations.set(id, updated);
+      return updated;
+    },
+    async setStatus(id, input) {
+      const status = assertOrganizationStatus(input.status);
+      const reason = sanitizeStatusReason(input.reason);
+      assertAuditInput({ actor: input.actor, action: "organization.status_changed" });
+      const existing = organizations.get(id);
+      if (!existing) return null;
+      if (existing.status === status) return existing;
+      const updated: Organization = {
+        ...existing,
+        status,
+        statusChange: { at: new Date(), by: input.actor, ...(reason !== undefined ? { reason } : {}) },
+      };
+      organizations.set(id, updated);
+      return updated;
+    },
     async findByIds(ids) {
       return ids.flatMap((id) => organizations.get(id) ?? []);
     },
@@ -207,9 +241,11 @@ export function createMemoryStorage(): UnioraStorage {
     },
     async search(options) {
       const query = options?.query?.trim().toLowerCase();
+      const statuses = statusSet(options?.status);
       const matches = [...organizations.values()].filter(
         (organization) =>
-          !query || organization.name.toLowerCase().includes(query) || organization.slug.toLowerCase().includes(query),
+          (!statuses || statuses.has(organization.status)) &&
+          (!query || organization.name.toLowerCase().includes(query) || organization.slug.toLowerCase().includes(query)),
       );
       const sorted = matches.sort(
         (a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
@@ -226,9 +262,11 @@ export function createMemoryStorage(): UnioraStorage {
     },
     async count(options) {
       const query = options?.query?.trim().toLowerCase();
-      if (!query) return organizations.size;
+      const statuses = statusSet(options?.status);
       return [...organizations.values()].filter(
-        (organization) => organization.name.toLowerCase().includes(query) || organization.slug.toLowerCase().includes(query),
+        (organization) =>
+          (!statuses || statuses.has(organization.status)) &&
+          (!query || organization.name.toLowerCase().includes(query) || organization.slug.toLowerCase().includes(query)),
       ).length;
     },
   };

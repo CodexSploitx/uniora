@@ -64,6 +64,34 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
             if (renamed) await record(tx, "organization.renamed", id, { type: "organization", id }, { name });
             return renamed;
           }),
+        update: (id, input) =>
+          run(async (tx) => {
+            const before = await tx.organizations.findById(id);
+            const updated = await tx.organizations.update(id, input);
+            if (before && updated) {
+              const changed: Record<string, { from: string; to: string }> = {};
+              if (before.name !== updated.name) changed.name = { from: before.name, to: updated.name };
+              if (before.slug !== updated.slug) changed.slug = { from: before.slug, to: updated.slug };
+              if (Object.keys(changed).length > 0) {
+                await record(tx, "organization.updated", id, { type: "organization", id }, { changed });
+              }
+            }
+            return updated;
+          }),
+        setStatus: (id, input) =>
+          run(async (tx) => {
+            const before = await tx.organizations.findById(id);
+            const updated = await tx.organizations.setStatus(id, input);
+            if (before && updated && before.status !== updated.status) {
+              await record(tx, "organization.status_changed", id, { type: "organization", id }, {
+                from: before.status,
+                to: updated.status,
+                ...(updated.statusChange?.reason !== undefined ? { reason: updated.statusChange.reason } : {}),
+                requestedBy: `${input.actor.provider}:${input.actor.subject}`,
+              });
+            }
+            return updated;
+          }),
       },
       memberships: {
         ...memberships,
