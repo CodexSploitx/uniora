@@ -38,7 +38,7 @@ change the `slug` too, and slugs are unique across organizations.
 
 The link between an identity and an organization, with the roles that person holds there. One identity has at most one
 membership per organization. A membership is `active` or `blocked`: a blocked member keeps their roles but is denied everything,
-Owner included, and the last active Owner can't be blocked. Memberships also record who invited them and when they were last active.
+Owner included, and the last active Owner can't be blocked. A member can also be `suspended` until a date (`suspend(id, { actor, until })`): denied like a blocked one, then `active` again by themselves when the date passes, with no job to run. Memberships also record who invited them and when they were last active.
 
 ## Roles and the protected Owner
 

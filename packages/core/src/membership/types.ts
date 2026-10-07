@@ -4,14 +4,20 @@ import type { Identity } from "../identity/types.js";
  * `active` members are evaluated normally. `blocked` members stay in the organization (roles, history and
  * audit trail intact) but are denied EVERYTHING: `can()`, `access.check()` and authorization snapshots all
  * answer `false`. Blocking is reversible (`unblock`), unlike removing the membership.
+ *
+ * `suspended` is a block with an end date (`suspend(id, { actor, until })`): denied exactly like `blocked` until
+ * `until`, then the status reads `active` again on its own, with no job to run — every read (and the SQL functions
+ * for RLS) compares the date with the clock. `blocked` stays indefinite until `unblock`.
  */
-export type MembershipStatus = "active" | "blocked";
+export type MembershipStatus = "active" | "suspended" | "blocked";
 
-/** Why and by whom a membership is currently blocked. Cleared by `unblock` (the audit trail keeps the history). */
+/** Why and by whom a membership is currently blocked or suspended. Cleared by `unblock` (the audit trail keeps the history). */
 export interface MembershipBlock {
   readonly at: Date;
   readonly by: Identity;
   readonly reason?: string;
+  /** End of a suspension (set exactly when `status` is `suspended`). Once it passes, the membership is `active` again. */
+  readonly until?: Date;
 }
 
 /**
@@ -32,6 +38,6 @@ export interface Membership {
   readonly invitedBy?: Identity;
   /** Last time the application reported the member as active (`recordActivity`). Absent until it does. */
   readonly lastActiveAt?: Date;
-  /** Present exactly while `status` is `blocked`. */
+  /** Present exactly while `status` is `blocked` or `suspended`. */
   readonly blocked?: MembershipBlock;
 }

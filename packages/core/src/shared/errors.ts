@@ -24,7 +24,8 @@ export type MembershipErrorCode =
   | "last_owner"
   | "identity_aliased"
   | "identity_link_busy"
-  | "membership_invalid";
+  | "membership_invalid"
+  | "membership_block_until_invalid";
 
 export type RoleErrorCode =
   | "role_not_found"

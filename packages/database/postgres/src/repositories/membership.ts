@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 import type {
   BlockMembershipInput,
+  SuspendMembershipInput,
   CreateMembershipInput,
   Identity,
   Membership,
@@ -10,7 +11,7 @@ import type {
   SearchMembershipsOptions,
   UnblockMembershipInput,
 } from "@uniora/core";
-import { MembershipError, sanitizeBlockReason } from "@uniora/core";
+import { MembershipError, assertBlockUntil, sanitizeBlockReason } from "@uniora/core";
 import type { Queryable } from "../queryable.js";
 import { countByOrganization } from "../pg-counts.js";
 import { toLikePattern } from "../pg-like.js";
@@ -36,15 +37,26 @@ interface MembershipRow {
   invited_by_subject: string | null;
   last_active_at: Date | null;
   blocked_at: Date | null;
+  blocked_until: Date | null;
   blocked_by_provider: string | null;
   blocked_by_subject: string | null;
   block_reason: string | null;
 }
 
+/**
+ * The status that is in force right now: a timed suspension whose `blocked_until` has passed is active again, with no
+ * job to flip it (the stored `status` stays `blocked` until the next `block`/`unblock`). Same rule as
+ * `uniora.active_membership_id`. `now()` is the database clock.
+ */
+function effectiveStatus(alias?: string): string {
+  const prefix = alias ? `${alias}.` : "";
+  return `(case when ${prefix}status = 'blocked' and ${prefix}blocked_until is not null then (case when ${prefix}blocked_until <= now() then 'active' else 'suspended' end) else ${prefix}status end)`;
+}
+
 /** Columns of `uniora.memberships` a `Membership` needs, qualified with the alias `m`. */
-const MEMBERSHIP_COLUMNS = `m.id, m.organization_id, m.provider, m.subject, m.status, m.created_at, m.updated_at,
+const MEMBERSHIP_COLUMNS = `m.id, m.organization_id, m.provider, m.subject, ${effectiveStatus("m")} as status, m.created_at, m.updated_at,
   m.invited_by_provider, m.invited_by_subject, m.last_active_at,
-  m.blocked_at, m.blocked_by_provider, m.blocked_by_subject, m.block_reason`;
+  m.blocked_at, m.blocked_until, m.blocked_by_provider, m.blocked_by_subject, m.block_reason`;
 
 function invitedByOf(row: Pick<MembershipRow, "invited_by_provider" | "invited_by_subject">): Identity | undefined {
   return row.invited_by_provider !== null && row.invited_by_subject !== null
@@ -64,12 +76,13 @@ function toMembership(row: MembershipRow): Membership {
     updatedAt: row.updated_at,
     ...(invitedBy ? { invitedBy } : {}),
     ...(row.last_active_at ? { lastActiveAt: row.last_active_at } : {}),
-    ...(row.status === "blocked" && row.blocked_at && row.blocked_by_provider !== null && row.blocked_by_subject !== null
+    ...(row.status !== "active" && row.blocked_at && row.blocked_by_provider !== null && row.blocked_by_subject !== null
       ? {
           blocked: {
             at: row.blocked_at,
             by: { provider: row.blocked_by_provider, subject: row.blocked_by_subject },
             ...(row.block_reason !== null ? { reason: row.block_reason } : {}),
+            ...(row.blocked_until !== null ? { until: row.blocked_until } : {}),
           },
         }
       : {}),
@@ -221,6 +234,47 @@ async function touch(db: Queryable, membershipId: string): Promise<void> {
  * `identity-link.ts`'s `link()` uses, needed for the same class of reason.
  */
 export function createMembershipRepository(db: Queryable, pool?: Pool): MembershipRepository {
+  /** `block` (no `until`) and `suspend` (with one) are the same write: a timed suspension is a block that ends. */
+  async function blockWithin(membershipId: string, input: BlockMembershipInput, until: Date | undefined): Promise<Membership> {
+    // Same write-skew defence as `unassignOwnerRole`: lock every membership holding one of this member's Owner
+    // roles (ordered, so two concurrent blockers contend in the same order) BEFORE counting the ACTIVE ones, so
+    // two Owners blocking each other at the same instant can't leave nobody able to act.
+    await db.query(
+      `with owner_role_ids as (
+         select mr.role_id
+         from uniora.membership_roles mr
+         join uniora.roles r on r.id = mr.role_id
+         where mr.membership_id = $1 and r.is_owner_role
+       ),
+       locked as (
+         select mr.membership_id, mr.role_id, ${effectiveStatus("m")} as status
+         from uniora.membership_roles mr
+         join uniora.memberships m on m.id = mr.membership_id
+         where mr.role_id in (select role_id from owner_role_ids)
+         order by mr.role_id, mr.membership_id
+         for update of mr, m
+       )
+       update uniora.memberships m
+       set status = 'blocked', blocked_at = date_trunc('milliseconds', now()), blocked_until = $5::timestamptz,
+           blocked_by_provider = $2, blocked_by_subject = $3, block_reason = $4,
+           updated_at = date_trunc('milliseconds', now())
+       where m.id = $1 and ${effectiveStatus("m")} = 'active'
+         and not exists (
+           select 1 from owner_role_ids o
+           where (select count(*) from locked l where l.role_id = o.role_id and l.status = 'active' and l.membership_id <> $1) < 1
+         )
+       returning m.id`,
+      [membershipId, input.actor.provider, input.actor.subject, sanitizeBlockReason(input.reason) ?? null, until ?? null],
+    );
+    const current = await repository.findById(membershipId);
+    if (!current) throw new MembershipError(`Membership not found: ${membershipId}`);
+    if (current.status !== "active") return current; // changed now, or was already blocked or suspended (idempotent)
+    throw new MembershipError(
+      "Cannot block the organization's last active Owner — every organization must keep at least one.",
+      "last_owner",
+    );
+  }
+
   const repository: MembershipRepository = {
     async create(input: CreateMembershipInput) {
       if (!pool) return performCreate(db, input);
@@ -323,14 +377,14 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
              and ($2::text is null or provider ilike $2 or subject ilike $2)
              and ($3::text is null or id > $3)
              and ($5::text is null or (provider = $5 and subject = $6))
-             and ($7::text is null or status = $7)
+             and ($7::text is null or ${effectiveStatus()} = $7)
            order by id asc
            limit $4
          ) m
          left join uniora.membership_roles mr on mr.membership_id = m.id
          group by m.id, m.organization_id, m.provider, m.subject, m.status, m.created_at, m.updated_at,
                   m.invited_by_provider, m.invited_by_subject, m.last_active_at,
-                  m.blocked_at, m.blocked_by_provider, m.blocked_by_subject, m.block_reason
+                  m.blocked_at, m.blocked_until, m.blocked_by_provider, m.blocked_by_subject, m.block_reason
          order by m.id asc`,
         [options?.organizationId ?? null, query ? toLikePattern(query) : null, options?.after ?? null, options?.limit ?? null, options?.identity?.provider ?? null, options?.identity?.subject ?? null, options?.status ?? null],
       );
@@ -373,13 +427,13 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
                   ) p
                 ), '[]'::json) as roles
          from (
-           select id, organization_id, provider, subject, status, created_at, invited_by_provider, invited_by_subject, last_active_at
+           select id, organization_id, provider, subject, ${effectiveStatus()} as status, created_at, invited_by_provider, invited_by_subject, last_active_at
            from uniora.memberships
            where ($1::text is null or organization_id = $1)
              and ($2::text is null or provider ilike $2 or subject ilike $2)
              and ($3::text is null or id > $3)
              and ($6::text is null or (provider = $6 and subject = $7))
-             and ($8::text is null or status = $8)
+             and ($8::text is null or ${effectiveStatus()} = $8)
            order by id asc
            limit $4
          ) m
@@ -416,7 +470,7 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
          where ($1::text is null or organization_id = $1)
            and ($2::text is null or provider ilike $2 or subject ilike $2)
            and ($3::text is null or (provider = $3 and subject = $4))
-           and ($5::text is null or status = $5)`,
+           and ($5::text is null or ${effectiveStatus()} = $5)`,
         [options?.organizationId ?? null, query ? toLikePattern(query) : null, options?.identity?.provider ?? null, options?.identity?.subject ?? null, options?.status ?? null],
       );
       return Number(result.rows[0]!.count);
@@ -627,48 +681,19 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
     },
 
     async block(membershipId: string, input: BlockMembershipInput) {
-      // Same write-skew defence as `unassignOwnerRole`: lock every membership holding one of this member's Owner
-      // roles (ordered, so two concurrent blockers contend in the same order) BEFORE counting the ACTIVE ones, so
-      // two Owners blocking each other at the same instant can't leave nobody able to act.
-      await db.query(
-        `with owner_role_ids as (
-           select mr.role_id
-           from uniora.membership_roles mr
-           join uniora.roles r on r.id = mr.role_id
-           where mr.membership_id = $1 and r.is_owner_role
-         ),
-         locked as (
-           select mr.membership_id, mr.role_id, m.status
-           from uniora.membership_roles mr
-           join uniora.memberships m on m.id = mr.membership_id
-           where mr.role_id in (select role_id from owner_role_ids)
-           order by mr.role_id, mr.membership_id
-           for update of mr, m
-         )
-         update uniora.memberships m
-         set status = 'blocked', blocked_at = date_trunc('milliseconds', now()), blocked_by_provider = $2,
-             blocked_by_subject = $3, block_reason = $4, updated_at = date_trunc('milliseconds', now())
-         where m.id = $1 and m.status = 'active'
-           and not exists (
-             select 1 from owner_role_ids o
-             where (select count(*) from locked l where l.role_id = o.role_id and l.status = 'active' and l.membership_id <> $1) < 1
-           )
-         returning m.id`,
-        [membershipId, input.actor.provider, input.actor.subject, sanitizeBlockReason(input.reason) ?? null],
-      );
-      const current = await repository.findById(membershipId);
-      if (!current) throw new MembershipError(`Membership not found: ${membershipId}`);
-      if (current.status === "blocked") return current; // changed now, or was already blocked (idempotent)
-      throw new MembershipError(
-        "Cannot block the organization's last active Owner — every organization must keep at least one.",
-        "last_owner",
-      );
+      return blockWithin(membershipId, input, undefined);
+    },
+
+    async suspend(membershipId: string, input: SuspendMembershipInput) {
+      const until = assertBlockUntil(input.until);
+      if (until === undefined) throw new MembershipError("A suspension needs an end date (`until`).", "membership_block_until_invalid");
+      return blockWithin(membershipId, input, until);
     },
 
     async unblock(membershipId: string, _input: UnblockMembershipInput) {
       await db.query(
         `update uniora.memberships
-         set status = 'active', blocked_at = null, blocked_by_provider = null, blocked_by_subject = null,
+         set status = 'active', blocked_at = null, blocked_until = null, blocked_by_provider = null, blocked_by_subject = null,
              block_reason = null, updated_at = date_trunc('milliseconds', now())
          where id = $1 and status = 'blocked'`,
         [membershipId],

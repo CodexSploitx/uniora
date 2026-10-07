@@ -22,7 +22,7 @@ Standard action names are in `AUDIT_ACTIONS` (`isStandardAuditAction(name)` tell
 | Area | Actions |
 | --- | --- |
 | Organization | `organization.created`, `.renamed`, `.updated`, `.status_changed`, `.ownership_transferred` |
-| Membership | `membership.created`, `.deleted`, `.left`, `.blocked`, `.unblocked`, `.role_assigned`, `.role_unassigned`, `.owner_role_assigned`, `.owner_role_unassigned` |
+| Membership | `membership.created`, `.deleted`, `.left`, `.blocked`, `.suspended`, `.unblocked`, `.role_assigned`, `.role_unassigned`, `.owner_role_assigned`, `.owner_role_unassigned` |
 | Role | `role.created`, `.owner_created`, `.renamed`, `.updated`, `.cloned`, `.permissions_replaced`, `.deleted`, `.permission_granted`, `.permission_revoked` |
 | Permission | `permission.registered`, `.unregistered` |
 | Feature | `feature.registered`, `.unregistered`, `.enabled`, `.disabled`, `.bulk_changed`, `.disabled_everywhere` |

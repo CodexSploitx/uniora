@@ -49,6 +49,11 @@ export interface BlockMembershipInput {
   reason?: string;
 }
 
+export interface SuspendMembershipInput extends BlockMembershipInput {
+  /** The member is `active` again by themselves once this instant passes. A valid date in the future (`membership_block_until_invalid`). */
+  until: Date;
+}
+
 export interface UnblockMembershipInput {
   actor: Identity;
 }
@@ -161,7 +166,8 @@ export interface MembershipRepository {
   /**
    * Blocks a member without removing them: the engine denies a blocked member everything (`can`,
    * `access.check`, snapshots) while roles, history and audit trail stay. Idempotent — blocking an
-   * already-blocked member keeps the original actor and reason. Rejects (`MembershipError`) if the
+   * already-blocked or suspended member changes nothing (keeps the original actor, reason and date; `unblock` first
+   * to change them); a suspension that already ended counts as not blocked. Rejects (`MembershipError`) if the
    * membership doesn't exist (`membership_not_found`), or if it is an Owner and no OTHER active Owner would
    * remain (`last_owner`) — an organization must always keep an Owner who can still act.
    *
@@ -169,7 +175,13 @@ export interface MembershipRepository {
    * like `assignRole`.
    */
   block(membershipId: string, input: BlockMembershipInput): Promise<Membership>;
-  /** Lifts a block. Idempotent. Rejects (`membership_not_found`) for an unknown membership. */
+  /**
+   * Same as `block`, but the member is denied only until `input.until` and then is `active` again by themselves:
+   * status `suspended` meanwhile (see `MembershipStatus`). The last active Owner can't be suspended (`last_owner`).
+   * Same idempotence and trust boundary as `block` (authorize it in the host, e.g. `members.suspend`).
+   */
+  suspend(membershipId: string, input: SuspendMembershipInput): Promise<Membership>;
+  /** Lifts a block or a suspension. Idempotent. Rejects (`membership_not_found`) for an unknown membership. */
   unblock(membershipId: string, input: UnblockMembershipInput): Promise<Membership>;
   /**
    * Reports that the member was active at `at` (default: now) — for a "last seen" column. Only ever moves
@@ -181,6 +193,18 @@ export interface MembershipRepository {
    * organization's Owner role and is the only membership holding it.
    */
   delete(membershipId: string): Promise<void>;
+}
+
+/** Validates the end of a timed suspension: a valid `Date` strictly after `now`. Returns it, or `undefined` when none. */
+export function assertBlockUntil(until: Date | undefined, now: Date = new Date()): Date | undefined {
+  if (until === undefined) return undefined;
+  if (!(until instanceof Date) || Number.isNaN(until.getTime())) {
+    throw new MembershipError("The end of a suspension must be a valid date.", "membership_block_until_invalid");
+  }
+  if (until.getTime() <= now.getTime()) {
+    throw new MembershipError("The end of a suspension must be in the future.", "membership_block_until_invalid");
+  }
+  return new Date(until.getTime());
 }
 
 /** Trims and caps the free-text reason of a block; `undefined` when empty. */

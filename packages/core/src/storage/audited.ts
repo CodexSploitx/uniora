@@ -148,6 +148,16 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
             });
             return blocked;
           }),
+        suspend: (membershipId, input) =>
+          run(async (tx) => {
+            const suspended = await tx.memberships.suspend(membershipId, input);
+            await record(tx, "membership.suspended", suspended.organizationId, { type: "membership", id: membershipId }, {
+              ...(suspended.blocked?.reason ? { reason: suspended.blocked.reason } : {}),
+              ...(suspended.blocked?.until ? { until: suspended.blocked.until.toISOString() } : {}),
+              requestedBy: `${input.actor.provider}:${input.actor.subject}`,
+            });
+            return suspended;
+          }),
         unblock: (membershipId, input) =>
           run(async (tx) => {
             const unblocked = await tx.memberships.unblock(membershipId, input);

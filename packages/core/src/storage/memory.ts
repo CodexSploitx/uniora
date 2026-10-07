@@ -5,8 +5,8 @@ import { assertOrganizationStatus, sanitizeStatusReason } from "../organization/
 import type { CreateOrganizationInput, OrganizationRepository } from "../organization/repository.js";
 import { OrganizationError, assertValidSlug, resolveOrganizationSlug, sanitizeOrganizationName } from "../organization/slug.js";
 import type { Membership, MembershipStatus } from "../membership/types.js";
-import type { CreateMembershipInput, MembershipListing, MembershipRepository, SearchMembershipsOptions } from "../membership/repository.js";
-import { MembershipError, sanitizeBlockReason } from "../membership/repository.js";
+import type { BlockMembershipInput, CreateMembershipInput, MembershipListing, MembershipRepository, SearchMembershipsOptions } from "../membership/repository.js";
+import { MembershipError, assertBlockUntil, sanitizeBlockReason } from "../membership/repository.js";
 import type { Role } from "../role/types.js";
 import type { CreateOwnerRoleInput, CreateRoleInput, RoleRepository, RoleSummary } from "../role/repository.js";
 import { RoleError } from "../role/repository.js";
@@ -335,7 +335,45 @@ export function createMemoryStorage(): UnioraStorage {
     Object.assign(membership, { updatedAt: new Date() });
   }
 
+  /** A timed suspension that has ended reads as active again: lifted lazily, before any read of memberships. */
+  function lapseBlocks(): void {
+    const now = Date.now();
+    for (const [id, membership] of memberships) {
+      const until = membership.blocked?.until;
+      if (membership.status === "suspended" && until !== undefined && until.getTime() <= now) {
+        const { blocked: _blocked, ...rest } = membership;
+        memberships.set(id, { ...rest, status: "active", updatedAt: new Date() });
+      }
+    }
+  }
+
+  /** `block` and `suspend` are one write: a suspension is a block that has an end date. */
+  function blockWithin(membershipId: string, input: BlockMembershipInput, until: Date | undefined): Membership {
+    lapseBlocks();
+    const membership = memberships.get(membershipId);
+    if (!membership) throw new MembershipError(`Membership not found: ${membershipId}`);
+    if (membership.status !== "active") return membership;
+    // The Owner who is blocked must not be the only ACTIVE one left: the organization would have nobody who can act.
+    const ownerRoleIds = membership.roleIds.filter((roleId) => roles.get(roleId)?.isOwnerRole);
+    for (const roleId of ownerRoleIds) {
+      const otherActiveOwner = [...memberships.values()].some(
+        (other) => other.id !== membershipId && other.status === "active" && other.roleIds.includes(roleId),
+      );
+      if (!otherActiveOwner) {
+        throw new MembershipError("Cannot block the organization's last active Owner — every organization must keep at least one.", "last_owner");
+      }
+    }
+    const at = new Date();
+    Object.assign(membership, {
+      status: until ? ("suspended" as const) : ("blocked" as const),
+      updatedAt: at,
+      blocked: { at, by: { ...input.actor }, ...(sanitizeBlockReason(input.reason) !== undefined ? { reason: sanitizeBlockReason(input.reason) } : {}), ...(until ? { until } : {}) },
+    });
+    return membership;
+  }
+
   function matchingMemberships(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus }): Membership[] {
+    lapseBlocks();
     const query = options?.query?.trim().toLowerCase();
     return [...memberships.values()].filter(
       (m) =>
@@ -428,6 +466,7 @@ export function createMemoryStorage(): UnioraStorage {
     },
     async findByIdentity(organizationId: string, identity: Identity) {
       const resolved = await identityLinkRepository.resolve(identity);
+      lapseBlocks();
       for (const membership of memberships.values()) {
         if (membership.organizationId === organizationId && sameIdentity(membership.identity, resolved)) {
           return membership;
@@ -436,9 +475,11 @@ export function createMemoryStorage(): UnioraStorage {
       return null;
     },
     async listByOrganization(organizationId) {
+      lapseBlocks();
       return [...memberships.values()].filter((m) => m.organizationId === organizationId);
     },
     async findById(id) {
+      lapseBlocks();
       return memberships.get(id) ?? null;
     },
     async search(options) {
@@ -568,26 +609,12 @@ export function createMemoryStorage(): UnioraStorage {
       touch(membership);
     },
     async block(membershipId, input) {
-      const membership = memberships.get(membershipId);
-      if (!membership) throw new MembershipError(`Membership not found: ${membershipId}`);
-      if (membership.status === "blocked") return membership;
-      // The Owner who is blocked must not be the only ACTIVE one left: the organization would have nobody who can act.
-      const ownerRoleIds = membership.roleIds.filter((roleId) => roles.get(roleId)?.isOwnerRole);
-      for (const roleId of ownerRoleIds) {
-        const otherActiveOwner = [...memberships.values()].some(
-          (other) => other.id !== membershipId && other.status === "active" && other.roleIds.includes(roleId),
-        );
-        if (!otherActiveOwner) {
-          throw new MembershipError("Cannot block the organization's last active Owner — every organization must keep at least one.", "last_owner");
-        }
-      }
-      const at = new Date();
-      Object.assign(membership, {
-        status: "blocked" as const,
-        updatedAt: at,
-        blocked: { at, by: { ...input.actor }, ...(sanitizeBlockReason(input.reason) !== undefined ? { reason: sanitizeBlockReason(input.reason) } : {}) },
-      });
-      return membership;
+      return blockWithin(membershipId, input, undefined);
+    },
+    async suspend(membershipId, input) {
+      const until = assertBlockUntil(input.until);
+      if (until === undefined) throw new MembershipError("A suspension needs an end date (`until`).", "membership_block_until_invalid");
+      return blockWithin(membershipId, input, until);
     },
     async unblock(membershipId, _input) {
       const membership = memberships.get(membershipId);
