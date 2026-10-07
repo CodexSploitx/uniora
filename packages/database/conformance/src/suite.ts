@@ -690,6 +690,50 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         expect((await storage.memberships.findById("m-bob"))!.version).toBe(2);
       });
 
+      it("las lecturas devuelven copias: una membresía leída no cambia con escrituras posteriores y permite reproducir membership_version_conflict", async () => {
+        const { storage, a } = await seed();
+        await storage.roles.create({ id: "other", organizationId: "org-1", name: "Other" });
+        const byId = (await storage.memberships.findById("m-alice"))!;
+        const byIdentity = (await storage.memberships.findByIdentity("org-1", alice))!;
+        const listed = (await storage.memberships.listByOrganization("org-1")).find((m) => m.id === "m-alice")!;
+        const searched = (await storage.memberships.search({ organizationId: "org-1" })).find((m) => m.id === "m-alice")!;
+
+        await storage.memberships.assignRole(a.id, "other");
+        await storage.memberships.block(a.id, { actor: admin, reason: "impago" });
+
+        for (const stale of [byId, byIdentity, listed, searched]) {
+          expect(stale).toMatchObject({ status: "active", roleIds: ["staff"], version: 1 });
+          expect(stale.blocked).toBeUndefined();
+        }
+        await expect(storage.memberships.unblock(a.id, { actor: admin, expectedVersion: byId.version })).rejects.toMatchObject({
+          code: "membership_version_conflict",
+        });
+        // Mutar lo leído no toca lo guardado.
+        const fresh = (await storage.memberships.findById("m-alice"))!;
+        fresh.roleIds.push("fantasma");
+        (fresh.identity as { subject: string }).subject = "otra-persona";
+        const after = (await storage.memberships.findById("m-alice"))!;
+        expect([...after.roleIds].sort()).toEqual(["other", "staff"]);
+        expect(after.identity).toEqual(alice);
+      });
+
+      it("las lecturas de permisos y funciones devuelven copias", async () => {
+        const { storage } = await seed();
+        await storage.permissions.register({ key: "reports.write", implies: ["reports.read"] });
+        const permission = (await storage.permissions.findByKey("reports.write"))!;
+        permission.implies!.push("fantasma");
+        expect((await storage.permissions.list()).find((p) => p.key === "reports.write")!.implies).toEqual(["reports.read"]);
+
+        await storage.features.enable("org-1", "agenda");
+        const override = (await storage.features.listByOrganization("org-1"))[0]!;
+        const catalogEntry = (await storage.features.listCatalog()).find((f) => f.key === "agenda")!;
+        await storage.features.disable("org-1", "agenda");
+        expect(override).toMatchObject({ enabled: true, version: 1 });
+        expect(catalogEntry.defaultEnabled).toBe(true);
+        catalogEntry.defaultEnabled = false;
+        expect((await storage.features.listCatalog()).find((f) => f.key === "agenda")!.defaultEnabled).toBe(true);
+      });
+
       it("version: dos asignaciones concurrentes con la misma versión esperada — solo una gana", async () => {
         const { storage } = await seed();
         await storage.roles.create({ id: "r1", organizationId: "org-1", name: "R1" });
@@ -972,6 +1016,57 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         await expect(storage.roles.setPermissions("r-v", [], { expectedVersion: 1.5 })).rejects.toBeInstanceOf(TypeError);
         // Un rol inexistente sigue siendo role_not_found aunque se pase expectedVersion.
         await expect(storage.roles.update("ghost", { name: "X", expectedVersion: 1 })).rejects.toMatchObject({ code: "role_not_found" });
+      });
+
+      it("update y rename que no cambian nada no suben la versión (Role.version)", async () => {
+        const storage = await seed();
+        await storage.roles.create({ id: "r-n", organizationId: "org-1", name: "Estable", description: "igual" });
+
+        expect((await storage.roles.update("r-n", { name: "Estable", description: "igual" })).version).toBe(1);
+        expect((await storage.roles.update("r-n", { description: "igual" })).version).toBe(1);
+        expect((await storage.roles.update("r-n", { name: "  Estable  " })).version).toBe(1);
+        expect((await storage.roles.rename("r-n", "Estable")).version).toBe(1);
+        expect((await storage.roles.findByIds(["r-n"]))[0]!.version).toBe(1);
+        // Un update sin cambios sigue validando expectedVersion, y no consume la versión.
+        await expect(storage.roles.update("r-n", { description: "igual", expectedVersion: 2 })).rejects.toMatchObject({ code: "role_version_conflict" });
+        expect((await storage.roles.update("r-n", { description: "igual", expectedVersion: 1 })).version).toBe(1);
+
+        // Un cambio real sí cuenta, aunque la otra mitad del update no cambie.
+        expect((await storage.roles.update("r-n", { name: "Estable", description: "otra" })).version).toBe(2);
+        expect((await storage.roles.update("r-n", { name: "Otro nombre", description: "otra" })).version).toBe(3);
+        // Borrar la descripción también es un cambio; borrarla otra vez no.
+        expect((await storage.roles.update("r-n", { description: null })).version).toBe(4);
+        expect((await storage.roles.update("r-n", { description: null })).version).toBe(4);
+      });
+
+      it("las lecturas devuelven copias: un rol leído no cambia con escrituras posteriores y permite reproducir role_version_conflict", async () => {
+        const storage = await seed();
+        await storage.roles.create({ id: "r-c", organizationId: "org-1", name: "Copia", permissionKeys: ["a.read"] });
+        const byList = (await storage.roles.listByOrganization("org-1")).find((role) => role.id === "r-c")!;
+        const byIds = (await storage.roles.findByIds(["r-c"]))[0]!;
+        expect(byList).toMatchObject({ version: 1, permissionKeys: ["a.read"] });
+
+        await storage.roles.update("r-c", { description: "nueva" });
+        await storage.roles.grantPermission("r-c", "a.write");
+        await storage.roles.rename("r-c", "Copia renombrada");
+
+        for (const stale of [byList, byIds]) {
+          expect(stale).toMatchObject({ name: "Copia", version: 1, permissionKeys: ["a.read"] });
+          expect(stale.description).toBeUndefined();
+        }
+        // La copia vieja lleva la versión vieja: guardarla desde ahí es un conflicto, no un pisotón.
+        await expect(storage.roles.update("r-c", { description: "pisada", expectedVersion: byList.version })).rejects.toMatchObject({ code: "role_version_conflict" });
+        await expect(storage.roles.setPermissions("r-c", [], { expectedVersion: byIds.version })).rejects.toMatchObject({ code: "role_version_conflict" });
+
+        // Y al revés: mutar lo leído no toca lo guardado.
+        const fresh = (await storage.roles.findByIds(["r-c"]))[0]!;
+        fresh.permissionKeys.push("a.admin");
+        fresh.name = "Manoseado";
+        expect((await storage.roles.findByIds(["r-c"]))[0]).toMatchObject({ name: "Copia renombrada", permissionKeys: ["a.read", "a.write"] });
+        // Lo que devuelve una escritura tampoco está vivo.
+        const written = await storage.roles.update("r-c", { description: "otra" });
+        await storage.roles.update("r-c", { description: "última" });
+        expect(written).toMatchObject({ description: "otra", version: 5 });
       });
 
       it("setPermissions deja EXACTAMENTE esas claves, devuelve lo que cambió y es todo o nada", async () => {
@@ -1335,6 +1430,41 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         expect((await storage.organizations.findById("org-1"))!.version).toBe(5);
         expect(await storage.organizations.update("ghost", { name: "X", expectedVersion: 1 })).toBeNull();
         await expect(storage.organizations.update("org-1", { name: "X", expectedVersion: 0 })).rejects.toBeInstanceOf(TypeError);
+      });
+
+      it("update y rename que no cambian nada no suben la versión", async () => {
+        const storage = harness.storage();
+        await storage.organizations.create({ id: "org-1", name: "Acme Motors", slug: "acme" });
+
+        expect((await storage.organizations.rename("org-1", "Acme Motors"))?.version).toBe(1);
+        expect((await storage.organizations.update("org-1", { name: "Acme Motors", slug: "acme" }))?.version).toBe(1);
+        expect((await storage.organizations.update("org-1", { slug: "acme" }))?.version).toBe(1);
+        // Sigue validando expectedVersion, y un cambio real sí cuenta.
+        await expect(storage.organizations.update("org-1", { name: "Acme Motors", expectedVersion: 2 })).rejects.toMatchObject({ code: "organization_version_conflict" });
+        expect((await storage.organizations.update("org-1", { name: "Acme Motors", slug: "acme-2", expectedVersion: 1 }))?.version).toBe(2);
+        expect((await storage.organizations.findById("org-1"))!.version).toBe(2);
+      });
+
+      it("las lecturas devuelven copias: una organización leída no cambia con escrituras posteriores", async () => {
+        const storage = harness.storage();
+        await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+        const actor = { provider: "test", subject: "admin" };
+        const byId = (await storage.organizations.findById("org-1"))!;
+        const listed = (await storage.organizations.list())[0]!;
+        const byIds = (await storage.organizations.findByIds(["org-1"]))[0]!;
+
+        await storage.organizations.rename("org-1", "Acme Dos");
+        await storage.organizations.setStatus("org-1", { status: "suspended", actor });
+
+        for (const stale of [byId, listed, byIds]) {
+          expect(stale).toMatchObject({ name: "Acme Motors", status: "active", version: 1 });
+          expect(stale.statusChange).toBeUndefined();
+        }
+        await expect(storage.organizations.update("org-1", { name: "Pisada", expectedVersion: byId.version })).rejects.toMatchObject({
+          code: "organization_version_conflict",
+        });
+        byId.name = "Manoseada";
+        expect((await storage.organizations.findById("org-1"))!.name).toBe("Acme Dos");
       });
 
       it("con createAuditedStorage queda registrado quién, de qué a qué y por qué", async () => {

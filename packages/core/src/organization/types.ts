@@ -23,7 +23,7 @@ export interface Organization {
   readonly createdAt: Date;
   status: OrganizationStatus;
   /**
-   * Starts at 1 and goes up by one on every change (`rename`, `update`, `setStatus`). Pass it back as `expectedVersion`
+   * Starts at 1 and goes up by one on every change (`rename`, `update`, `setStatus`; a call that changes nothing does not count). Pass it back as `expectedVersion`
    * to `OrganizationRepository.update` so an edit made from a stale copy fails (`organization_version_conflict`)
    * instead of overwriting a newer one.
    */

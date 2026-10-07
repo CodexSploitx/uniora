@@ -334,14 +334,18 @@ export function createRoleRepository(db: SqliteExecutor): RoleRepository {
         if (role.isSystem) throw new RoleError("Cannot rename a system role.", "role_system_protected");
         const sanitized = sanitizeRoleName(name);
         try {
-          await db.query(`update uniora_roles set name = ?2, name_normalized = ?3, version = version + 1 where id = ?1`, [roleId, sanitized, normalizeRoleName(sanitized)]);
+          // The version goes up only when the name really changes.
+          await db.query(
+            `update uniora_roles set name = ?2, name_normalized = ?3, version = version + (case when name is not ?2 then 1 else 0 end) where id = ?1`,
+            [roleId, sanitized, normalizeRoleName(sanitized)],
+          );
         } catch (error) {
           if (isUniqueViolation(error)) {
             throw new RoleError(`A role named "${sanitized}" already exists in this organization.`);
           }
           throw error;
         }
-        return { ...role, name: sanitized, version: role.version + 1 };
+        return { ...role, name: sanitized, version: sanitized === role.name ? role.version : role.version + 1 };
       });
     },
 
@@ -364,7 +368,8 @@ export function createRoleRepository(db: SqliteExecutor): RoleRepository {
         if (setDescription && name === null && role.isOwnerRole) throw new RoleError("Cannot modify the protected Owner role.");
         try {
           await db.query(
-            `update uniora_roles set name = coalesce(?2, name), name_normalized = coalesce(?5, name_normalized), description = case when ?3 then ?4 else description end, version = version + 1 where id = ?1`,
+            `update uniora_roles set name = coalesce(?2, name), name_normalized = coalesce(?5, name_normalized), description = case when ?3 then ?4 else description end,
+               version = version + (case when name is not coalesce(?2, name) or description is not (case when ?3 then ?4 else description end) then 1 else 0 end) where id = ?1`,
             [roleId, name, setDescription ? 1 : 0, description, name === null ? null : normalizeRoleName(name)],
           );
         } catch (error) {
