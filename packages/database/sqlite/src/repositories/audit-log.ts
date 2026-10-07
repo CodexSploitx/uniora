@@ -7,8 +7,9 @@ import type {
   AuditIntegrityReport,
   ListRecentAuditLogOptions,
   RecordAuditLogInput,
+  SearchAuditLogOptions,
 } from "@uniora/core";
-import { applyAnchor, computeAuditEntryHash } from "@uniora/core";
+import { applyAnchor, assertAuditInput, computeAuditEntryHash } from "@uniora/core";
 import type { ChainedAuditFields } from "@uniora/core";
 import type { SqliteExecutor } from "../executor.js";
 
@@ -45,6 +46,7 @@ const SELECT_COLUMNS =
 export function createAuditLogRepository(db: SqliteExecutor): AuditLogRepository {
   return {
     async record(input: RecordAuditLogInput) {
+      assertAuditInput(input);
       // Read the previous hash and insert in ONE all-or-nothing step (`begin immediate` under the
       // hood), so concurrent writers — in this process or another — can't fork the chain.
       return db.atomic(async () => {
@@ -88,6 +90,40 @@ export function createAuditLogRepository(db: SqliteExecutor): AuditLogRepository
         if (!row) throw new Error("uniora_audit_logs insert did not return a row");
         return toEntry(row);
       });
+    },
+
+    async search(options?: SearchAuditLogOptions) {
+      const actions = options?.action === undefined ? null : JSON.stringify(Array.isArray(options.action) ? options.action : [options.action]);
+      const before = options?.before;
+      const result = await db.query<AuditLogRow>(
+        `select ${SELECT_COLUMNS}
+         from uniora_audit_logs
+         where (?1 is null or organization_id = ?1)
+           and (?2 is null or action in (select value from json_each(?2)))
+           and (?3 is null or instr(action, ?3) = 1)
+           and (?4 is null or (actor_provider = ?4 and actor_subject = ?5))
+           and (?6 is null or (target_type = ?6 and (?7 is null or target_id = ?7)))
+           and (?8 is null or created_at >= ?8)
+           and (?9 is null or created_at < ?9)
+           and (?10 is null or (created_at, id) < (?10, ?11))
+         order by created_at desc, id desc
+         limit coalesce(?12, -1)`,
+        [
+          options?.organizationId ?? null,
+          actions,
+          options?.actionPrefix ?? null,
+          options?.actor?.provider ?? null,
+          options?.actor?.subject ?? null,
+          options?.target?.type ?? null,
+          options?.target?.id ?? null,
+          options?.since ?? null,
+          options?.until ?? null,
+          before?.createdAt ?? null,
+          before?.id ?? null,
+          options?.limit ?? null,
+        ],
+      );
+      return result.rows.map(toEntry);
     },
 
     async listByOrganization(organizationId: string, options?: ListAuditLogOptions) {

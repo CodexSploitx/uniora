@@ -1,5 +1,32 @@
 import type { Identity } from "../identity/types.js";
+import { UnioraError } from "../shared/errors.js";
 import type { AuditIntegrityOptions, AuditIntegrityReport, AuditLogEntry, AuditLogTarget } from "./types.js";
+
+/** Invalid input to the audit log. `code` is `audit_actor_required` or `audit_action_invalid`. */
+export class AuditLogError extends UnioraError {
+  constructor(message: string, code: "audit_actor_required" | "audit_action_invalid") {
+    super(message, code);
+    this.name = "AuditLogError";
+  }
+}
+
+/**
+ * Every entry must say WHO did it and WHAT: an empty actor or action is rejected before anything is written, in every
+ * backend, so the trail never has a nameless entry. Returns the input for chaining.
+ */
+export function assertAuditInput<T extends { actor: Identity; action: string }>(input: T): T {
+  const { actor } = input;
+  if (
+    typeof actor?.provider !== "string" || actor.provider.trim() === "" ||
+    typeof actor?.subject !== "string" || actor.subject.trim() === ""
+  ) {
+    throw new AuditLogError("An audit entry needs an actor (provider and subject).", "audit_actor_required");
+  }
+  if (typeof input.action !== "string" || input.action.trim() === "" || input.action.length > 200) {
+    throw new AuditLogError("An audit entry needs an action name of at most 200 characters.", "audit_action_invalid");
+  }
+  return input;
+}
 
 export interface RecordAuditLogInput {
   id: string;
@@ -39,6 +66,26 @@ export interface ListRecentAuditLogOptions {
   before?: AuditLogCursor;
 }
 
+export interface SearchAuditLogOptions {
+  /** Only this organization's entries. Omit to search every organization (admin views only). */
+  organizationId?: string;
+  /** Exact action name, or any of several. */
+  action?: string | string[];
+  /** Every action starting with this text, e.g. `"membership."`. */
+  actionPrefix?: string;
+  /** Entries performed by this exact identity. */
+  actor?: Identity;
+  /** Entries about this object; omit `id` to match every object of that `type`. */
+  target?: { type: string; id?: string };
+  /** `createdAt >= since`. */
+  since?: Date;
+  /** `createdAt < until`. */
+  until?: Date;
+  limit?: number;
+  /** Keyset cursor, as in `listRecent` — only entries strictly older than this `(createdAt, id)` pair. */
+  before?: AuditLogCursor;
+}
+
 /**
  * Append-only by design (security skill §26/§70): this interface has no
  * update or delete method, so an adapter cannot expose a way to alter or
@@ -54,6 +101,11 @@ export interface AuditLogRepository {
    * `AuditLogCursor`), not `offset`.
    */
   listRecent(options?: ListRecentAuditLogOptions): Promise<AuditLogEntry[]>;
+  /**
+   * Filtered, keyset-paginated reading of the log, newest first: by organization, action (exact or prefix), actor,
+   * target and time range, all combinable. Prefer it to `listByOrganization` / `listRecent` for any screen with filters.
+   */
+  search(options?: SearchAuditLogOptions): Promise<AuditLogEntry[]>;
   /**
    * Re-computes the hash chain over the whole log and reports the first entry that doesn't
    * match. Read-only, and linear in the size of the log: run it from a scheduled job, not per

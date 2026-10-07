@@ -1,5 +1,6 @@
 import { beforeAll, afterAll, beforeEach, describe, expect, it } from "vitest";
 import {
+  createAuditedStorage,
   createAuthorizationEngine,
   createInvitationService,
   InvitationError,
@@ -697,6 +698,101 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
           expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1);
           expect(await storage.memberships.count({ organizationId: "org-1", status: "active" })).toBe(1);
         }
+      });
+    });
+
+    describe("audit log — search por acción, actor, objetivo y rango; actor obligatorio", () => {
+      const ana = { provider: "supabase", subject: "ana" };
+      const luis = { provider: "supabase", subject: "luis" };
+
+      async function seedLog() {
+        const storage = harness.storage();
+        await storage.organizations.create({ id: "org-1", name: "Uno" });
+        await storage.organizations.create({ id: "org-2", name: "Dos" });
+        const rows: Array<[string, string | undefined, typeof ana, string, { type: string; id: string } | undefined]> = [
+          ["a1", "org-1", ana, "membership.blocked", { type: "membership", id: "m-1" }],
+          ["a2", "org-1", luis, "membership.unblocked", { type: "membership", id: "m-1" }],
+          ["a3", "org-1", ana, "feature.disabled", { type: "feature", id: "agenda" }],
+          ["a4", "org-2", ana, "membership.blocked", { type: "membership", id: "m-9" }],
+          ["a5", undefined, luis, "identity_link.created", undefined],
+        ];
+        for (const [id, organizationId, actor, action, target] of rows) {
+          await storage.auditLogs.record({ id, organizationId, actor, action, target });
+          await new Promise((resolve) => setTimeout(resolve, 3));
+        }
+        return storage;
+      }
+      const ids = (entries: Array<{ id: string }>) => entries.map((entry) => entry.id);
+      const sameActor = (a: { provider: string; subject: string }, b: { provider: string; subject: string }) =>
+        a.provider === b.provider && a.subject === b.subject;
+
+      it("filtra por organización, acción exacta o varias, prefijo, actor y objetivo; siempre más reciente primero", async () => {
+        const storage = await seedLog();
+        const logs = storage.auditLogs;
+        expect(ids(await logs.search())).toEqual(["a5", "a4", "a3", "a2", "a1"]);
+        expect(ids(await logs.search({ organizationId: "org-1" }))).toEqual(["a3", "a2", "a1"]);
+        expect(ids(await logs.search({ action: "membership.blocked" }))).toEqual(["a4", "a1"]);
+        expect(ids(await logs.search({ action: ["feature.disabled", "identity_link.created"] }))).toEqual(["a5", "a3"]);
+        expect(ids(await logs.search({ actionPrefix: "membership." }))).toEqual(["a4", "a2", "a1"]);
+        expect(ids(await logs.search({ actionPrefix: "membership.", organizationId: "org-1", actor: ana }))).toEqual(["a1"]);
+        expect(ids(await logs.search({ target: { type: "membership", id: "m-1" } }))).toEqual(["a2", "a1"]);
+        expect(ids(await logs.search({ target: { type: "membership" } }))).toEqual(["a4", "a2", "a1"]);
+        expect(ids(await logs.search({ actor: luis }))).toEqual(["a5", "a2"]);
+        // Un % o _ en el prefijo es texto, no un comodín.
+        expect(await logs.search({ actionPrefix: "%" })).toEqual([]);
+        expect(await logs.search({ actionPrefix: "membership_" })).toEqual([]);
+      });
+
+      it("filtra por rango de tiempo y pagina con cursor sin huecos ni repeticiones", async () => {
+        const storage = await seedLog();
+        const all = await storage.auditLogs.search();
+        const third = all[2]!;
+        expect(ids(await storage.auditLogs.search({ since: third.createdAt }))).toEqual(["a5", "a4", "a3"]);
+        expect(ids(await storage.auditLogs.search({ until: third.createdAt }))).toEqual(["a2", "a1"]);
+
+        const seen: string[] = [];
+        let before: { createdAt: Date; id: string } | undefined;
+        for (let page = 0; page < 5; page++) {
+          const entries = await storage.auditLogs.search({ limit: 2, before });
+          if (entries.length === 0) break;
+          seen.push(...ids(entries));
+          before = { createdAt: entries[entries.length - 1]!.createdAt, id: entries[entries.length - 1]!.id };
+        }
+        expect(seen).toEqual(["a5", "a4", "a3", "a2", "a1"]);
+      });
+
+      it("createAuditedStorage: el cambio y su entrada de auditoría se confirman o se revierten juntos", async () => {
+        const raw = harness.storage();
+        const audited = createAuditedStorage(raw, { actor: ana });
+        await expect(
+          audited.transaction(async (tx) => {
+            await tx.organizations.create({ id: "org-x", name: "Equis" });
+            await tx.features.register({ key: "agenda", name: "Agenda" });
+            await tx.features.setMany("org-x", { agenda: true }, { actor: ana, reason: "plan" });
+            throw new Error("boom");
+          }),
+        ).rejects.toThrow("boom");
+        expect(await raw.organizations.findById("org-x")).toBeNull();
+        expect(await raw.auditLogs.search()).toEqual([]);
+
+        await audited.organizations.create({ id: "org-y", name: "Ye" });
+        await audited.memberships.create({ id: "m-y", organizationId: "org-y", identity: luis });
+        const written = await raw.auditLogs.search({ organizationId: "org-y" });
+        expect(written.map((e) => e.action).sort()).toEqual(["membership.created", "organization.created"]);
+        expect(written.every((e) => sameActor(e.actor, ana))).toBe(true);
+      });
+
+      it("rechaza una entrada sin actor o sin acción, y no escribe nada", async () => {
+        const storage = harness.storage();
+        for (const bad of [
+          { id: "x1", actor: { provider: "", subject: "s" }, action: "role.created" },
+          { id: "x2", actor: { provider: "p", subject: "  " }, action: "role.created" },
+          { id: "x3", actor: undefined as unknown as typeof ana, action: "role.created" },
+        ]) {
+          await expect(storage.auditLogs.record(bad)).rejects.toMatchObject({ code: "audit_actor_required" });
+        }
+        await expect(storage.auditLogs.record({ id: "x4", actor: ana, action: " " })).rejects.toMatchObject({ code: "audit_action_invalid" });
+        expect(await storage.auditLogs.search()).toEqual([]);
       });
     });
 

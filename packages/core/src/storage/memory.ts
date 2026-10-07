@@ -25,7 +25,9 @@ import type {
   ListAuditLogOptions,
   ListRecentAuditLogOptions,
   RecordAuditLogInput,
+  SearchAuditLogOptions,
 } from "../audit-log/repository.js";
+import { assertAuditInput } from "../audit-log/repository.js";
 import type { IdentityLink } from "../identity-link/types.js";
 import type { IdentityLinkRepository, LinkIdentityInput } from "../identity-link/repository.js";
 import { IdentityLinkError } from "../identity-link/repository.js";
@@ -909,6 +911,7 @@ export function createMemoryStorage(): UnioraStorage {
 
   const auditLogRepository: AuditLogRepository = {
     async record(input: RecordAuditLogInput) {
+      assertAuditInput(input);
       // Serialized: each entry's hash needs the previous one, so two concurrent records can't overlap.
       const run = auditTail.then(async () => {
         const entry: AuditLogEntry = {
@@ -935,6 +938,27 @@ export function createMemoryStorage(): UnioraStorage {
     async verifyIntegrity(options?: AuditIntegrityOptions): Promise<AuditIntegrityReport> {
       const report = await verifyChain();
       return applyAnchor(report, options?.anchor, async (position) => auditChain[position - 1]?.hash ?? null);
+    },
+    async search(options?: SearchAuditLogOptions) {
+      const actions = options?.action === undefined ? undefined : new Set(Array.isArray(options.action) ? options.action : [options.action]);
+      const before = options?.before;
+      const entries = auditLogs
+        .filter(
+          (entry) =>
+            (options?.organizationId === undefined || entry.organizationId === options.organizationId) &&
+            (actions === undefined || actions.has(entry.action)) &&
+            (options?.actionPrefix === undefined || entry.action.startsWith(options.actionPrefix)) &&
+            (options?.actor === undefined || sameIdentity(entry.actor, options.actor)) &&
+            (options?.target === undefined ||
+              (entry.target?.type === options.target.type && (options.target.id === undefined || entry.target.id === options.target.id))) &&
+            (options?.since === undefined || entry.createdAt.getTime() >= options.since.getTime()) &&
+            (options?.until === undefined || entry.createdAt.getTime() < options.until.getTime()) &&
+            (!before ||
+              entry.createdAt.getTime() < before.createdAt.getTime() ||
+              (entry.createdAt.getTime() === before.createdAt.getTime() && entry.id < before.id)),
+        )
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+      return options?.limit !== undefined ? entries.slice(0, options.limit) : entries;
     },
     async listByOrganization(organizationId: string, options?: ListAuditLogOptions) {
       // Same total order as `listRecent` — newest first, `id` desc breaking
