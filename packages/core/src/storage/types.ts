@@ -8,6 +8,7 @@ import type { IdentityLinkRepository } from "../identity-link/repository.js";
 import type { InvitationRepository } from "../invitation/repository.js";
 import type { OutboxRepository } from "../outbox/repository.js";
 import type { EntitlementRepository } from "../entitlement/repository.js";
+import type { SupportGrantRepository } from "../support-grant/repository.js";
 
 export interface UnioraTransaction {
   organizations: OrganizationRepository;
@@ -20,6 +21,7 @@ export interface UnioraTransaction {
   invitations: InvitationRepository;
   outbox: OutboxRepository;
   entitlements: EntitlementRepository;
+  supportGrants: SupportGrantRepository;
   /**
    * Takes a transaction-scoped advisory lock on `key`, held until commit/rollback, so check-then-insert
    * sequences (e.g. invitation rate limits) can't interleave across processes. Optional: backends that
@@ -43,5 +45,6 @@ export interface UnioraStorage {
   readonly invitations: InvitationRepository;
   readonly outbox: OutboxRepository;
   readonly entitlements: EntitlementRepository;
+  readonly supportGrants: SupportGrantRepository;
   transaction<T>(callback: (tx: UnioraTransaction) => Promise<T>): Promise<T>;
 }

@@ -39,6 +39,8 @@ export const AUDIT_ACTIONS = [
   "entitlement.removed",
   "entitlement.limit_changed",
   "entitlement.limit_cleared",
+  "support_grant.created",
+  "support_grant.revoked",
   "invitation.created",
   "invitation.resent",
   "invitation.revoked",

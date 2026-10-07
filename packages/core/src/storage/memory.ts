@@ -69,6 +69,9 @@ import {
   sanitizeEntitlementName,
   toConsumeResult,
 } from "../entitlement/repository.js";
+import type { SupportGrant } from "../support-grant/types.js";
+import type { SearchSupportGrantsOptions, SupportGrantRepository } from "../support-grant/repository.js";
+import { SupportGrantError, assertValidSupportGrant, grantStatus } from "../support-grant/repository.js";
 import type { UnioraStorage, UnioraTransaction } from "./types.js";
 
 function identityKey(identity: Identity): string {
@@ -1421,6 +1424,69 @@ export function createMemoryStorage(): UnioraStorage {
     },
   };
 
+  const supportGrants = new Map<string, SupportGrant>();
+  const cloneGrant = (grant: SupportGrant): SupportGrant => ({ ...grant, permissions: [...grant.permissions] });
+  const grantMatches = (grant: SupportGrant, filter: Omit<SearchSupportGrantsOptions, "limit" | "after">, now: Date) =>
+    (filter.organizationId === undefined || grant.organizationId === filter.organizationId) &&
+    (filter.operator === undefined || sameIdentity(grant.operator, filter.operator)) &&
+    (filter.status === undefined || grantStatus(grant, now) === filter.status);
+  const supportGrantRepository: SupportGrantRepository = {
+    async create(input) {
+      const { reason, permissions: keys, now } = assertValidSupportGrant(input);
+      if (!organizations.has(input.organizationId)) {
+        throw new SupportGrantError(`Organization "${input.organizationId}" does not exist.`, "support_grant_organization_unknown");
+      }
+      if (keys.some((key) => !permissions.has(key))) {
+        throw new SupportGrantError("Every permission of a grant must be registered.", "support_grant_permission_invalid");
+      }
+      if (supportGrants.has(input.id)) throw new SupportGrantError(`A grant with id "${input.id}" already exists.`, "support_grant_exists");
+      const grant: SupportGrant = {
+        id: input.id,
+        organizationId: input.organizationId,
+        operator: { ...input.operator },
+        grantedBy: { ...input.grantedBy },
+        reason,
+        permissions: keys,
+        createdAt: now,
+        expiresAt: new Date(input.expiresAt),
+      };
+      supportGrants.set(grant.id, grant);
+      return cloneGrant(grant);
+    },
+    async revoke(id, input) {
+      const grant = supportGrants.get(id);
+      if (!grant) return null;
+      if (!grant.revokedAt) supportGrants.set(id, { ...grant, revokedAt: input.now ?? new Date(), revokedBy: { ...input.by } });
+      return cloneGrant(supportGrants.get(id)!);
+    },
+    async findById(id) {
+      const grant = supportGrants.get(id);
+      return grant ? cloneGrant(grant) : null;
+    },
+    async search(options = {}) {
+      const now = options.now ?? new Date();
+      const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+      return [...supportGrants.values()]
+        .filter((grant) => grantMatches(grant, options, now) && (options.after === undefined || grant.id > options.after))
+        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+        .slice(0, limit)
+        .map(cloneGrant);
+    },
+    async count(options = {}) {
+      const now = options.now ?? new Date();
+      return [...supportGrants.values()].filter((grant) => grantMatches(grant, options, now)).length;
+    },
+    async activePermissions(organizationId, identities, now = new Date()) {
+      const keys = new Set<string>();
+      for (const grant of supportGrants.values()) {
+        if (grant.organizationId !== organizationId || grantStatus(grant, now) !== "active") continue;
+        if (!identities.some((identity) => sameIdentity(identity, grant.operator))) continue;
+        for (const key of grant.permissions) keys.add(key);
+      }
+      return [...keys].sort();
+    },
+  };
+
   const cloneOutboxEvent = (event: OutboxEvent): OutboxEvent => ({ ...event, payload: event.payload === undefined ? undefined : structuredClone(event.payload) });
   const outboxEvents = new Map<string, OutboxEvent>();
   const outboxLeases = new Map<string, number>(); // id -> lease expiry (ms)
@@ -1530,6 +1596,7 @@ export function createMemoryStorage(): UnioraStorage {
     invitations: invitationRepository,
     outbox: outboxRepository,
     entitlements: entitlementRepository,
+    supportGrants: supportGrantRepository,
     async transaction<T>(callback: (tx: UnioraTransaction) => Promise<T>): Promise<T> {
       // In-memory storage has no isolation to offer; adapters with a real
       // database (e.g. Postgres) must run `callback` inside a DB transaction.
@@ -1544,6 +1611,7 @@ export function createMemoryStorage(): UnioraStorage {
         invitations: invitationRepository,
         outbox: outboxRepository,
         entitlements: entitlementRepository,
+        supportGrants: supportGrantRepository,
       });
     },
   };

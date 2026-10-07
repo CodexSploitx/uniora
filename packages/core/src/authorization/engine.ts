@@ -21,6 +21,8 @@ export interface AuthorizationDecision {
   permission?: string;
   feature?: string;
   allowed: boolean;
+  /** Only on `can`: what allowed it — the member's roles or a temporary support grant. */
+  via?: "membership" | "support_grant";
   /** `malformed_input` when a permission key was refused before touching storage (empty/odd key). */
   reason: "evaluated" | "malformed_input";
   at: Date;
@@ -78,6 +80,10 @@ export interface AuthorizationEngine {
  *
  * Everything is denied while the organization is not `active` (suspended or archived), the Owner included.
  *
+ * A platform operator who is not a member can act inside an organization only through an ACTIVE support grant
+ * (`supportGrants.create`): exactly the permission keys it lists (and what they imply), until it expires or is revoked.
+ * A grant never reaches the SQL functions for RLS: operators work through trusted server code, not through row policies.
+ *
  * `access.check()` never falls back to an unconditional grant when
  * `permission` is omitted — whether or not `feature` was given: it still
  * verifies real membership in `organizationId` before answering (see the
@@ -103,35 +109,57 @@ export function createAuthorizationEngine(
   }
 
   async function can(input: CanInput): Promise<boolean> {
-    const allowed = await evaluateCan(input);
+    const { allowed, via } = await decideCan(input);
     await report({
       kind: "can",
       identity: input.identity,
       organizationId: input.organizationId,
       permission: keyOf(input.permission),
       allowed,
+      via,
       reason: isWellFormedPermissionKey(input.permission) ? "evaluated" : "malformed_input",
     });
     return allowed;
   }
 
   async function evaluateCan(input: CanInput): Promise<boolean> {
+    return (await decideCan(input)).allowed;
+  }
+
+  /** The identities a support grant may be held under: the one asking and the one it is linked to. */
+  async function grantIdentities(identity: Identity): Promise<Identity[]> {
+    const resolved = await storage.identityLinks.resolve(identity);
+    return resolved.provider === identity.provider && resolved.subject === identity.subject ? [identity] : [identity, resolved];
+  }
+
+  async function decideCan(input: CanInput): Promise<{ allowed: boolean; via?: "membership" | "support_grant" }> {
     // SECURITY FIX (audit F-02): the Owner bypass below grants ANY key, so a
     // malformed one (`""`, `undefined`, a non-string) is refused first —
     // otherwise an upstream bug that yields an empty key is invisible to
     // Owners (always allowed) and only shows up for everyone else.
-    if (!isWellFormedPermissionKey(input.permission)) return false;
+    if (!isWellFormedPermissionKey(input.permission)) return { allowed: false };
     const membership = await storage.memberships.findByIdentity(input.organizationId, input.identity);
-    if (!membership || membership.roleIds.length === 0) return false;
-    // A blocked member keeps their roles but is denied everything, Owner included.
-    if (membership.status !== "active") return false;
+    // A blocked member keeps their roles but is denied everything, Owner included — and a support grant can't get around the block.
+    if (membership && membership.status !== "active") return { allowed: false };
 
     // A suspended or archived organization denies everyone in it, Owner included (and an unknown one, fail-closed).
-    if (!(await organizationIsActive(input.organizationId))) return false;
+    if (!(await organizationIsActive(input.organizationId))) return { allowed: false };
 
-    const roles = (await storage.roles.findByIds(membership.roleIds)).filter(
-      (role) => role.organizationId === input.organizationId,
-    );
+    if (membership && membership.roleIds.length > 0 && (await membershipAllows(input, membership.roleIds))) {
+      return { allowed: true, via: "membership" };
+    }
+    // Last resort: a temporary support grant (a platform operator who is not a member), narrow and expiring.
+    const granted = await storage.supportGrants.activePermissions(input.organizationId, await grantIdentities(input.identity));
+    if (granted.length > 0) {
+      if (granted.includes(input.permission)) return { allowed: true, via: "support_grant" };
+      const implying = await storage.permissions.impliedBy(input.permission);
+      if (implying.some((key) => granted.includes(key))) return { allowed: true, via: "support_grant" };
+    }
+    return { allowed: false };
+  }
+
+  async function membershipAllows(input: CanInput, roleIds: string[]): Promise<boolean> {
+    const roles = (await storage.roles.findByIds(roleIds)).filter((role) => role.organizationId === input.organizationId);
     if (roles.some((role) => role.permissionKeys.includes(input.permission))) return true;
     if (roles.some((role) => role.isOwnerRole)) {
       // Documented contract: the Owner holds every permission. `ownerRequiresRegisteredPermission` narrows
@@ -203,8 +231,13 @@ export function createAuthorizationEngine(
       // anywhere (INV-002) and a legitimate member of a *different*
       // organization asking about this one (INV-001).
       const membership = await storage.memberships.findByIdentity(input.organizationId, input.identity);
-      if (!membership || membership.status !== "active") return false;
+      if (membership && membership.status !== "active") return false;
       if (!(await organizationIsActive(input.organizationId))) return false;
+      if (!membership) {
+        // Not a member: only someone holding an active support grant counts as "inside" the organization.
+        const granted = await storage.supportGrants.activePermissions(input.organizationId, await grantIdentities(input.identity));
+        if (granted.length === 0) return false;
+      }
     }
 
     return true;

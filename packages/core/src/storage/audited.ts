@@ -61,7 +61,7 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
   }
 
   function wrap(scope: Scope, run: <T>(work: (tx: UnioraTransaction) => Promise<T>) => Promise<T>): UnioraTransaction {
-    const { organizations, memberships, roles, permissions, features, entitlements } = scope;
+    const { organizations, memberships, roles, permissions, features, entitlements, supportGrants } = scope;
     return {
       ...scope,
       organizations: {
@@ -271,6 +271,30 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
             const status = await tx.entitlements.clearLimit(organizationId, key);
             await record(tx, "entitlement.limit_cleared", organizationId, { type: "entitlement", id: key }, { from: before.limit, to: status.limit });
             return status;
+          }),
+      },
+      supportGrants: {
+        ...supportGrants,
+        create: (input) =>
+          run(async (tx) => {
+            const grant = await tx.supportGrants.create(input);
+            await record(
+              tx,
+              "support_grant.created",
+              grant.organizationId,
+              { type: "support_grant", id: grant.id },
+              { operator: grant.operator, grantedBy: grant.grantedBy, permissions: grant.permissions, expiresAt: grant.expiresAt.toISOString(), reason: grant.reason },
+            );
+            return grant;
+          }),
+        revoke: (id, input) =>
+          run(async (tx) => {
+            const before = await tx.supportGrants.findById(id);
+            const grant = await tx.supportGrants.revoke(id, input);
+            if (grant && before && !before.revokedAt) {
+              await record(tx, "support_grant.revoked", grant.organizationId, { type: "support_grant", id }, { operator: grant.operator, revokedBy: input.by });
+            }
+            return grant;
           }),
       },
       features: {

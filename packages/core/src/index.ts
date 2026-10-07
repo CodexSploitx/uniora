@@ -212,3 +212,19 @@ export {
   sanitizeEntitlementName,
   toConsumeResult,
 } from "./entitlement/repository.js";
+
+export type { SupportGrant, SupportGrantStatus } from "./support-grant/types.js";
+export type {
+  CreateSupportGrantInput,
+  SearchSupportGrantsOptions,
+  SupportGrantErrorCode,
+  SupportGrantRepository,
+} from "./support-grant/repository.js";
+export {
+  MAX_SUPPORT_GRANT_MS,
+  MAX_SUPPORT_GRANT_PERMISSIONS,
+  MAX_SUPPORT_GRANT_REASON_LENGTH,
+  SupportGrantError,
+  assertValidSupportGrant,
+  grantStatus,
+} from "./support-grant/repository.js";
