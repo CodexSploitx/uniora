@@ -1,8 +1,10 @@
+import { UnioraError, inferErrorCode } from "../shared/errors.js";
+import type { FeatureErrorCode } from "../shared/errors.js";
 import type { Feature, FeatureDefinition } from "./types.js";
 
-export class FeatureError extends Error {
-  constructor(message: string) {
-    super(message);
+export class FeatureError extends UnioraError {
+  constructor(message: string, code?: FeatureErrorCode) {
+    super(message, code ?? inferErrorCode("feature", message));
     this.name = "FeatureError";
   }
 }

@@ -1,3 +1,13 @@
+export { UnioraError } from "./shared/errors.js";
+export type {
+  FeatureErrorCode,
+  IdentityLinkErrorCode,
+  MembershipErrorCode,
+  OrganizationErrorCode,
+  PermissionErrorCode,
+  RoleErrorCode,
+} from "./shared/errors.js";
+
 export type { Identity } from "./identity/types.js";
 export { sameIdentity } from "./identity/types.js";
 

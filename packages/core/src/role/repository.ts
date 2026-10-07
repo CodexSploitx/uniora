@@ -1,8 +1,10 @@
+import { UnioraError, inferErrorCode } from "../shared/errors.js";
+import type { RoleErrorCode } from "../shared/errors.js";
 import type { Role } from "./types.js";
 
-export class RoleError extends Error {
-  constructor(message: string) {
-    super(message);
+export class RoleError extends UnioraError {
+  constructor(message: string, code?: RoleErrorCode) {
+    super(message, code ?? inferErrorCode("role", message));
     this.name = "RoleError";
   }
 }

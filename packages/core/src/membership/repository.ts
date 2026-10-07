@@ -1,10 +1,12 @@
+import { UnioraError, inferErrorCode } from "../shared/errors.js";
+import type { MembershipErrorCode } from "../shared/errors.js";
 import type { Identity } from "../identity/types.js";
 import type { RoleSummary } from "../role/repository.js";
 import type { Membership } from "./types.js";
 
-export class MembershipError extends Error {
-  constructor(message: string) {
-    super(message);
+export class MembershipError extends UnioraError {
+  constructor(message: string, code?: MembershipErrorCode) {
+    super(message, code ?? inferErrorCode("membership", message));
     this.name = "MembershipError";
   }
 }

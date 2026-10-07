@@ -1,3 +1,4 @@
+import { UnioraError } from "../shared/errors.js";
 import type { Identity } from "../identity/types.js";
 import type { Invitation, InvitationDeliveryStatus, InvitationStatus } from "./types.js";
 
@@ -19,12 +20,12 @@ export type InvitationFailureReason =
  * probe which invitations or e-mails exist); `reason` is for your own logs and
  * for operator-facing screens — don't forward it to the invitee.
  */
-export class InvitationError extends Error {
+export class InvitationError extends UnioraError {
   constructor(
     message: string,
     readonly reason: InvitationFailureReason = "bad_request",
   ) {
-    super(message);
+    super(message, `invitation_${reason}`);
     this.name = "InvitationError";
   }
 }

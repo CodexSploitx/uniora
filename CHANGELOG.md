@@ -6,6 +6,7 @@ All notable changes to UNIORA. Packages are released in lockstep, so one version
 
 ### Added
 
+- **Stable error codes**: every error UNIORA throws on purpose extends `UnioraError` and carries a `code` (`membership_not_found`, `last_owner`, `feature_unknown`, `role_key_exists`, `invitation_expired`, …) so an application can translate or branch without comparing the English message. Codes are only ever added, never renamed.
 - **Invitations in Studio**: an *Invitations* tab per organization to invite, send again and revoke, with the delivery status and the link shown once (`UNIORA_INVITE_URL`; e-mail through `@uniora/mailer-smtp` when `UNIORA_SMTP_*` is set).
 - **Accept routes for invitations**: `invitationPreview` / `acceptInvitation` in `@uniora/express` and `previewInvitationRoute` / `acceptInvitationRoute` in `@uniora/next`, backed by `invitationErrorToHttp` in `@uniora/core` (one generic `400` for every way an accept can fail).
 - `transferOwnership` and `leaveOrganization` in `@uniora/core`: atomic, audited, and the last Owner can never leave.
