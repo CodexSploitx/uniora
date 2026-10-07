@@ -307,6 +307,23 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
       expect(found?.roleIds).toEqual([ownerRole.id]);
     });
 
+    it("delete() y unassignOwnerRole() del último Owner fallan con el código estable last_owner (no membership_not_found)", async () => {
+      const storage = harness.storage();
+      const { ownerRole, membership } = await createOrganizationWithOwner(storage, {
+        organizationId: "org-1",
+        organizationName: "Acme Motors",
+        ownerRoleId: "role-owner",
+        membershipId: "m-1",
+        ownerIdentity: identity,
+      });
+
+      await expect(storage.memberships.delete(membership.id)).rejects.toMatchObject({ code: "last_owner" });
+      await expect(storage.memberships.unassignOwnerRole(membership.id, ownerRole.id)).rejects.toMatchObject({ code: "last_owner" });
+      await expect(storage.memberships.delete("no-such")).rejects.toMatchObject({ code: "membership_not_found" });
+      // Nada debe haber cambiado.
+      expect(await storage.memberships.findById(membership.id)).not.toBeNull();
+    });
+
     it("permite unassignRole/delete del Owner role cuando otro membership también lo tiene", async () => {
       const storage = harness.storage();
       const { ownerRole, membership } = await createOrganizationWithOwner(storage, {
