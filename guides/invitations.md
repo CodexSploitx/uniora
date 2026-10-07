@@ -68,6 +68,18 @@ await invitations.revoke({ organizationId, invitationId: invitation.id, actor })
 
   Pass `allowExistingMember: true` to `invite()` to deliberately invite a member anyway (accepting then adds the invited roles). Without the lookup nothing changes.
 
+- **Safe retries (`idempotencyKey`).** A network timeout leaves you not knowing whether `invite()` worked, and a plain retry fails with `invitation_duplicate_pending` while the link of the first call is lost. Pass a key of your own per attempt-to-invite (for example the id of the request or form submission):
+
+  ```ts
+  const result = await invitations.invite({ organizationId, email, roleIds, invitedBy, idempotencyKey: requestId });
+  if (result.replayed) {
+    // The invitation already existed: nothing was created or sent, and there is no link (`result.acceptUrl` is `null`).
+    // Use `invitations.resend(...)` if the person needs a new link.
+  }
+  ```
+
+  The same key with the same request (e-mail, roles, `ttlMs`) returns the existing invitation with `replayed: true`; the same key with a different request fails with `invitation_idempotency_conflict` (HTTP 409 `idempotency_conflict`). Keys are scoped to the organization, are 1 to 128 characters of letters, digits and `._:-`, and live as long as the invitation. Without a key nothing changes.
+
 ## Preview and accept
 
 ```ts

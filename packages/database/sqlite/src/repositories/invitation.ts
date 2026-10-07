@@ -90,8 +90,9 @@ export function createInvitationRepository(db: SqliteExecutor): InvitationReposi
         await db.atomic(async () => {
           await db.query(
             `insert into uniora_invitations
-               (id, organization_id, email, token_hash, invited_by_provider, invited_by_subject, created_at, expires_at)
-             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+               (id, organization_id, email, token_hash, invited_by_provider, invited_by_subject, created_at, expires_at,
+                idempotency_key, idempotency_hash)
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
             [
               input.id,
               input.organizationId,
@@ -101,6 +102,8 @@ export function createInvitationRepository(db: SqliteExecutor): InvitationReposi
               input.invitedBy.subject,
               input.createdAt,
               input.expiresAt,
+              input.idempotency?.key ?? null,
+              input.idempotency?.hash ?? null,
             ],
           );
           for (const roleId of new Set(input.roleIds)) {
@@ -110,6 +113,9 @@ export function createInvitationRepository(db: SqliteExecutor): InvitationReposi
       } catch (error) {
         if (violatedExactly(error, ["uniora_invitations.organization_id", "uniora_invitations.email"])) {
           throw new InvitationError("This e-mail already has a pending invitation to this organization.", "duplicate_pending");
+        }
+        if (violatedExactly(error, ["uniora_invitations.organization_id", "uniora_invitations.idempotency_key"])) {
+          throw new InvitationError("This idempotency key was already used.", "idempotency_conflict");
         }
         if (isForeignKeyViolation(error)) {
           throw new InvitationError("The organization or a chosen role does not exist.", "bad_request");
@@ -123,6 +129,16 @@ export function createInvitationRepository(db: SqliteExecutor): InvitationReposi
     },
 
     findById: byId,
+
+    async findByIdempotencyKey(organizationId: string, key: string) {
+      const result = await db.query<InvitationRow & { idempotency_hash: string }>(
+        `select ${SELECT_COLUMNS}, i.idempotency_hash
+         from uniora_invitations i where i.organization_id = ?1 and i.idempotency_key = ?2`,
+        [organizationId, key],
+      );
+      const row = result.rows[0];
+      return row ? { invitation: toInvitation(row), hash: row.idempotency_hash } : null;
+    },
 
     async findByTokenHash(tokenHash: string) {
       const result = await db.query<InvitationRow>(

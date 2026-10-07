@@ -165,6 +165,7 @@ export type {
   InvitationService,
   InvitationServiceOptions,
   InviteInput,
+  InviteReplayResult,
   InviteResult,
 } from "./invitation/service.js";
 export { createInvitationService, normalizeInvitationEmail } from "./invitation/service.js";

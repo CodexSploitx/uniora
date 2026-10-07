@@ -3004,6 +3004,23 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         await expect(storage.invitations.create(base({ id: "inv-3", tokenHash: "hash-3" }))).resolves.toBeDefined();
       });
 
+      it("stores an idempotency key per organization, finds it back and refuses a second use, enforced by the database", async () => {
+        const storage = await seed();
+        expect(await storage.invitations.findByIdempotencyKey("org-1", "k-1")).toBeNull();
+        const first = await storage.invitations.create(base({ idempotency: { key: "k-1", hash: "h-1" } }));
+        const found = await storage.invitations.findByIdempotencyKey("org-1", "k-1");
+        expect(found).toMatchObject({ hash: "h-1", invitation: { id: first.id } });
+        expect(await storage.invitations.findByIdempotencyKey("org-1", "other")).toBeNull();
+
+        // The same key can't belong to a second invitation of the organization, even for another e-mail.
+        await expect(
+          storage.invitations.create(base({ id: "inv-2", tokenHash: "hash-2", email: "otro@x.com", idempotency: { key: "k-1", hash: "h-2" } })),
+        ).rejects.toMatchObject({ reason: "idempotency_conflict" });
+        // Invitations without a key never collide, and another organization has its own keys.
+        await expect(storage.invitations.create(base({ id: "inv-3", tokenHash: "hash-3", email: "tres@x.com" }))).resolves.toBeDefined();
+        await expect(storage.invitations.create(base({ id: "inv-4", tokenHash: "hash-4", email: "cuatro@x.com" }))).resolves.toBeDefined();
+      });
+
       it("rejects unknown organizations and roles with an InvitationError", async () => {
         const storage = await seed();
         await expect(storage.invitations.create(base({ organizationId: "ghost" }))).rejects.toThrow(InvitationError);

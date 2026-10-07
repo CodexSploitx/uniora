@@ -17,6 +17,7 @@ describe("invitationErrorToHttp", () => {
     expect(invitationErrorToHttp(new InvitationError("slow down", "rate_limited"))).toMatchObject({ status: 429 });
     expect(invitationErrorToHttp(new InvitationError("wait", "cooldown"))).toMatchObject({ status: 429 });
     expect(invitationErrorToHttp(new InvitationError("dup", "duplicate_pending"))).toMatchObject({ status: 409 });
+    expect(invitationErrorToHttp(new InvitationError("key", "idempotency_conflict"))).toMatchObject({ status: 409, body: { error: "idempotency_conflict" } });
     expect(invitationErrorToHttp(new InvitationError("bad", "bad_request"))).toMatchObject({ status: 400, body: { error: "bad_request" } });
   });
 

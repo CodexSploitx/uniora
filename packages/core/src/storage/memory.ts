@@ -124,6 +124,7 @@ export function createMemoryStorage(): UnioraStorage {
   });
   const identityLinksByFromKey = new Map<string, IdentityLink>();
   const invitations = new Map<string, Invitation>();
+  const invitationIdempotency = new Map<string, { key: string; hash: string }>();
   const invitationTokenHashes = new Map<string, string>(); // id -> token hash
 
   // Defined before `membershipRepository` because `findByIdentity` calls
@@ -1315,9 +1316,25 @@ export function createMemoryStorage(): UnioraStorage {
         expiresAt: input.expiresAt,
         delivery: { status: "pending", attempts: 0, sends: 0 },
       };
+      if (input.idempotency) {
+        const taken = [...invitations.values()].some(
+          (i) => i.organizationId === input.organizationId && invitationIdempotency.get(i.id)?.key === input.idempotency!.key,
+        );
+        if (taken) throw new InvitationError("This idempotency key was already used.", "idempotency_conflict");
+        invitationIdempotency.set(invitation.id, input.idempotency);
+      }
       invitations.set(invitation.id, invitation);
       invitationTokenHashes.set(invitation.id, input.tokenHash);
       return clone(invitation);
+    },
+    async findByIdempotencyKey(organizationId: string, key: string) {
+      for (const invitation of invitations.values()) {
+        const stored = invitationIdempotency.get(invitation.id);
+        if (invitation.organizationId === organizationId && stored?.key === key) {
+          return { invitation: clone(invitation), hash: stored.hash };
+        }
+      }
+      return null;
     },
     async findById(id: string) {
       const found = invitations.get(id);

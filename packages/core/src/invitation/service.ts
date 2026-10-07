@@ -84,6 +84,14 @@ export interface InviteInput {
   allowExistingMember?: boolean;
   /** Lifetime of THIS invitation's link, instead of the service's `ttlMs` (e.g. 24 hours). Greater than zero, 30 days at most. */
   ttlMs?: number;
+  /**
+   * Makes a retry safe: the first call with a key creates the invitation (and sends it); a later call with the same
+   * key and the same request (e-mail, roles, `ttlMs`) creates nothing, sends nothing and returns that invitation with
+   * `replayed: true` and no link (the link can't be recovered; use `resend` for a new one). The same key with a
+   * different request fails with `invitation_idempotency_conflict` (409). Keys are scoped to the organization, 1 to
+   * 128 characters of letters, digits and `._:-`, and live as long as the invitation does.
+   */
+  idempotencyKey?: string;
 }
 
 export interface DeliveryOutcome {
@@ -98,6 +106,17 @@ export interface InviteResult {
   /** The link containing the secret token. Returned exactly once per issue/resend; it can't be recovered later. */
   acceptUrl: string;
   delivery: DeliveryOutcome;
+  replayed?: false;
+}
+
+/** What `invite({ idempotencyKey })` returns when the key was already used for this same request: nothing new was made. */
+export interface InviteReplayResult {
+  invitation: Invitation;
+  /** There is no link: it was shown by the first call and is not stored. `resend` issues a new one. */
+  acceptUrl: null;
+  /** The delivery state of the invitation as it stands now. */
+  delivery: DeliveryOutcome;
+  replayed: true;
 }
 
 export interface InvitationPreview {
@@ -135,6 +154,7 @@ export interface AcceptInvitationResult {
 }
 
 export interface InvitationService {
+  invite(input: InviteInput & { idempotencyKey: string }): Promise<InviteResult | InviteReplayResult>;
   invite(input: InviteInput): Promise<InviteResult>;
   /**
    * Issues a NEW link (the old one stops working), extends the expiry and sends again. An
@@ -241,6 +261,28 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
     return unique.map((id) => byId.get(id)!);
   }
 
+  const IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{1,128}$/;
+  function assertIdempotencyKey(key: string): string {
+    if (typeof key !== "string" || !IDEMPOTENCY_KEY.test(key)) {
+      throw new InvitationError("idempotencyKey must be 1 to 128 characters of letters, digits and . _ : -", "bad_request");
+    }
+    return key;
+  }
+
+  function replayResult(invitation: Invitation): InviteReplayResult {
+    const { delivery } = invitation;
+    return {
+      invitation,
+      acceptUrl: null,
+      replayed: true,
+      delivery: {
+        status: delivery.status === "pending" ? "skipped" : delivery.status,
+        attempts: delivery.attempts,
+        ...(delivery.lastError !== undefined ? { error: delivery.lastError } : {}),
+      },
+    };
+  }
+
   async function deliver(invitation: Invitation, token: string, locale: string | undefined, actor: Identity): Promise<{ invitation: Invitation; acceptUrl: string; delivery: DeliveryOutcome }> {
     const acceptUrl = options.acceptUrl(token);
     if (!sender) {
@@ -323,7 +365,7 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
   }
 
   return {
-    async invite(input) {
+    invite: (async (input: InviteInput): Promise<InviteResult | InviteReplayResult> => {
       const email = normalizeInvitationEmail(input.email);
       const lifetime = lifetimeOf(input.ttlMs);
       const roles = await assertInvitableRoles(input.organizationId, input.roleIds);
@@ -341,11 +383,29 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
 
       const token = generateInvitationToken();
       const tokenHash = await hashInvitationToken(token);
+      const idempotency =
+        input.idempotencyKey === undefined
+          ? undefined
+          : {
+              key: assertIdempotencyKey(input.idempotencyKey),
+              hash: await hashInvitationToken(
+                JSON.stringify([email, [...new Set(roles.map((role) => role.id))].sort(), input.ttlMs ?? null]),
+              ),
+            };
 
-      const invitation = await serialized(() =>
-        storage.transaction(async (tx) => {
+      const outcome = await serialized(() =>
+        storage.transaction(async (tx): Promise<{ replay: Invitation } | { created: Invitation }> => {
           // Cross-process: sorted advisory locks so concurrent invites to the same email/org can't both pass the check.
           for (const key of [`invite:email:${email}`, `invite:org:${input.organizationId}`].sort()) await tx.lock?.(key);
+          if (idempotency) {
+            const earlier = await tx.invitations.findByIdempotencyKey(input.organizationId, idempotency.key);
+            if (earlier) {
+              if (earlier.hash !== idempotency.hash) {
+                throw new InvitationError("This idempotency key was already used for a different invitation.", "idempotency_conflict");
+              }
+              return { replay: earlier.invitation };
+            }
+          }
           await checkRate(tx.invitations, input.organizationId, email);
           const at = now();
           await tx.invitations.expireStale(input.organizationId, email, at);
@@ -358,14 +418,16 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
             invitedBy: input.invitedBy,
             createdAt: at,
             expiresAt: new Date(at.getTime() + lifetime),
+            ...(idempotency ? { idempotency } : {}),
           });
           await auditEvent(tx, input.invitedBy, "invitation.created", created, { roles: roles.map((role) => role.name) });
-          return created;
+          return { created };
         }),
       );
 
-      return deliver(invitation, token, input.locale, input.invitedBy);
-    },
+      if ("replay" in outcome) return replayResult(outcome.replay);
+      return deliver(outcome.created, token, input.locale, input.invitedBy);
+    }) as InvitationService["invite"],
 
     async resend(ref, resendOptions) {
       const existing = await findInOrganization(ref);
