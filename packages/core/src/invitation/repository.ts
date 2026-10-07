@@ -11,6 +11,7 @@ export type InvitationFailureReason =
   | "roles_unavailable"
   | "duplicate_pending"
   | "already_member" // `invite()` found the e-mail already belongs to a member of the organization
+  | "idempotency_conflict" // the same `idempotencyKey` was reused for a different invitation
   | "rate_limited"
   | "cooldown"
   | "bad_request";
@@ -44,6 +45,8 @@ export interface CreateInvitationInput {
   /** The service's clock, so `createdAt` and `expiresAt` always agree (and rate limits are testable). */
   createdAt: Date;
   expiresAt: Date;
+  /** The caller's idempotency key for this creation and a hash of what was asked (see `InviteInput.idempotencyKey`). */
+  idempotency?: { key: string; hash: string };
 }
 
 export interface SearchInvitationsOptions {
@@ -73,6 +76,12 @@ export interface InvitationRepository {
    */
   create(input: CreateInvitationInput): Promise<Invitation>;
   findById(id: string): Promise<Invitation | null>;
+  /**
+   * The invitation an earlier `create` made with this idempotency key in this organization, with the hash it stored,
+   * or `null`. A real unique index on `(organizationId, key)` backs it: a second `create` with the same key fails
+   * with reason `idempotency_conflict`.
+   */
+  findByIdempotencyKey(organizationId: string, key: string): Promise<{ invitation: Invitation; hash: string } | null>;
   findByTokenHash(tokenHash: string): Promise<Invitation | null>;
   /** Newest first, keyset-paged on `id`. */
   search(organizationId: string, options?: SearchInvitationsOptions): Promise<Invitation[]>;

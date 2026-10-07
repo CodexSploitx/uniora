@@ -16,6 +16,7 @@ import { MIGRATION_0013_SUPPORT_GRANTS } from "./migrations/0013_support_grants.
 import { MIGRATION_0014_MEMBERSHIP_SUSPENSION } from "./migrations/0014_membership_suspension.js";
 import { MIGRATION_0015_ROW_VERSIONS } from "./migrations/0015_row_versions.js";
 import { MIGRATION_0016_ROLE_NAME_NORMALIZED } from "./migrations/0016_role_name_normalized.js";
+import { MIGRATION_0017_INVITATION_IDEMPOTENCY } from "./migrations/0017_invitation_idempotency.js";
 
 interface Migration {
   readonly id: string;
@@ -40,6 +41,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0014_membership_suspension", sql: MIGRATION_0014_MEMBERSHIP_SUSPENSION },
   { id: "0015_row_versions", sql: MIGRATION_0015_ROW_VERSIONS },
   { id: "0016_role_name_normalized", sql: MIGRATION_0016_ROLE_NAME_NORMALIZED },
+  { id: "0017_invitation_idempotency", sql: MIGRATION_0017_INVITATION_IDEMPOTENCY },
 ];
 
 const LEDGER_TABLE = "uniora_schema_migrations";
