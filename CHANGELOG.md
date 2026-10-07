@@ -4,6 +4,8 @@ All notable changes to UNIORA. Packages are released in lockstep, so one version
 
 ## Unreleased
 
+## 0.4.1 - 2026-10-07
+
 ### Fixed
 
 - **The in-memory storage returns copies**: `createMemoryStorage` used to hand out the very objects it keeps (roles from `listByOrganization` / `findByIds`, memberships, permissions, feature definitions and overrides, and what the writes return), so a record read earlier changed under the caller after `roles.update`, `assignRole`, `block` and so on, and an `expectedVersion` conflict (`role_version_conflict`, `membership_version_conflict`) could never be reproduced in tests. Every read and every write result is now a copy, as with the PostgreSQL and SQLite backends. **Behaviour change (0.x):** code that mutated a returned object and relied on the store seeing it will no longer work; use the repository methods. The conformance suite now checks it for all backends.
