@@ -19,4 +19,6 @@ const storage = createPostgresStorage(pool);
 - The audit log is append-only in the database itself (triggers) and hash-chained.
 - For production, run the app with the least-privilege role from [`guides/sql/least-privilege-roles.sql`](https://github.com/CodexSploitx/uniora/blob/main/guides/sql/least-privilege-roles.sql) and migrations with another.
 
+Documentation: [Storage guide](https://github.com/CodexSploitx/uniora/blob/main/guides/storage.md) and the [full index](https://github.com/CodexSploitx/uniora/blob/main/guides/README.md).
+
 License: [PolyForm Shield 1.0.0](https://github.com/CodexSploitx/uniora/blob/main/LICENSE).

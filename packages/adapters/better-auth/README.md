@@ -16,4 +16,6 @@ const identity = await resolveIdentity(auth.api.getSession, request.headers); //
 
 The adapter defines a minimal structural contract for your already-configured client, so it adds no dependency on the provider's SDK.
 
+Documentation: [Identity adapters guide](https://github.com/CodexSploitx/uniora/blob/main/guides/identity-adapters.md) and the [full index](https://github.com/CodexSploitx/uniora/blob/main/guides/README.md).
+
 License: [PolyForm Shield 1.0.0](https://github.com/CodexSploitx/uniora/blob/main/LICENSE).

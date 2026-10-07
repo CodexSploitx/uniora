@@ -26,4 +26,6 @@ import { Can, Feature, UnioraProvider } from "@uniora/react";
 
 These components are UX only. Hiding a button is never a substitute for authorizing the real operation on the server.
 
+Documentation: [Express, Next.js and React guide](https://github.com/CodexSploitx/uniora/blob/main/guides/frameworks.md) and the [full index](https://github.com/CodexSploitx/uniora/blob/main/guides/README.md).
+
 License: [PolyForm Shield 1.0.0](https://github.com/CodexSploitx/uniora/blob/main/LICENSE).

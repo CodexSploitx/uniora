@@ -155,6 +155,11 @@ app.delete(
 // authorize(engine, { permission, feature, resolve }) comprueba ambos.
 ```
 
+## Documentación
+
+La documentación completa está en [`guides/`](guides/README.md) (en inglés):
+[Getting started](guides/getting-started.md) · [Concepts](guides/concepts.md) · [Core reference](guides/core-reference.md) · [Storage](guides/storage.md) · [Identity adapters](guides/identity-adapters.md) · [Express, Next.js y React](guides/frameworks.md) · [Invitations](guides/invitations.md) · [Audit log](guides/audit-log.md) · [CLI, Studio y configuración](guides/cli-and-studio.md) · [Errors](guides/errors.md) · [Hardening](guides/hardening.md).
+
 ## Paquetes
 
 | Paquete | Qué hace |

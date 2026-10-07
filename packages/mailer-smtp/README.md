@@ -39,3 +39,5 @@ Anything missing or malformed throws one `SmtpConfigError` listing every problem
 - **Templates are safe by construction**: every interpolated value is escaped, the Subject is forced onto one line, the link must be `http(s)`, the logo `https`, the brand color a `#rrggbb`.
 - **Own template?** Pass `template: (message, context) => ({ subject, html, text })`. **Own provider?** Implement `InvitationSender` yourself — nothing else in UNIORA changes.
 - Each message carries `Auto-Submitted: auto-generated` and an `X-Entity-Ref-ID` (invitation id + attempt) for correlating provider logs. The token never appears in headers or logs.
+
+Documentation: [Invitations guide](https://github.com/CodexSploitx/uniora/blob/main/guides/invitations.md) and the [full index](https://github.com/CodexSploitx/uniora/blob/main/guides/README.md).

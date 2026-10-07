@@ -17,4 +17,6 @@ const storage = createSqliteStorage(db);
 - Bring **one connection per process**: the adapter serializes operations and runs each multi-statement operation in a `begin immediate` transaction, so another process on the same file waits its turn.
 - The database file holds your authorization data: keep it out of git, the web root and shared backups.
 
+Documentation: [Storage guide](https://github.com/CodexSploitx/uniora/blob/main/guides/storage.md) and the [full index](https://github.com/CodexSploitx/uniora/blob/main/guides/README.md).
+
 License: [PolyForm Shield 1.0.0](https://github.com/CodexSploitx/uniora/blob/main/LICENSE).
