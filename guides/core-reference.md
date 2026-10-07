@@ -145,6 +145,12 @@ const { created, synced, skipped } = await applyRoleTemplates(storage.roles, org
 
 Idempotent. Creates missing system roles, re-syncs system roles whose template changed, and leaves alone a custom role a tenant made under the same key (`skipped`). Pass `newId` for your own id scheme.
 
+Options:
+
+- `mode: "create-missing"` only creates what is missing and never changes an existing role (whoever made it), so an Owner's edits to a system role's permissions or description survive; the untouched system roles come back in `unchanged`. The default, `"sync"`, overwrites them as before.
+- A template whose `key` or name is already used by a tenant's role no longer stops the others: it is reported in `conflicts` (`{ key, reason: "key_taken" | "name_taken" }`) and the rest are still applied.
+- `continueOnError: true` records any other failure in `failed` (`{ key, error }`) and carries on instead of throwing. Use it on the plain repositories, not inside a PostgreSQL transaction (a failed statement aborts the whole transaction).
+
 ---
 
 ## Permissions: `storage.permissions`
