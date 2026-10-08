@@ -15,6 +15,7 @@ Use the scoped name for the one-off form: a bare `npx uniora` outside a project 
 | `uniora check` | Validates the configuration and the database connection. |
 | `uniora migrate [--status \| --dry-run]` | Applies pending migrations, recorded in a ledger, additive and never destructive. `--status` only reports and **exits 1** if migrations are pending or were edited after being applied (a CI gate); `--dry-run` shows what would run. |
 | `uniora doctor` | Deeper diagnosis: Node version, `.gitignore`, config, connection, engine version, migrations, organizations without an Owner, audit-chain integrity, SMTP settings (only when some `UNIORA_SMTP_*` variable is set and `@uniora/mailer-smtp` is installed), Studio availability. |
+| `uniora platform init --admin provider:subject` / `uniora platform status` | Creates the first Platform Administrator (once, needs database access) / shows platform members. See [platform](platform.md). |
 | `uniora studio [--port N] [--read-only] [--no-open]` | Opens Studio locally. |
 
 Options every command accepts: `--config <file>` (instead of `uniora.config.mjs`), `--env <name>` (loads `.env.<name>`, and **only** that, never silently

@@ -10,6 +10,7 @@ npm install --save-dev @uniora/cli      # or run once: npx @uniora/cli init
 npx uniora init      # uniora.config.mjs + .env.example (--provider sqlite for SQLite)
 npx uniora check     # validate config and the database connection
 npx uniora migrate   # apply pending migrations (--status and --dry-run touch nothing)
+npx uniora platform init --admin provider:subject   # first Platform Administrator (once; see guides/platform.md)
 npx uniora doctor    # Node, .gitignore, config, database, migrations, owners, audit chain, SMTP, Studio
 npx uniora studio    # local admin UI (--read-only, --port N, --no-open)
 ```
