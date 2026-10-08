@@ -175,8 +175,10 @@ export interface MembershipRepository {
   /**
    * Blocks a member without removing them: the engine denies a blocked member everything (`can`,
    * `access.check`, snapshots) while roles, history and audit trail stay. Idempotent — blocking an
-   * already-blocked or suspended member changes nothing (keeps the original actor, reason and date; `unblock` first
-   * to change them); a suspension that already ended counts as not blocked. Rejects (`MembershipError`) if the
+   * already-blocked member changes nothing (keeps the original actor, reason and date; `unblock` first
+   * to change them). Blocking a SUSPENDED member turns the suspension into an indefinite block (new actor, reason and
+   * date; the member does not come back by themselves): a block never ends sooner than the suspension it replaces.
+   * A suspension that already ended counts as not blocked. Rejects (`MembershipError`) if the
    * membership doesn't exist (`membership_not_found`), or if it is an Owner and no OTHER active Owner would
    * remain (`last_owner`) — an organization must always keep an Owner who can still act.
    *
@@ -187,7 +189,8 @@ export interface MembershipRepository {
   /**
    * Same as `block`, but the member is denied only until `input.until` and then is `active` again by themselves:
    * status `suspended` meanwhile (see `MembershipStatus`). The last active Owner can't be suspended (`last_owner`).
-   * Same idempotence and trust boundary as `block` (authorize it in the host, e.g. `members.suspend`).
+   * Suspending a member who is already blocked or suspended changes nothing (never shortens or extends: `unblock`
+   * first to change it). Same trust boundary as `block` (authorize it in the host, e.g. `members.suspend`).
    */
   suspend(membershipId: string, input: SuspendMembershipInput): Promise<Membership>;
   /** Lifts a block or a suspension. Idempotent. Rejects (`membership_not_found`) for an unknown membership. */
@@ -204,7 +207,10 @@ export interface MembershipRepository {
   delete(membershipId: string): Promise<void>;
 }
 
-/** Validates the end of a timed suspension: a valid `Date` strictly after `now`. Returns it, or `undefined` when none. */
+/** The latest representable end of a suspension: the last instant of year 9999 (SQLite compares ISO-8601 text, which only sorts right for four-digit years). */
+export const MAX_BLOCK_UNTIL = new Date("9999-12-31T23:59:59.999Z");
+
+/** Validates the end of a timed suspension: a valid `Date` strictly after `now` and no later than `MAX_BLOCK_UNTIL`. Returns it, or `undefined` when none. */
 export function assertBlockUntil(until: Date | undefined, now: Date = new Date()): Date | undefined {
   if (until === undefined) return undefined;
   if (!(until instanceof Date) || Number.isNaN(until.getTime())) {
@@ -212,6 +218,9 @@ export function assertBlockUntil(until: Date | undefined, now: Date = new Date()
   }
   if (until.getTime() <= now.getTime()) {
     throw new MembershipError("The end of a suspension must be in the future.", "membership_block_until_invalid");
+  }
+  if (until.getTime() > MAX_BLOCK_UNTIL.getTime()) {
+    throw new MembershipError("The end of a suspension can't be after the year 9999; use block() for an indefinite one.", "membership_block_until_invalid");
   }
   return new Date(until.getTime());
 }

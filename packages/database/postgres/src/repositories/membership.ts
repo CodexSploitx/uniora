@@ -256,6 +256,18 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
     // Same write-skew defence as `unassignOwnerRole`: lock every membership holding one of this member's Owner
     // roles (ordered, so two concurrent blockers contend in the same order) BEFORE counting the ACTIVE ones, so
     // two Owners blocking each other at the same instant can't leave nobody able to act.
+    if (until === undefined) {
+      // `block` over a timed suspension makes it indefinite (the member was already inactive: no Owner guard applies).
+      const escalated = await db.query(
+        `update uniora.memberships
+         set blocked_at = date_trunc('milliseconds', now()), blocked_until = null,
+             blocked_by_provider = $2, blocked_by_subject = $3, block_reason = $4,
+             updated_at = date_trunc('milliseconds', now()), version = version + 1
+         where id = $1 and status = 'blocked' and ${effectiveStatus()} = 'suspended' and ($5::integer is null or version = $5)`,
+        [membershipId, input.actor.provider, input.actor.subject, sanitizeBlockReason(input.reason) ?? null, expectedVersion],
+      );
+      if ((escalated.rowCount ?? 0) > 0) return (await repository.findById(membershipId))!;
+    }
     const changed = await db.query(
       `with owner_role_ids as (
          select mr.role_id
@@ -288,7 +300,8 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
     if ((changed.rowCount ?? 0) === 0 && expectedVersion !== null && current.version !== expectedVersion) {
       throw new MembershipError("The membership changed since it was read.", "membership_version_conflict");
     }
-    if (current.status !== "active") return current; // changed now, or was already blocked or suspended (idempotent)
+    // Also when this very write already lapsed (a suspension ending within milliseconds): it was applied, not refused.
+    if (current.status !== "active" || (changed.rowCount ?? 0) > 0) return current; // changed now, or was already blocked or suspended (idempotent)
     throw new MembershipError(
       "Cannot block the organization's last active Owner — every organization must keep at least one.",
       "last_owner",
@@ -695,14 +708,20 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
       // Ronda 4).
       const result = await db.query(
         `with locked as (
-           select membership_id from uniora.membership_roles
-           where role_id = $2
-           order by membership_id
-           for update
+           select mr.membership_id, ${effectiveStatus("m")} as status
+           from uniora.membership_roles mr
+           join uniora.memberships m on m.id = mr.membership_id
+           where mr.role_id = $2
+           order by mr.membership_id
+           for update of mr, m
          )
          delete from uniora.membership_roles
          where membership_id = $1 and role_id = $2
-           and (select count(*) from locked) > 1`,
+           and (select count(*) from locked) > 1
+           and (
+             (select status from locked where membership_id = $1) <> 'active'
+             or exists (select 1 from locked where membership_id <> $1 and status = 'active')
+           )`,
         [membershipId, roleId],
       );
       if ((result.rowCount ?? 0) > 0) {
@@ -774,17 +793,22 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
            where mr.membership_id = $1 and r.is_owner_role
          ),
          locked as (
-           select mr.membership_id, mr.role_id
+           select mr.membership_id, mr.role_id, ${effectiveStatus("lm")} as status
            from uniora.membership_roles mr
+           join uniora.memberships lm on lm.id = mr.membership_id
            where mr.role_id in (select role_id from owner_role_ids)
            order by mr.role_id, mr.membership_id
-           for update
+           for update of mr, lm
          )
          delete from uniora.memberships m
          where m.id = $1
            and not exists (
              select 1 from owner_role_ids o
              where (select count(*) from locked l where l.role_id = o.role_id) <= 1
+                or (
+                  (select l.status from locked l where l.role_id = o.role_id and l.membership_id = $1) = 'active'
+                  and not exists (select 1 from locked l where l.role_id = o.role_id and l.membership_id <> $1 and l.status = 'active')
+                )
            )`,
         [membershipId],
       );
