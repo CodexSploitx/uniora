@@ -55,10 +55,11 @@ export function createPlatformEngine(reader: PlatformReader, options: PlatformEn
     return { member, permissions: permissionsOfRoles(roles) };
   }
 
-  async function notify(decision: PlatformDecision): Promise<void> {
+  /** Fire and forget: a slow, hanging or throwing hook never delays, changes or breaks a decision. */
+  function notify(decision: PlatformDecision): void {
     if (!options.onDecision) return;
     try {
-      await options.onDecision(decision);
+      void Promise.resolve(options.onDecision(decision)).catch(() => undefined);
     } catch {
       // A broken hook must never turn a decision into an error or flip it.
     }
@@ -67,7 +68,7 @@ export function createPlatformEngine(reader: PlatformReader, options: PlatformEn
   const engine: PlatformEngine = {
     async can({ identity, permission }) {
       if (!validIdentity(identity) || !isValidPlatformPermission(permission, { allowWildcard: false })) {
-        if (validIdentity(identity)) await notify({ identity, permission: String(permission), allowed: false, reason: "invalid_input" });
+        if (validIdentity(identity)) notify({ identity, permission: String(permission), allowed: false, reason: "invalid_input" });
         return false;
       }
       let decision: PlatformDecision;
@@ -80,7 +81,7 @@ export function createPlatformEngine(reader: PlatformReader, options: PlatformEn
       } catch {
         return false;
       }
-      await notify(decision);
+      notify(decision);
       return decision.allowed;
     },
     async permissionsOf(identity) {

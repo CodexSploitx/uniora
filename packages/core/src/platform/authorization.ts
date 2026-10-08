@@ -21,9 +21,10 @@ declare const authorizationBrand: unique symbol;
  * requires one and the storage verifies it, so no code path can change who holds platform power "by accident" without
  * going through the platform service (or the explicitly named trusted/bootstrap entry points).
  *
- * It cannot be built by hand: it is an opaque object that only `createPlatformService` (after asking the platform engine),
- * `bootstrapPlatform` and `createTrustedPlatformStorage` can issue. A copy, a spread or a look-alike is refused. It is bound
- * to one actor and a list of operations, and expires after 60 seconds. Nothing about an organization can produce one.
+ * It cannot be built by hand: it is an opaque object that only `createPlatformService` (after asking the platform engine)
+ * and `bootstrapPlatform` can issue. A copy, a spread or a look-alike is refused. It is bound to one actor and a list of
+ * operations, each usable ONCE (a second write with the same token is refused), and expires after 60 seconds. Nothing about
+ * an organization can produce one. Code running inside the process can still reach the registry (see guides/platform.md).
  */
 export interface PlatformAuthorization {
   readonly [authorizationBrand]: true;
@@ -32,7 +33,8 @@ export interface PlatformAuthorization {
 
 interface Issued {
   actor: Identity;
-  operations: ReadonlySet<PlatformOperation>;
+  /** Each listed operation can be used once: asserting it removes it. */
+  operations: Set<PlatformOperation>;
   expiresAt: number;
   trusted: boolean;
 }
@@ -75,4 +77,6 @@ export function assertPlatformAuthorization(authorization: unknown, expected: { 
   if (!token.trusted && expected.actor && (expected.actor.provider !== token.actor.provider || expected.actor.subject !== token.actor.subject)) {
     return fail("another actor");
   }
+  // Single use: a token that leaks (a log line, a captured argument) cannot be replayed for the same operation.
+  token.operations.delete(expected.operation);
 }

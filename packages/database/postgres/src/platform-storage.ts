@@ -30,7 +30,7 @@ export function createPostgresPlatformStorage(pool: Pool): PlatformStorage {
     async transaction<T>(callback: (tx: PlatformTransaction) => Promise<T>): Promise<T> {
       const client = await pool.connect();
       try {
-        await client.query("begin");
+        await client.query("begin isolation level read committed");
         const result = await callback(scopeOf(client));
         await client.query("commit");
         return result;

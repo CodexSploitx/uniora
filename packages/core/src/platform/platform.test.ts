@@ -289,3 +289,105 @@ describe("platform commands (the door of a request handler)", () => {
     expect(platformErrorToHttp(new Error("boom"))).toBeNull();
   });
 });
+
+describe("red-team regressions", () => {
+  it("a storage authorization is single-use per operation", async () => {
+    const { platform, adminRole } = await setup();
+    const token = issuePlatformAuthorization(root, ["member.add"]);
+    const add = (subject: string) => platform.platformMembers.add({ id: subject, identity: { provider: "auth", subject }, roleIds: [adminRole.id], addedBy: root, authorization: token });
+    await add("one");
+    await expect(add("two")).rejects.toMatchObject({ code: "platform_authorization_required" });
+  });
+
+  it("does not run the step-up hook for somebody who could not do the operation anyway", async () => {
+    const storage = createMemoryStorage();
+    const platform = createMemoryPlatformStorage({ auditLogs: storage.auditLogs });
+    const { member } = await bootstrapPlatform({ platform, admin: root });
+    let calls = 0;
+    const service = createPlatformService({ platform, storage, stepUp: () => (calls++, false) });
+    await expect(service.suspendMember({ actor: bob, memberId: member.id })).rejects.toMatchObject({ code: "platform_forbidden" });
+    expect(calls).toBe(0);
+    await expect(service.suspendMember({ actor: root, memberId: member.id })).rejects.toMatchObject({ code: "platform_step_up_required" });
+    expect(calls).toBe(1);
+  });
+
+  it("a hanging onDecision hook never delays a decision", async () => {
+    const storage = createMemoryStorage();
+    const platform = createMemoryPlatformStorage({ auditLogs: storage.auditLogs });
+    await bootstrapPlatform({ platform, admin: root });
+    const engine = createPlatformEngine(platform, { onDecision: () => new Promise<void>(() => undefined) });
+    expect(await engine.can({ identity: root, permission: PLATFORM_PERMISSIONS.rolesManage })).toBe(true);
+  });
+
+  it("the command door rejects inherited names and copies arrays", async () => {
+    const { service } = await setup();
+    const run = (params: unknown) => runPlatformCommand(service, "createRole", { actor: root }, params);
+    for (const key of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
+      await expect(run(JSON.parse(`{"key":"zz_role","name":"Z","permissions":[],"${key}":1}`))).rejects.toMatchObject({ code: "platform_invalid" });
+    }
+    const permissions = ["platform.audit.read"];
+    const created = (await run({ key: "audit_role", name: "A", permissions })) as { permissions: string[] };
+    permissions.push("platform.*");
+    expect(created.permissions).toEqual(["platform.audit.read"]);
+  });
+
+  it("records refused escalations and self-changes, but not plain refusals", async () => {
+    const { platform, service } = await setup();
+    const role = await service.createRole({ actor: root, key: "lim", name: "Lim", permissions: [PLATFORM_PERMISSIONS.membersManage, PLATFORM_PERMISSIONS.rolesManage] });
+    await service.addMember({ actor: root, identity: alice, roleIds: [role.id] });
+    await expect(service.createRole({ actor: alice, key: "big", name: "Big", permissions: ["platform.organizations.*"] })).rejects.toMatchObject({ code: "platform_escalation" });
+    await expect(service.createRole({ actor: bob, key: "big", name: "Big", permissions: [] })).rejects.toMatchObject({ code: "platform_forbidden" });
+    const refused = await platform.auditLogs.search({ action: "platform.change_refused" });
+    expect(refused).toHaveLength(1);
+    expect(refused[0]).toMatchObject({ actor: alice, metadata: { operation: "role.create", code: "platform_escalation" } });
+  });
+
+  it("an organization status request that changes nothing leaves no platform trail", async () => {
+    const { storage, platform, service } = await setup();
+    await storage.organizations.create({ id: "org", name: "Acme" });
+    await service.setOrganizationStatus({ actor: root, organizationId: "org", status: "active" });
+    expect(await platform.auditLogs.search({ action: "platform.organization_status_changed" })).toHaveLength(0);
+    await service.setOrganizationStatus({ actor: root, organizationId: "org", status: "suspended" });
+    expect(await platform.auditLogs.search({ action: "platform.organization_status_changed" })).toHaveLength(1);
+  });
+
+  it("ends an operator's own support grants when they are suspended, removed or lose the permission", async () => {
+    const { storage, service } = await setup();
+    await storage.organizations.create({ id: "org", name: "Acme" });
+    await storage.permissions.register({ key: "reports.read", name: "Read reports" });
+    const role = await service.createRole({ actor: root, key: "support", name: "Support", permissions: [PLATFORM_PERMISSIONS.supportGrant] });
+    const member = await service.addMember({ actor: root, identity: alice, roleIds: [role.id] });
+    const org = createAuthorizationEngine(storage);
+    const open = () => service.grantSupportAccess({ actor: alice, organizationId: "org", permissions: ["reports.read"], reason: "Ticket", expiresAt: new Date(Date.now() + 3600_000) });
+    const works = () => org.can({ identity: alice, organizationId: "org", permission: "reports.read" });
+
+    await open();
+    expect(await works()).toBe(true);
+    await service.suspendMember({ actor: root, memberId: member.id });
+    expect(await works()).toBe(false);
+
+    await service.reactivateMember({ actor: root, memberId: member.id });
+    await open();
+    expect(await works()).toBe(true);
+    await service.updateRole({ actor: root, roleId: role.id, permissions: [PLATFORM_PERMISSIONS.organizationsRead] });
+    expect(await works()).toBe(false);
+
+    await service.updateRole({ actor: root, roleId: role.id, permissions: [PLATFORM_PERMISSIONS.supportGrant] });
+    await open();
+    await service.removeMember({ actor: root, memberId: member.id });
+    expect(await works()).toBe(false);
+  });
+
+  it("can cap the organization permissions a platform operator may open", async () => {
+    const storage = createMemoryStorage();
+    const platform = createMemoryPlatformStorage({ auditLogs: storage.auditLogs });
+    await bootstrapPlatform({ platform, admin: root });
+    await storage.organizations.create({ id: "org", name: "Acme" });
+    await storage.permissions.register({ key: "reports.read", name: "Read reports" });
+    await storage.permissions.register({ key: "billing.manage", name: "Manage billing" });
+    const service = createPlatformService({ platform, storage, supportGrantablePermissions: ["reports.read"] });
+    const base = { actor: root, organizationId: "org", reason: "Ticket", expiresAt: new Date(Date.now() + 3600_000) };
+    await expect(service.grantSupportAccess({ ...base, permissions: ["billing.manage"] })).rejects.toMatchObject({ code: "platform_escalation" });
+    await expect(service.grantSupportAccess({ ...base, permissions: ["reports.read"] })).resolves.toMatchObject({ permissions: ["reports.read"] });
+  });
+});

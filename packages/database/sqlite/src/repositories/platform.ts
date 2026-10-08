@@ -26,7 +26,10 @@ import {
 } from "@uniora/core";
 import type { SqliteExecutor } from "../executor.js";
 import { jsonList, parseList } from "../json.js";
-import { isForeignKeyViolation, isUniqueViolation } from "../sqlite-errors.js";
+import { isForeignKeyViolation, isUniqueViolation as isUniqueConstraint } from "../sqlite-errors.js";
+
+/** A unique violation, or the platform_duplicate abort of the BEFORE INSERT triggers that stop `INSERT OR REPLACE`. */
+const isUniqueViolation = (error: unknown): boolean => isUniqueConstraint(error) || (error instanceof Error && error.message.includes("platform_duplicate"));
 
 /** The triggers raise `platform_last_admin: ...` / `platform_role_system: ...`. */
 function mapTriggerError(error: unknown): never {
