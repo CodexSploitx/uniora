@@ -20,6 +20,7 @@ export interface OrgSummary {
   slug: string;
   name: string;
   createdAt: string;
+  status: "active" | "suspended" | "archived";
   memberCount: number;
   roleCount: number;
   enabledFeatureCount: number;
@@ -39,6 +40,11 @@ export interface MemberRow {
   roles: RoleRef[];
   /** How many roles the member holds in total (`roles.length` may be smaller). */
   roleCount: number;
+  /** `suspended` is a block with an end date; once it passes the member reads `active` again by itself. */
+  status: "active" | "suspended" | "blocked";
+  createdAt: string;
+  /** Last time the application reported the member as active, when it does. */
+  lastActiveAt?: string;
   /** Set on the global members page, where rows come from many organizations. */
   organization?: { id: string; name: string };
 }
@@ -85,7 +91,7 @@ export interface RolePermissionRow {
 }
 
 export interface OrgHeader {
-  organization: { id: string; slug: string; name: string; createdAt: string };
+  organization: { id: string; slug: string; name: string; createdAt: string; status: "active" | "suspended" | "archived"; statusReason?: string };
   memberCount: number;
   roleCount: number;
   featuresEnabled: number;

@@ -2,7 +2,7 @@
 
 import type { UnioraTransaction } from "@uniora/core";
 import { StudioError } from "@/lib/validate";
-import { audit, mutateInOrg, newId, text, type ActionResult } from "@/actions/mutate";
+import { audit, mutateInOrg, newId, studioActor, text, type ActionResult } from "@/actions/mutate";
 
 const orgPaths = (organizationId: string) => [`/organizations/${organizationId}`, "/organizations", "/"];
 
@@ -104,5 +104,31 @@ export async function removeMember(args: { organizationId: string; membershipId:
     await audit(tx, organizationId, "membership.deleted", { type: "membership", id: member.id }, {
       identity: member.identity,
     });
+  });
+}
+
+export async function setMemberStatus(args: {
+  organizationId: string;
+  membershipId: string;
+  action: "block" | "suspend" | "unblock";
+  reason?: string;
+  /** ISO date for `suspend`. */
+  until?: string;
+}): Promise<ActionResult> {
+  return mutateInOrg(args?.organizationId, orgPaths, async (tx, organizationId) => {
+    const member = await requireMember(tx, organizationId, text(args.membershipId, "field.member", { max: 128 }));
+    const actor = studioActor();
+    const reason = text(args.reason, "field.reason", { max: 500, optional: true });
+    if (args.action === "unblock") {
+      await tx.memberships.unblock(member.id, { actor });
+    } else if (args.action === "block") {
+      await tx.memberships.block(member.id, { actor, reason });
+    } else if (args.action === "suspend") {
+      const until = new Date(text(args.until, "field.until", { max: 40 }));
+      if (Number.isNaN(until.getTime()) || until.getTime() <= Date.now()) throw new StudioError("errors.untilInvalid");
+      await tx.memberships.suspend(member.id, { actor, reason, until });
+    } else {
+      throw new StudioError("errors.unexpected");
+    }
   });
 }

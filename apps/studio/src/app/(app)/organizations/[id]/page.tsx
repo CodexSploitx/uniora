@@ -5,6 +5,8 @@ import { InvitationsTab, type InvitationMailKey } from "@/components/organizatio
 import { MembersTable } from "@/components/organizations/members-table";
 import { OrgFeaturesList } from "@/components/organizations/org-features-list";
 import { OrgTabs, parseOrgTab } from "@/components/organizations/org-tabs";
+import { OrganizationStatusDialog } from "@/components/organizations/organization-status-dialog";
+import { StatusBadge } from "@/components/shared/status";
 import { RenameOrganizationDialog } from "@/components/organizations/rename-organization-dialog";
 import { RolesTab } from "@/components/organizations/roles-tab";
 import { TeamsTab } from "@/components/organizations/teams-tab";
@@ -53,6 +55,8 @@ export default async function OrganizationPage(props: PageProps<"/organizations/
   const tab = parseOrgTab(param(searchParams.tab));
   const q = param(searchParams.q) ?? "";
   const after = param(searchParams.after);
+  const rawStatus = param(searchParams.status);
+  const memberStatus = rawStatus === "active" || rawStatus === "suspended" || rawStatus === "blocked" ? rawStatus : undefined;
 
   return (
     <>
@@ -64,9 +68,11 @@ export default async function OrganizationPage(props: PageProps<"/organizations/
             <IconBuildingSkyscraper />
           </IconTile>
         }
-        description={t("orgs.created", { date: formatDate(organization.createdAt, locale) })}
+        description={`${t("orgs.created", { date: formatDate(organization.createdAt, locale) })}${organization.statusReason ? ` · ${organization.statusReason}` : ""}`}
         actions={
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            {organization.status !== "active" && <StatusBadge status={organization.status} />}
+            {!readOnly && <OrganizationStatusDialog organizationId={organization.id} status={organization.status} />}
             {!readOnly && <RenameOrganizationDialog organizationId={organization.id} name={organization.name} />}
             <Badge variant="outline">{organization.slug}</Badge>
             <span className="hidden font-mono sm:inline">{organization.id}</span>
@@ -78,7 +84,7 @@ export default async function OrganizationPage(props: PageProps<"/organizations/
       <OrgTabs organizationId={organization.id} active={tab} header={header} />
 
       {tab === "members" && (
-        <MembersTab organizationId={organization.id} orgPath={orgPath} q={q} after={after} readOnly={readOnly} />
+        <MembersTab organizationId={organization.id} orgPath={orgPath} q={q} after={after} status={memberStatus} readOnly={readOnly} />
       )}
       {tab === "roles" && (
         <RolesSection
@@ -124,16 +130,17 @@ export default async function OrganizationPage(props: PageProps<"/organizations/
   );
 }
 
-async function MembersTab({ organizationId, orgPath, q, after, readOnly }: { organizationId: string; orgPath: string; q: string; after?: string; readOnly: boolean }) {
-  const page = await getOrgMembersPage(organizationId, { query: q, cursor: after });
+async function MembersTab({ organizationId, orgPath, q, after, status, readOnly }: { organizationId: string; orgPath: string; q: string; after?: string; status?: "active" | "suspended" | "blocked"; readOnly: boolean }) {
+  const page = await getOrgMembersPage(organizationId, { query: q, cursor: after, status });
   return (
     <MembersTable
       organizationId={organizationId}
       members={page.items}
       total={page.total}
       query={q}
+      status={status}
       basePath={tabHref(orgPath, "members", {})}
-      nextHref={page.nextCursor ? tabHref(orgPath, "members", { q, after: page.nextCursor }) : null}
+      nextHref={page.nextCursor ? tabHref(orgPath, "members", { q, status, after: page.nextCursor }) : null}
       ownerRoleId={page.ownerRoleId}
       ownerCount={page.ownerCount}
       readOnly={readOnly}

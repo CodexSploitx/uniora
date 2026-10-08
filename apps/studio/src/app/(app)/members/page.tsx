@@ -1,6 +1,7 @@
 import { IconArrowRight, IconUsers } from "@tabler/icons-react";
 import { capParams } from "@/lib/limits";
 import Link from "next/link";
+import { StatusBadge, StatusFilter } from "@/components/shared/status";
 import { ListSearch } from "@/components/shared/list-search";
 import { MemberRolesPopover, RoleChip } from "@/components/shared/member-roles";
 import { PageHeader } from "@/components/shell/page-header";
@@ -15,13 +16,16 @@ export default async function MembersPage(props: PageProps<"/members">) {
   const q = Array.isArray(searchParams.q) ? searchParams.q[0] : searchParams.q;
   const after = Array.isArray(searchParams.after) ? searchParams.after[0] : searchParams.after;
 
-  const { items, nextCursor, total } = await getMembersPage({ query: q, cursor: after });
+  const rawStatus = Array.isArray(searchParams.status) ? searchParams.status[0] : searchParams.status;
+  const status = rawStatus === "active" || rawStatus === "suspended" || rawStatus === "blocked" ? rawStatus : undefined;
+  const { items, nextCursor, total } = await getMembersPage({ query: q, cursor: after, status });
   const { t } = await getT();
 
   let nextHref: string | null = null;
   if (nextCursor) {
     const params = new URLSearchParams();
     if (q) params.set("q", q);
+    if (status) params.set("status", status);
     params.set("after", nextCursor);
     nextHref = `/members?${params.toString()}`;
   }
@@ -30,7 +34,7 @@ export default async function MembersPage(props: PageProps<"/members">) {
     <>
       <PageHeader title={t("membersPage.title")} description={t("membersPage.description")} crumbs={[{ label: t("nav.members") }]} />
 
-      {total === 0 && !q ? (
+      {total === 0 && !q && !status ? (
         <Empty className="border">
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -42,9 +46,10 @@ export default async function MembersPage(props: PageProps<"/members">) {
         </Empty>
       ) : (
         <div className="flex flex-col gap-3">
+          <StatusFilter basePath={q ? `/members?q=${encodeURIComponent(q)}` : "/members"} current={status} values={["active", "suspended", "blocked"]} />
           <div className="flex flex-wrap items-center justify-between gap-3">
             <ListSearch
-              basePath="/members"
+              basePath={status ? `/members?status=${status}` : "/members"}
               initialQuery={q ?? ""}
               placeholderKey="members.searchPlaceholder"
               labelKey="members.searchLabel"
@@ -59,8 +64,8 @@ export default async function MembersPage(props: PageProps<"/members">) {
                 <EmptyMedia variant="icon">
                   <IconUsers />
                 </EmptyMedia>
-                <EmptyTitle>{t("members.noMatchesTitle", { query: q ?? "" })}</EmptyTitle>
-                <EmptyDescription>{t("members.noMatchesDescription")}</EmptyDescription>
+                <EmptyTitle>{q ? t("members.noMatchesTitle", { query: q }) : t("members.noneWithStatus")}</EmptyTitle>
+                <EmptyDescription>{q ? t("members.noMatchesDescription") : t("members.noneWithStatusHint")}</EmptyDescription>
               </EmptyHeader>
             </Empty>
           ) : (
@@ -71,6 +76,7 @@ export default async function MembersPage(props: PageProps<"/members">) {
                     <TableHead>{t("members.identity")}</TableHead>
                     <TableHead>{t("membersPage.organization")}</TableHead>
                     <TableHead>{t("members.roles")}</TableHead>
+                    <TableHead>{t("members.status")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -113,6 +119,9 @@ export default async function MembersPage(props: PageProps<"/members">) {
                             />
                           )}
                         </div>
+                      </TableCell>
+                      <TableCell>
+                        <StatusBadge status={member.status} />
                       </TableCell>
                     </TableRow>
                   ))}

@@ -2,6 +2,7 @@ import { IconArrowRight, IconBuildingSkyscraper } from "@tabler/icons-react";
 import { capParams } from "@/lib/limits";
 import Link from "next/link";
 import { CreateOrganizationDialog } from "@/components/organizations/create-organization-dialog";
+import { StatusBadge, StatusFilter } from "@/components/shared/status";
 import { ListSearch } from "@/components/shared/list-search";
 import { PageHeader } from "@/components/shell/page-header";
 import { Badge } from "@/components/reui/badge";
@@ -18,15 +19,18 @@ export default async function OrganizationsPage(props: PageProps<"/organizations
   const q = Array.isArray(searchParams.q) ? searchParams.q[0] : searchParams.q;
   const after = Array.isArray(searchParams.after) ? searchParams.after[0] : searchParams.after;
 
-  const { items: organizations, nextCursor, total } = await getOrganizationsPage({ query: q, cursor: after });
+  const rawStatus = Array.isArray(searchParams.status) ? searchParams.status[0] : searchParams.status;
+  const status = rawStatus === "active" || rawStatus === "suspended" || rawStatus === "archived" ? rawStatus : undefined;
+  const { items: organizations, nextCursor, total } = await getOrganizationsPage({ query: q, cursor: after, status });
   const { t, locale } = await getT();
   const readOnly = isReadOnly();
   const defaultProvider = getDefaultAuthProvider();
-  const searching = Boolean(q);
+  const searching = Boolean(q) || Boolean(status);
 
   const nextHref = (cursor: string) => {
     const params = new URLSearchParams();
     if (q) params.set("q", q);
+    if (status) params.set("status", status);
     params.set("after", cursor);
     return `/organizations?${params.toString()}`;
   };
@@ -56,9 +60,10 @@ export default async function OrganizationsPage(props: PageProps<"/organizations
         </Empty>
       ) : (
         <>
+          <StatusFilter basePath={q ? `/organizations?q=${encodeURIComponent(q)}` : "/organizations"} current={status} values={["active", "suspended", "archived"]} />
           <div className="flex flex-wrap items-center justify-between gap-3">
             <ListSearch
-              basePath="/organizations"
+              basePath={status ? `/organizations?status=${status}` : "/organizations"}
               initialQuery={q ?? ""}
               placeholderKey="orgs.searchPlaceholder"
               labelKey="orgs.searchLabel"
@@ -96,6 +101,11 @@ export default async function OrganizationsPage(props: PageProps<"/organizations
                         </span>
                         <span className="truncate text-xs text-muted-foreground">{organization.slug}</span>
                       </div>
+                      {organization.status !== "active" && (
+                        <span className="ml-auto shrink-0">
+                          <StatusBadge status={organization.status} />
+                        </span>
+                      )}
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       <Badge variant="outline">{t("count.members", { count: organization.memberCount })}</Badge>

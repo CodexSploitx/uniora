@@ -91,6 +91,7 @@ async function summarizeMany(organizations: Organization[]): Promise<OrgSummary[
     slug: organization.slug,
     name: organization.name,
     createdAt: organization.createdAt.toISOString(),
+    status: organization.status,
     memberCount: members[organization.id] ?? 0,
     roleCount: roles[organization.id] ?? 0,
     enabledFeatureCount: enabledFeatures[organization.id] ?? 0,
@@ -128,15 +129,16 @@ function decodeOrganizationCursor(cursor: string): { createdAt: Date; id: string
  * (members/roles/features counts), but only for this page's rows, not the
  * whole table.
  */
-export async function getOrganizationsPage(options?: { query?: string; cursor?: string }): Promise<OrganizationsPage> {
+export async function getOrganizationsPage(options?: { query?: string; cursor?: string; status?: OrgSummary["status"] }): Promise<OrganizationsPage> {
   await requireSession();
   const storage = getStorage();
   const query = options?.query?.trim() || undefined;
   const after = options?.cursor ? decodeOrganizationCursor(options.cursor) : undefined;
+  const status = options?.status;
 
   const [rows, total] = await Promise.all([
-    storage.organizations.search({ limit: ORGANIZATIONS_PAGE_SIZE + 1, after, query }),
-    storage.organizations.count({ query, limit: TOTAL_CAP }),
+    storage.organizations.search({ limit: ORGANIZATIONS_PAGE_SIZE + 1, after, query, status }),
+    storage.organizations.count({ query, status, limit: TOTAL_CAP }),
   ]);
   const hasMore = rows.length > ORGANIZATIONS_PAGE_SIZE;
   const page = hasMore ? rows.slice(0, ORGANIZATIONS_PAGE_SIZE) : rows;
@@ -230,6 +232,8 @@ export async function getOrgHeader(id: string): Promise<OrgHeader | null> {
       slug: organization.slug,
       name: organization.name,
       createdAt: organization.createdAt.toISOString(),
+      status: organization.status,
+      statusReason: organization.statusChange?.reason,
     },
     memberCount,
     roleCount,
@@ -246,8 +250,14 @@ const toMemberRow = (listing: {
   identity: { provider: string; subject: string };
   roleCount: number;
   roles: { id: string; name: string; isOwnerRole: boolean }[];
+  status: MemberRow["status"];
+  createdAt: Date;
+  lastActiveAt?: Date;
 }): MemberRow => ({
   id: listing.id,
+  status: listing.status,
+  createdAt: listing.createdAt.toISOString(),
+  lastActiveAt: listing.lastActiveAt?.toISOString(),
   identity: { provider: listing.identity.provider, subject: listing.identity.subject },
   roleCount: listing.roleCount,
   roles: listing.roles.map((role) => ({ id: role.id, name: role.name, isOwnerRole: role.isOwnerRole })),
@@ -264,20 +274,22 @@ export interface OrgMembersPage {
 
 export async function getOrgMembersPage(
   organizationId: string,
-  options?: { query?: string; cursor?: string },
+  options?: { query?: string; cursor?: string; status?: MemberRow["status"] },
 ): Promise<OrgMembersPage> {
   await requireSession();
   const storage = getStorage();
   const query = cleanQuery(options?.query);
+  const status = options?.status;
   const [rows, total] = await Promise.all([
     storage.memberships.searchListing({
       organizationId,
       limit: MEMBERS_PAGE_SIZE + 1,
       after: cleanCursor(options?.cursor),
       query,
+      status,
       rolesPerMember: ROLES_PREVIEW,
     }),
-    storage.memberships.count({ organizationId, query, limit: TOTAL_CAP }),
+    storage.memberships.count({ organizationId, query, status, limit: TOTAL_CAP }),
   ]);
   const { page, hasMore } = splitPage(rows, MEMBERS_PAGE_SIZE);
   // The Owner role always sorts first in a member's preview, so it is visible whenever they hold it.
@@ -300,18 +312,20 @@ export interface MembersPage {
 }
 
 /** Members across EVERY organization (the global `/members` page): one bounded, keyset-paged, searchable page. */
-export async function getMembersPage(options?: { query?: string; cursor?: string }): Promise<MembersPage> {
+export async function getMembersPage(options?: { query?: string; cursor?: string; status?: MemberRow["status"] }): Promise<MembersPage> {
   await requireSession();
   const storage = getStorage();
   const query = cleanQuery(options?.query);
+  const status = options?.status;
   const [rows, total] = await Promise.all([
     storage.memberships.searchListing({
       limit: MEMBERS_PAGE_SIZE + 1,
       after: cleanCursor(options?.cursor),
       query,
+      status,
       rolesPerMember: ROLES_PREVIEW,
     }),
-    query ? storage.memberships.count({ query, limit: TOTAL_CAP }) : totalMembers(),
+    query || status ? storage.memberships.count({ query, status, limit: TOTAL_CAP }) : totalMembers(),
   ]);
   const { page, hasMore } = splitPage(rows, MEMBERS_PAGE_SIZE);
   const organizations = await storage.organizations.findByIds([...new Set(page.map((membership) => membership.organizationId))]);
