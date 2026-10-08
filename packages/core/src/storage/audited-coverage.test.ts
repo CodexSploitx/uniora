@@ -70,7 +70,7 @@ describe("createAuditedStorage: every mutation is audited, with standard names",
     const b = await audited.memberships.create({ id: "m-b", organizationId: "org", identity: { provider: "p", subject: "b" } });
     const madrid = await audited.teams.create({ id: "t2", organizationId: "org", name: "Madrid" });
     const invited = await audited.teamMemberships.add({ id: "tm-a", organizationId: "org", teamId: madrid.id, membershipId: a.id, status: "pending" });
-    await audited.teamMemberships.setStatus("org", invited.id, "active", { actor });
+    await audited.teamMemberships.accept("org", invited.id, { actor: { provider: "p", subject: "a" } });
     await audited.teamMemberships.setStatus("org", invited.id, "suspended", { actor });
     await audited.teamMemberships.setStatus("org", invited.id, "active", { actor });
     await audited.teamMemberships.setResponsibility("org", invited.id, "manager");

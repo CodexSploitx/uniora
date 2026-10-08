@@ -23,6 +23,7 @@ export type TeamErrorCode =
   | "team_membership_exists"
   | "team_membership_invalid"
   | "team_membership_transition_invalid"
+  | "team_accept_forbidden"
   | "team_membership_version_conflict"
   | "team_member_unknown"
   | "team_role_invalid"
@@ -165,10 +166,17 @@ export interface TeamMembershipRepository {
   search(options: SearchTeamMembersOptions): Promise<TeamMembership[]>;
   count(options: Omit<SearchTeamMembersOptions, "limit" | "after">): Promise<number>;
   /**
-   * Moves a membership along pending → active → suspended → removed (and suspended → active). Idempotent for the status it
+   * Moves a membership along active → suspended → removed (and suspended → active), or removes a pending one; accepting an invitation is `accept`, by the invited person only. Idempotent for the status it
    * already has; any other jump is `team_membership_transition_invalid`. Bring a removed one back with `add`.
    */
   setStatus(organizationId: string, id: string, status: TeamMemberStatus, input: SetTeamMemberStatusInput): Promise<TeamMembership>;
+  /**
+   * The invited person accepts their own invitation: `pending → active`, and only when `input.actor` is exactly the identity
+   * of the organization membership the invitation is for (`team_accept_forbidden` otherwise, so nobody can accept, or be
+   * made to accept, on someone else's behalf). Idempotent for an already active membership of that person; any other status
+   * is `team_membership_transition_invalid`. `setStatus` cannot do this move on purpose.
+   */
+  accept(organizationId: string, id: string, input: { actor: Identity } & TeamMemberChangeOptions): Promise<TeamMembership>;
   /** Idempotent. */
   setResponsibility(organizationId: string, id: string, responsibility: TeamResponsibility, options?: TeamMemberChangeOptions): Promise<TeamMembership>;
   /** Idempotent. Same role rules as `add`. */
@@ -178,7 +186,7 @@ export interface TeamMembershipRepository {
 }
 
 const TRANSITIONS: Record<TeamMemberStatus, readonly TeamMemberStatus[]> = {
-  pending: ["active", "removed"],
+  pending: ["removed"],
   active: ["suspended", "removed"],
   suspended: ["active", "removed"],
   removed: [],

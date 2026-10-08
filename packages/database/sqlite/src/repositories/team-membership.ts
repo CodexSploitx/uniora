@@ -235,6 +235,30 @@ export function createTeamMembershipRepository(db: SqliteExecutor): TeamMembersh
       });
     },
 
+    async accept(organizationId, id, input) {
+      return mutate(organizationId, id, input.expectedVersion, async (current) => {
+        const owner = await db.query(
+          `select 1 from uniora_team_memberships tm join uniora_memberships m on m.id = tm.membership_id and m.organization_id = tm.organization_id
+           where tm.id = ?1 and tm.organization_id = ?2 and m.provider = ?3 and m.subject = ?4`,
+          [id, organizationId, input.actor.provider, input.actor.subject],
+        );
+        if (owner.rows.length === 0) throw new TeamError("Only the invited person can accept a team invitation.", "team_accept_forbidden");
+        if (current.status === "active") return current;
+        if (current.status !== "pending") {
+          throw new TeamError(`A ${current.status} team membership cannot be accepted.`, "team_membership_transition_invalid");
+        }
+        const now = new Date();
+        await db.query(
+          `update uniora_team_memberships
+           set status = 'active', updated_at = ?3, joined_at = coalesce(joined_at, ?3),
+               status_changed_at = ?3, status_changed_by_provider = ?4, status_changed_by_subject = ?5, status_reason = null, version = version + 1
+           where id = ?1 and organization_id = ?2`,
+          [id, organizationId, now, input.actor.provider, input.actor.subject],
+        );
+        return (await byId(organizationId, id))!;
+      });
+    },
+
     async setResponsibility(organizationId, id, responsibility, options?: TeamMemberChangeOptions) {
       assertTeamResponsibility(responsibility);
       return mutate(organizationId, id, options?.expectedVersion, async (current) => {

@@ -2206,10 +2206,16 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         expect(invited.joinedAt).toBeUndefined();
         const code = async (promise: Promise<unknown>) => promise.then(() => "ok", (error: unknown) => (error instanceof TeamError ? error.code : String(error)));
         expect(await code(storage.teamMemberships.setStatus("org-1", "tm1", "suspended", { actor: admin }))).toBe("team_membership_transition_invalid");
-        const accepted = await storage.teamMemberships.setStatus("org-1", "tm1", "active", { actor: ana });
+        // Nobody but the invited person can accept: not an admin, not another member, not through setStatus.
+        expect(await code(storage.teamMemberships.setStatus("org-1", "tm1", "active", { actor: ana }))).toBe("team_membership_transition_invalid");
+        expect(await code(storage.teamMemberships.accept("org-1", "tm1", { actor: admin }))).toBe("team_accept_forbidden");
+        expect(await code(storage.teamMemberships.accept("org-1", "tm1", { actor: identity }))).toBe("team_accept_forbidden");
+        expect(await code(storage.teamMemberships.accept("org-2", "tm1", { actor: ana }))).toBe("team_membership_not_found");
+        expect((await storage.teamMemberships.findById("org-1", "tm1"))?.status).toBe("pending");
+        const accepted = await storage.teamMemberships.accept("org-1", "tm1", { actor: ana });
         expect(accepted).toMatchObject({ status: "active", version: 2, statusChange: { by: ana } });
         expect(accepted.joinedAt).toBeInstanceOf(Date);
-        expect((await storage.teamMemberships.setStatus("org-1", "tm1", "active", { actor: ana })).version).toBe(2);
+        expect((await storage.teamMemberships.accept("org-1", "tm1", { actor: ana })).version).toBe(2);
         const suspended = await storage.teamMemberships.setStatus("org-1", "tm1", "suspended", { actor: admin, reason: " baja temporal " });
         expect(suspended).toMatchObject({ status: "suspended", statusChange: { by: admin, reason: "baja temporal" } });
         expect((await storage.teamMemberships.setStatus("org-1", "tm1", "active", { actor: admin })).status).toBe("active");
@@ -2266,7 +2272,7 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         await audited.teams.update("org-1", "t-a", { name: "Auditado 2", metadata: { type: "project" } });
         await audited.teams.update("org-1", "t-a", { name: "Auditado 2" });
         await audited.teamMemberships.add({ id: "tma", organizationId: "org-1", teamId: "t-a", membershipId: "m-ana", status: "pending" });
-        await audited.teamMemberships.setStatus("org-1", "tma", "active", { actor: ana });
+        await audited.teamMemberships.accept("org-1", "tma", { actor: ana });
         await audited.teamMemberships.setResponsibility("org-1", "tma", "manager");
         await audited.teamMemberships.setResponsibility("org-1", "tma", "owner");
         await audited.teamMemberships.assignRole("org-1", "tma", "role-sales");

@@ -147,6 +147,37 @@ defineStorageConformance(harness, () => {
     expect(await harness.probe.hasMembershipRole("m-2", roleId)).toBe(false);
   });
 
+  it("teams: la base de datos misma rechaza filas entre organizaciones, aunque alguien escriba SQL directo", async () => {
+    const storage = harness.storage();
+    await storage.organizations.create({ id: "org-a", name: "A" });
+    await storage.organizations.create({ id: "org-b", name: "B" });
+    await storage.teams.create({ id: "team-a", organizationId: "org-a", name: "Equipo A" });
+    await storage.teams.create({ id: "team-b", organizationId: "org-b", name: "Equipo B" });
+    await storage.roles.create({ id: "role-b", organizationId: "org-b", name: "Rol B" });
+    await storage.memberships.create({ id: "m-a", organizationId: "org-a", identity: { provider: "p", subject: "a" } });
+    await storage.memberships.create({ id: "m-b", organizationId: "org-b", identity: { provider: "p", subject: "b" } });
+    const insert = (id: string, org: string, team: string, member: string) =>
+      pool.query(
+        `insert into uniora.team_memberships (id, organization_id, team_id, membership_id, status) values ($1, $2, $3, $4, 'active')`,
+        [id, org, team, member],
+      );
+    // El miembro de A en el equipo de B (con cualquiera de las dos organizaciones) y al revés.
+    await expect(insert("x1", "org-b", "team-b", "m-a")).rejects.toThrow();
+    await expect(insert("x2", "org-a", "team-b", "m-a")).rejects.toThrow();
+    await expect(insert("x3", "org-a", "team-a", "m-b")).rejects.toThrow();
+    await insert("ok", "org-a", "team-a", "m-a");
+    // Un rol de otra organización tampoco puede colgarse de una membresía de equipo.
+    await expect(
+      pool.query(`insert into uniora.team_membership_roles (team_membership_id, role_id, organization_id) values ('ok', 'role-b', 'org-a')`),
+    ).rejects.toThrow();
+    await expect(
+      pool.query(`insert into uniora.team_membership_roles (team_membership_id, role_id, organization_id) values ('ok', 'role-b', 'org-b')`),
+    ).rejects.toThrow();
+    // Mover una fila a otro equipo o a otra organización con un UPDATE directo también falla.
+    await expect(pool.query(`update uniora.team_memberships set team_id = 'team-b' where id = 'ok'`)).rejects.toThrow();
+    await expect(pool.query(`update uniora.team_memberships set organization_id = 'org-b' where id = 'ok'`)).rejects.toThrow();
+  });
+
   it("el límite de invitaciones se respeta entre procesos distintos (audit F-06)", async () => {
     const second = createTestPool();
     try {

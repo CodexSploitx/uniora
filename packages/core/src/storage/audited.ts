@@ -381,7 +381,7 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
             const row = await tx.teamMemberships.setStatus(organizationId, id, status, input);
             if (before && before.status !== row.status) {
               const action =
-                row.status === "active" ? (before.status === "pending" ? "team_member.accepted" : "team_member.reactivated")
+                row.status === "active" ? "team_member.reactivated"
                 : row.status === "suspended" ? "team_member.suspended"
                 : "team_member.removed";
               await record(tx, action, organizationId, { type: "team_member", id }, {
@@ -391,6 +391,15 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
                 requestedBy: `${input.actor.provider}:${input.actor.subject}`,
                 ...(row.statusChange?.reason !== undefined ? { reason: row.statusChange.reason } : {}),
               });
+            }
+            return row;
+          }),
+        accept: (organizationId, id, input) =>
+          run(async (tx) => {
+            const before = await tx.teamMemberships.findById(organizationId, id);
+            const row = await tx.teamMemberships.accept(organizationId, id, input);
+            if (before && before.status === "pending") {
+              await record(tx, "team_member.accepted", organizationId, { type: "team_member", id }, { teamId: row.teamId, membershipId: row.membershipId, from: "pending" });
             }
             return row;
           }),

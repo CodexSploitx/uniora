@@ -13,7 +13,7 @@ A team is **context, not authority**. Being a member, a manager or the owner of 
 
 - A team belongs to **one** organization, forever. `slug` and `externalId` are unique inside it, never globally. Every repository method that takes a team id also takes the organization id, and a team of another organization behaves exactly like a team that does not exist (`team_not_found`). On the database backends the same guarantee is enforced by composite foreign keys.
 - A **team membership** links an organization membership to a team. It is independent of the organization membership: a member can belong to no team, to one, or to several. Deleting the organization membership removes their team memberships.
-- Team membership **status**: `pending` (invited, not accepted) → `active` → `suspended` → `removed`. A removed row stays for the record and a later `add` reuses it. `pending`/`active`/`suspended` can also go straight to `removed`.
+- Team membership **status**: `pending` (invited, not accepted) → `active` → `suspended` → `removed`. Only the invited person can accept (`accept`, `team_accept_forbidden` for anyone else); `setStatus` cannot move `pending` to `active`. A removed row stays for the record and a later `add` reuses it. `pending`/`active`/`suspended` can also go straight to `removed`.
 - **Responsibility** (`owner`, `manager`, `member`) is a label that says who looks after the team. It is not a permission and nothing in UNIORA grants anything because of it.
 - **Team roles**: a team membership can hold roles of the same organization (`roleIds`) that apply inside that team only (Juan is a Manager in Barcelona and a plain member in Madrid). The organization's Owner role can never be held this way. Removing someone from a team drops their roles there.
 - **Lifecycle**: `active` → `archived` (kept for the record, no changes, no new members) → `restore`, or `delete` (only an archived team; it removes its team memberships, never the audit trail).
@@ -41,11 +41,13 @@ const row = await audited.teamMemberships.add({
   roleIds: [salesRoleId],
   invitedBy: adminIdentity,
 });
-await audited.teamMemberships.setStatus(organizationId, row.id, "active", { actor: memberIdentity }); // accepted
+await audited.teamMemberships.accept(organizationId, row.id, { actor: memberIdentity }); // only the invited person can accept
 
 await audited.teams.update(organizationId, barcelona.id, { metadata: { type: "branch" }, expectedVersion: barcelona.version });
 await audited.teams.archive(organizationId, barcelona.id, { actor: adminIdentity, reason: "branch closed" });
 ```
+
+Nobody moves between teams by themselves: joining, leaving, promoting or changing roles are separate calls that the host must authorize first, and the database refuses any row that mixes organizations even if someone writes SQL by hand.
 
 Everything is paginated with a keyset cursor (`search({ organizationId, after, limit })`), and `teamMemberships.search({ organizationId, identity })` lists the teams of one person.
 `version` / `expectedVersion` work as in the rest of UNIORA (`team_version_conflict`, `team_membership_version_conflict`).

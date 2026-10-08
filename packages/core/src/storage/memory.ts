@@ -1875,6 +1875,29 @@ export function createMemoryStorage(): UnioraStorage {
       teamMemberships.set(id, saved);
       return cloneTeamMembership(saved);
     },
+    async accept(organizationId, id, input) {
+      const row = requireTeamMembership(organizationId, id);
+      assertTeamVersion(row, input.expectedVersion, "team_membership_version_conflict");
+      const membership = memberships.get(row.membershipId);
+      if (!membership || !sameIdentity(membership.identity, input.actor)) {
+        throw new TeamError("Only the invited person can accept a team invitation.", "team_accept_forbidden");
+      }
+      if (row.status === "active") return cloneTeamMembership(row);
+      if (row.status !== "pending") {
+        throw new TeamError(`A ${row.status} team membership cannot be accepted.`, "team_membership_transition_invalid");
+      }
+      const now = new Date();
+      const saved: TeamMembership = {
+        ...row,
+        status: "active",
+        updatedAt: now,
+        joinedAt: row.joinedAt ?? now,
+        statusChange: { at: now, by: { ...input.actor } },
+        version: row.version + 1,
+      };
+      teamMemberships.set(id, saved);
+      return cloneTeamMembership(saved);
+    },
     async setResponsibility(organizationId, id, responsibility, options) {
       const row = requireTeamMembership(organizationId, id);
       assertTeamResponsibility(responsibility);

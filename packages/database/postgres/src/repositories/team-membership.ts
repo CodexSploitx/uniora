@@ -190,13 +190,17 @@ export function createTeamMembershipRepository(db: Queryable): TeamMembershipRep
             `with ins as (
                insert into uniora.team_memberships
                  (id, organization_id, team_id, membership_id, status, responsibility, created_at, updated_at, joined_at, invited_by_provider, invited_by_subject)
-               values ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10) returning id
+               select $1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10
+               where exists (select 1 from uniora.teams t where t.id = $3 and t.organization_id = $2 and t.status = 'active')
+               returning id
              )
              insert into uniora.team_membership_roles (team_membership_id, role_id, organization_id)
              select $1, r, $2 from unnest($11::text[]) as r where exists (select 1 from ins)`,
             [input.id, input.organizationId, input.teamId, input.membershipId, valid.status, valid.responsibility, valid.now, valid.status === "active" ? valid.now : null, input.invitedBy?.provider ?? null, input.invitedBy?.subject ?? null, valid.roleIds],
           );
-          return (await byId(input.organizationId, input.id))!;
+          const created = await byId(input.organizationId, input.id);
+          if (!created) throw new TeamError("An archived team accepts no new members; restore it first.", "team_archived");
+          return created;
         } catch (error) {
           if (isUniqueViolation(error)) {
             const clash = await db.query(`select 1 from uniora.team_memberships where team_id = $1 and membership_id = $2`, [input.teamId, input.membershipId]);
@@ -262,6 +266,30 @@ export function createTeamMembershipRepository(db: Queryable): TeamMembershipRep
         );
         if (Number(result.rows[0]!.n) === 0) return null;
         return byId(organizationId, id);
+      });
+    },
+
+    async accept(organizationId, id, input) {
+      return mutate(organizationId, id, input.expectedVersion, async (current) => {
+        const owner = await db.query(
+          `select 1 from uniora.team_memberships tm join uniora.memberships m on m.id = tm.membership_id and m.organization_id = tm.organization_id
+           where tm.id = $1 and tm.organization_id = $2 and m.provider = $3 and m.subject = $4`,
+          [id, organizationId, input.actor.provider, input.actor.subject],
+        );
+        if (owner.rows.length === 0) throw new TeamError("Only the invited person can accept a team invitation.", "team_accept_forbidden");
+        if (current.status === "active") return current;
+        if (current.status !== "pending") {
+          throw new TeamError(`A ${current.status} team membership cannot be accepted.`, "team_membership_transition_invalid");
+        }
+        const result = await db.query(
+          `update uniora.team_memberships
+           set status = 'active', updated_at = date_trunc('milliseconds', now()), joined_at = coalesce(joined_at, date_trunc('milliseconds', now())),
+               status_changed_at = date_trunc('milliseconds', now()), status_changed_by_provider = $4, status_changed_by_subject = $5, status_reason = null,
+               version = version + 1
+           where id = $1 and organization_id = $2 and version = $3 and status = 'pending'`,
+          [id, organizationId, current.version, input.actor.provider, input.actor.subject],
+        );
+        return (result.rowCount ?? 0) > 0 ? byId(organizationId, id) : null;
       });
     },
 
