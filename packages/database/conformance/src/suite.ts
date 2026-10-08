@@ -11,8 +11,10 @@ import {
   OrganizationError,
   PermissionError,
   RoleError,
+  TEAM_PERMISSIONS,
   TeamError,
   applyRoleTemplates,
+  createTeamService,
   dispatchOutbox,
   leaveOrganization,
   transferOwnership,
@@ -2263,6 +2265,51 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         await storage.memberships.delete("m-ana");
         expect(await storage.teamMemberships.findById("org-1", "tm1")).toBeNull();
         expect(await storage.teams.findById("org-1", "t-bcn")).not.toBeNull();
+      });
+
+      it("el servicio de equipos: nadie cambia de equipo sin permiso, con el motor y la escritura en la misma transacción", async () => {
+        const storage = await seed();
+        const service = createTeamService({ storage });
+        const engine = createAuthorizationEngine(storage);
+        const lead = { provider: "supabase", subject: "lead" };
+        for (const key of [...Object.values(TEAM_PERMISSIONS), "vehicles.read"]) await storage.permissions.register({ key });
+        await storage.roles.create({ id: "role-hr", organizationId: "org-1", name: "HR", permissionKeys: Object.values(TEAM_PERMISSIONS) });
+        await storage.roles.create({ id: "role-lead", organizationId: "org-1", name: "Lead", permissionKeys: [TEAM_PERMISSIONS.membersAdd, "vehicles.read"] });
+        await storage.roles.create({ id: "role-read", organizationId: "org-1", name: "Reader", permissionKeys: ["vehicles.read"] });
+        await storage.memberships.create({ id: "m-hr", organizationId: "org-1", identity: admin, roleIds: ["role-hr"] });
+        await storage.memberships.create({ id: "m-lead", organizationId: "org-1", identity: lead });
+        await storage.teams.create({ id: "t-bcn", organizationId: "org-1", name: "Barcelona" });
+        await storage.teams.create({ id: "t-mad", organizationId: "org-1", name: "Madrid" });
+        await storage.teamMemberships.add({ id: "tm-lead", organizationId: "org-1", teamId: "t-bcn", membershipId: "m-lead", responsibility: "manager", roleIds: ["role-lead"] });
+        await storage.teamMemberships.add({ id: "tm-ana", organizationId: "org-1", teamId: "t-bcn", membershipId: "m-ana", roleIds: ["role-read"] });
+        const code = async (promise: Promise<unknown>) => promise.then(() => "ok", (error: unknown) => (error instanceof TeamError ? error.code : String(error)));
+
+        // Contexto de equipo: lo que da un rol de equipo vale solo dentro de ese equipo.
+        expect(await engine.can({ identity: ana, organizationId: "org-1", permission: "vehicles.read", teamId: "t-bcn" })).toBe(true);
+        expect(await engine.can({ identity: ana, organizationId: "org-1", permission: "vehicles.read", teamId: "t-mad" })).toBe(false);
+        expect(await engine.can({ identity: ana, organizationId: "org-1", permission: "vehicles.read" })).toBe(false);
+        expect(await engine.can({ identity: identity, organizationId: "org-1", permission: "vehicles.read", teamId: "t-bcn" })).toBe(false);
+
+        // Ana no puede cambiarse de equipo, ni el responsable de Barcelona sacarla a Madrid.
+        const move = (actor: typeof ana) => service.moveMember({ actor, organizationId: "org-1", membershipId: "m-ana", fromTeamId: "t-bcn", toTeamId: "t-mad", id: "tm-moved" });
+        expect(await code(service.addMember({ actor: ana, id: "self", organizationId: "org-1", teamId: "t-mad", membershipId: "m-ana" }))).toBe("team_forbidden");
+        expect(await code(move(ana))).toBe("team_forbidden");
+        expect(await code(move(lead))).toBe("team_forbidden");
+        expect(await code(service.addMember({ actor: lead, id: "x", organizationId: "org-1", teamId: "t-mad", membershipId: "m-hr" }))).toBe("team_forbidden");
+        expect((await storage.teamMemberships.find("org-1", "t-bcn", "m-ana"))?.status).toBe("active");
+        expect(await storage.teamMemberships.find("org-1", "t-mad", "m-ana")).toBeNull();
+
+        // Con el permiso organizativo sí, y queda auditado con quien lo hizo.
+        expect((await move(admin)).teamId).toBe("t-mad");
+        expect((await storage.teamMemberships.find("org-1", "t-bcn", "m-ana"))?.status).toBe("removed");
+        const entries = await storage.auditLogs.search({ organizationId: "org-1", actionPrefix: "team_member." });
+        expect(entries.map((entry) => [entry.action, entry.actor.subject]).sort()).toEqual([["team_member.added", "admin"], ["team_member.removed", "admin"]]);
+
+        // Un movimiento que falla (destino archivado) no cambia nada, y la transacción lo deshace si algo se escribió.
+        await storage.teams.archive("org-1", "t-mad", { actor: admin });
+        await storage.teamMemberships.add({ id: "tm-back", organizationId: "org-1", teamId: "t-bcn", membershipId: "m-ana" });
+        expect(await code(service.moveMember({ actor: admin, organizationId: "org-1", membershipId: "m-ana", fromTeamId: "t-bcn", toTeamId: "t-mad", id: "tm-again" }))).toBe("team_archived");
+        expect((await storage.teamMemberships.find("org-1", "t-bcn", "m-ana"))?.status).toBe("active");
       });
 
       it("un storage auditado deja rastro de cada cambio, con nombres estándar y una sola vez", async () => {

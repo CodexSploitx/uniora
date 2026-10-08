@@ -52,9 +52,41 @@ Nobody moves between teams by themselves: joining, leaving, promoting or changin
 Everything is paginated with a keyset cursor (`search({ organizationId, after, limit })`), and `teamMemberships.search({ organizationId, identity })` lists the teams of one person.
 `version` / `expectedVersion` work as in the rest of UNIORA (`team_version_conflict`, `team_membership_version_conflict`).
 
+## Changing who is in which team: the team service
+
+The repositories above are low-level and authorize nothing. For anything driven by a user, use the **team service**: every
+operation asks the authorization engine first, inside the same transaction as the change, and records the actor in the audit log.
+
+```ts
+import { TEAM_PERMISSIONS, createTeamService } from "@uniora/core";
+
+const teams = createTeamService({ storage });          // register TEAM_PERMISSIONS in your catalog and give them to roles
+await teams.addMember({ actor: session.identity, id, organizationId, teamId, membershipId });   // needs teams.members.add
+await teams.moveMember({ actor, organizationId, membershipId, fromTeamId, toTeamId, id });      // needs remove in the source AND add in the destination
+```
+
+Rules it enforces (all covered by tests on memory, Postgres and SQLite):
+
+- **Nobody changes team by themselves**: joining a team needs `teams.members.add` even for yourself; `moveMember` needs `teams.members.remove` in the source team and `teams.members.add` in the destination, and you cannot move yourself. Leaving (`leaveTeam`) and declining an invitation are always allowed for your own membership.
+- **Each permission is satisfied organization-wide or inside that very team**, never through another team: a lead of Barcelona who holds `teams.members.add` through a Barcelona role cannot add anyone to Madrid.
+- **No self-promotion**: you cannot change your own responsibility, give yourself roles or lift your own suspension. Making someone team owner needs `teams.manage`.
+- **No escalation through roles**: you can only give a role whose every permission you hold yourself; the Owner role can never be given.
+- **Only the invited person accepts** an invitation (`acceptInvitation`).
+- **Deleting a team** needs `teams.manage` organization-wide.
+
+A guarantee has limits: code that holds `storage` directly can still call the raw repositories, as it can run SQL. Hand your request handlers the service, not the storage. The database does still refuse any row that mixes organizations.
+
+## Team as context for `can`
+
+```ts
+await engine.can({ identity, organizationId, permission: "vehicles.read", teamId: vehicle.teamId });
+```
+
+With `teamId` the answer can only get **narrower**: the identity must be an active member of that active team of the organization **and** hold the permission through its organization roles or the roles it holds in that team. A role held in a team never counts outside it. Being team owner or manager grants nothing, the organization's Owner role does not skip the membership check, and a support grant does not apply. Unknown or foreign teams, archived teams, and pending, suspended or removed members are denied. `engine.access.check({ identity, organizationId, teamId })` answers "is an active member of this team". Which team a resource belongs to is your data; UNIORA only evaluates the context you pass.
+
 ## What UNIORA does not do for you
 
-- **It does not authorize these calls.** Like `roles.assign` or `memberships.block`, the repositories trust the caller: check with `engine.can` (for example `teams.manage`, `teams.members.invite`) before calling them.
+- **The raw repositories do not authorize.** Like `roles.assign` or `memberships.block`, they trust the caller: use the team service above (or check with `engine.can` yourself) before calling them.
 - **It does not know your resources.** A vehicle or a ticket belongs to a team because your table says so; you pass that team when you ask the question.
 - **No bypass.** There is no code path where an owner or manager of a team skips the engine.
 

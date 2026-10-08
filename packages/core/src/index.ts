@@ -290,3 +290,5 @@ export {
   sanitizeTeamName,
   sanitizeTeamReason,
 } from "./team/repository.js";
+export type { MoveTeamMemberInput, TeamActor, TeamPermissionKeys, TeamService, TeamServiceOptions } from "./team/service.js";
+export { TEAM_PERMISSIONS, createTeamService } from "./team/service.js";

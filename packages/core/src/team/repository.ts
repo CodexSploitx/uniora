@@ -24,6 +24,7 @@ export type TeamErrorCode =
   | "team_membership_invalid"
   | "team_membership_transition_invalid"
   | "team_accept_forbidden"
+  | "team_forbidden"
   | "team_membership_version_conflict"
   | "team_member_unknown"
   | "team_role_invalid"

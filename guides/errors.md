@@ -120,7 +120,7 @@ The code is `invitation_` plus the reason (`InvitationError.reason`):
 ### Team
 
 `team_not_found` (also for a team of another organization), `team_exists`, `team_slug_taken`, `team_external_id_taken`, `team_name_invalid`, `team_slug_invalid`, `team_external_id_invalid`, `team_data_invalid`, `team_organization_unknown`, `team_update_empty`, `team_archived`, `team_not_archived`, `team_version_conflict`, `team_invalid`.
-Team memberships: `team_membership_not_found`, `team_membership_exists`, `team_membership_invalid`, `team_membership_transition_invalid`, `team_membership_version_conflict`, `team_member_unknown` (the organization membership does not exist in that organization), `team_role_invalid`, `team_role_owner_protected`.
+Team memberships: `team_membership_not_found`, `team_membership_exists`, `team_membership_invalid`, `team_membership_transition_invalid`, `team_membership_version_conflict`, `team_member_unknown` (the organization membership does not exist in that organization), `team_role_invalid`, `team_role_owner_protected`, `team_accept_forbidden`, `team_forbidden` (the team service refused the actor).
 
 ## Denials are not errors
 
