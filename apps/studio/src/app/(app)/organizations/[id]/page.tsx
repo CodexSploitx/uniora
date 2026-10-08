@@ -70,7 +70,7 @@ export default async function OrganizationPage(props: PageProps<"/organizations/
         }
         description={`${t("orgs.created", { date: formatDate(organization.createdAt, locale) })}${organization.statusReason ? ` · ${organization.statusReason}` : ""}`}
         actions={
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             {organization.status !== "active" && <StatusBadge status={organization.status} />}
             {!readOnly && <OrganizationStatusDialog organizationId={organization.id} status={organization.status} />}
             {!readOnly && <RenameOrganizationDialog organizationId={organization.id} name={organization.name} />}

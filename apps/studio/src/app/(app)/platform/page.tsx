@@ -22,7 +22,7 @@ export default async function PlatformPage(props: PageProps<"/platform">) {
 
   return (
     <>
-      <PageHeader title={t("platform.title")} description={t("platform.description")} crumbs={[{ label: t("nav.platform") }]} />
+      <PageHeader title={t("platform.title")} description={t("platform.description")} />
 
       {!page.available ? (
         <Empty className="border">
@@ -35,8 +35,8 @@ export default async function PlatformPage(props: PageProps<"/platform">) {
           </EmptyHeader>
         </Empty>
       ) : (
-        <div className="grid gap-6">
-          <section className="flex flex-col gap-3" aria-labelledby="platform-members">
+        <div className="grid min-w-0 gap-6">
+          <section className="flex min-w-0 flex-col gap-3" aria-labelledby="platform-members">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 id="platform-members" className="font-heading text-base font-semibold">
                 {t("platform.members")}
@@ -104,7 +104,7 @@ export default async function PlatformPage(props: PageProps<"/platform">) {
             )}
           </section>
 
-          <section className="flex flex-col gap-3" aria-labelledby="platform-roles">
+          <section className="flex min-w-0 flex-col gap-3" aria-labelledby="platform-roles">
             <h2 id="platform-roles" className="font-heading text-base font-semibold">
               {t("platform.roles")}
             </h2>

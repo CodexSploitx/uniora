@@ -4,6 +4,25 @@ All notable changes to UNIORA. Packages are released in lockstep, so one version
 
 ## Unreleased
 
+Includes new migrations: Postgres `0039`, SQLite `0024` (run `uniora migrate`; on a table with millions of rows read `guides/performance.md` first: the SQLite migration builds the search tables in about a minute per five million memberships, and the Postgres one builds its indexes while blocking writes). No breaking change for code that only calls the repositories.
+
+### Added
+
+- **`count({ limit })` and `countByOrganization(ids, { limit })`**: memberships, organizations, invitations and roles can stop counting at `limit`, so a total next to a list costs one page of work even when millions of rows match. Memory, SQLite and Postgres; the conformance suite covers them.
+- **Studio: everything it was missing.** Members show their state (active, suspended, blocked) and when they were last active, can be filtered by state, and an operator can block, suspend until a date or restore access with a reason; organizations show and can change their state (active, suspended, archived) with a reason; the Teams tab opens at the top of the tree and shows the sub-teams of the selected team; invitations show the teams they offer; the Activity feed has a label in English and Spanish for every audit action Core records (a test enforces it); the features catalog marks features that are on by default; a read-only **Platform** page lists platform administrators and roles; numbers use the language's separators; tables and headers no longer overflow on a phone.
+
+### Changed
+
+- **Studio never loads or counts a whole table on the request path.** Every list is keyset-paged; totals next to a list are capped ("10,000+", "1,000+" when filtered) and the exact whole-table totals are cached and refreshed in the background (the first request answers with the capped count). Studio pages answer in 20–60 ms on 5,000,000 memberships (SQLite and PostgreSQL), see `guides/performance.md`.
+
+### Performance
+
+- **Text search is indexed on both engines.** SQLite: FTS5 trigram tables kept by triggers (migration `0024`); PostgreSQL: `pg_trgm` GIN indexes (migration `0039`), with the candidate ids looked up first so the planner cannot choose a bad plan, and a short walk of the first rows for terms that are common. Results are unchanged: each candidate is still checked with the exact predicate. Terms of fewer than three characters still scan.
+- **New indexes** on memberships by `(provider, subject)` (everything that starts from an identity) and by `(status, id)` (the cross-organization "blocked members" view). Filters on the effective status (`suspended`, `blocked`) use the stored status as a prefilter so the index answers them.
+- **SQLite optional filters use their indexes.** The executor resolves `(?N is null or column = ?N)` groups before preparing the statement; before, those queries could not use an index at all.
+- **Per-organization counts are bounded**: `countByOrganization` computes each organization's count with a limit instead of a grouped scan of every row.
+
+
 ## 0.6.0 - 2026-10-08
 
 Includes new migrations: Postgres `0037`–`0038`, SQLite `0022`–`0023` (run `uniora migrate`). Nothing here breaks existing code: the platform scope is a separate `PlatformStorage`.

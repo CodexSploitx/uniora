@@ -39,14 +39,14 @@ export function PageHeader({ title, description, crumbs, actions, leading }: Pag
         </Breadcrumb>
       )}
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           {leading}
-          <div className="flex flex-col gap-1">
+          <div className="flex min-w-0 flex-col gap-1">
             <h1 className="font-heading text-2xl font-semibold tracking-tight">{title}</h1>
             {description && <p className="max-w-2xl text-sm text-muted-foreground">{description}</p>}
           </div>
         </div>
-        {actions && <div className="flex items-center gap-2">{actions}</div>}
+        {actions && <div className="flex max-w-full min-w-0 flex-wrap items-center gap-2">{actions}</div>}
       </div>
     </div>
   );

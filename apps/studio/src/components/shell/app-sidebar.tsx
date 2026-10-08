@@ -1,5 +1,6 @@
 "use client";
 
+import { capLabel } from "@/lib/limits";
 import {
   IconBuildingSkyscraper,
   IconChevronRight,
@@ -51,7 +52,7 @@ const NAV: { href: string; label: MessageKey; icon: typeof IconKey }[] = [
 
 export function AppSidebar({ organizations, organizationsTotal, readOnly }: AppSidebarProps) {
   const pathname = usePathname();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
 
   return (
     <Sidebar collapsible="icon">
@@ -85,7 +86,7 @@ export function AppSidebar({ organizations, organizationsTotal, readOnly }: AppS
                       <span>{t(item.label)}</span>
                     </SidebarMenuButton>
                     {item.href === "/organizations" && organizationsTotal > 0 && (
-                      <SidebarMenuBadge>{organizationsTotal}</SidebarMenuBadge>
+                      <SidebarMenuBadge>{capLabel(organizationsTotal, locale)}</SidebarMenuBadge>
                     )}
                   </SidebarMenuItem>
                 );

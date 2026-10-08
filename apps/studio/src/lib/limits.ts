@@ -11,10 +11,17 @@ export const FILTERED_CAP = 1_000;
 export const countLimit = (filtered = false): number => (filtered ? FILTERED_CAP : TOTAL_CAP) + 1;
 
 /**
- * Translator parameters for a total: the number picks the plural. A count that hit its cap reads "10,000+" / "1,000+";
- * an exact total (including the cached whole-table totals, which can be millions) is shown in full.
+ * Translator parameters for a total: the number picks the plural. A count that hit its cap reads "10,000+" / "1,000+"
+ * (formatted for the viewer's language by the translator); an exact total, even millions, is shown in full.
  */
-export function capParams(count: number): { count: number; countLabel: string } {
-  const capped = count === TOTAL_CAP + 1 ? TOTAL_CAP : count === FILTERED_CAP + 1 ? FILTERED_CAP : undefined;
-  return { count, countLabel: capped !== undefined ? `${capped.toLocaleString("en-US")}+` : count.toLocaleString("en-US") };
+export function capParams(count: number): { count: number; capped?: number } {
+  if (count === TOTAL_CAP + 1) return { count, capped: TOTAL_CAP };
+  if (count === FILTERED_CAP + 1) return { count, capped: FILTERED_CAP };
+  return { count };
+}
+
+/** A total as text for a tile or badge: "10,000+" at a cap, otherwise the full number with the language's separators. */
+export function capLabel(count: number, locale: string): string {
+  const { capped } = capParams(count);
+  return capped !== undefined ? `${capped.toLocaleString(locale)}+` : count.toLocaleString(locale);
 }

@@ -15,6 +15,7 @@ export type Translator = (key: MessageKey, params?: TranslateParams) => string;
  */
 export function createTranslator(locale: Locale, messages: Messages): Translator {
   const plurals = new Intl.PluralRules(locale);
+  const numbers = new Intl.NumberFormat(locale);
   const lookup = (key: string): string | undefined =>
     (messages as Record<string, string>)[key] ?? (en as Record<string, string>)[key];
 
@@ -24,10 +25,13 @@ export function createTranslator(locale: Locale, messages: Messages): Translator
       template = lookup(`${key}_${plurals.select(params.count) === "one" ? "one" : "other"}`);
     }
     template ??= lookup(key) ?? key;
-    // `countLabel` is a ready-made text for `{count}` (a capped total such as "10,000+"); `count` itself picks the plural.
+    // `{count}` and `{total}` are numbers shown with the locale's thousands separators; a count that stopped at its cap
+    // (`capped: 10000`) reads "10,000+". `count` itself still picks the plural.
     return template.replace(/\{(\w+)\}/g, (match, name: string) => {
-      if (name === "count" && typeof params?.countLabel === "string") return params.countLabel;
-      return params && name in params ? String(params[name]) : match;
+      if (!params || !(name in params)) return match;
+      const value = params[name];
+      if (name === "count" && typeof params.capped === "number") return `${numbers.format(params.capped)}+`;
+      return typeof value === "number" && (name === "count" || name === "total") ? numbers.format(value) : String(value);
     });
   };
 }
