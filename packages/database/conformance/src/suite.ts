@@ -3688,6 +3688,58 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         expect(await harness.probe.countAuditEntries("invitation.accepted")).toBe(1);
       });
 
+      it("offers teams with an invitation: stored with the roles, isolated per organization, and joined only on accept", async () => {
+        const storage = await seed();
+        const teams = createTrustedTeamStorage(storage, { actor: owner, reason: "conformance fixtures" });
+        await teams.teams.create({ id: "team-a", organizationId: "org-1", name: "Alpha" });
+        await storage.organizations.create({ id: "org-2", name: "Other" });
+        await teams.teams.create({ id: "team-x", organizationId: "org-2", name: "Foreign" });
+
+        // The database refuses a team of another organization.
+        await expect(storage.invitations.create(base({ teamIds: ["team-x"] }))).rejects.toMatchObject({ reason: "bad_request" });
+
+        const created = await storage.invitations.create(base({ teamIds: ["team-a", "team-a"] }));
+        expect(created.teamIds).toEqual(["team-a"]);
+        expect((await storage.invitations.findByTokenHash("hash-1"))?.teamIds).toEqual(["team-a"]);
+        expect((await storage.invitations.create(base({ id: "inv-2", email: "b@example.com", tokenHash: "hash-2" }))).teamIds).toEqual([]);
+
+        // The offer goes away with its team.
+        await teams.teams.archive("org-1", "team-a", { actor: owner });
+        await teams.teams.delete("org-1", "team-a", { actor: owner });
+        expect((await storage.invitations.findById("inv-1"))?.teamIds).toEqual([]);
+      });
+
+      it("joins offered teams through the service only while the inviter still may add people to them", async () => {
+        const storage = await seed();
+        const teams = createTrustedTeamStorage(storage, { actor: owner, reason: "conformance fixtures" });
+        await teams.teams.create({ id: "team-a", organizationId: "org-1", name: "Alpha" });
+        await teams.teams.create({ id: "team-b", organizationId: "org-1", name: "Beta" });
+        const service = createInvitationService({ storage, acceptUrl: (token) => `https://app.test/invite/${token}` });
+        const accept = async (email: string, teamIds: string[], identity = newcomer) => {
+          const { acceptUrl } = await service.invite({ organizationId: "org-1", email, roleIds: ["role-editor"], invitedBy: owner, teamIds });
+          return service.accept({ token: acceptUrl.split("/invite/")[1]!, identity, verifiedEmail: email });
+        };
+
+        const result = await accept("ana@example.com", ["team-a", "team-b"]);
+        expect(result.teamsSkipped).toEqual([]);
+        expect(result.teams.map((row) => [row.teamId, row.status, row.responsibility]).sort()).toEqual([
+          ["team-a", "active", "member"],
+          ["team-b", "active", "member"],
+        ]);
+        expect(await harness.probe.countAuditEntries("team_member.added")).toBe(2);
+
+        // A team that was archived before accepting is skipped, not forced.
+        const { acceptUrl } = await service.invite({ organizationId: "org-1", email: "bo@example.com", roleIds: ["role-editor"], invitedBy: owner, teamIds: ["team-a"] });
+        await teams.teams.archive("org-1", "team-a", { actor: owner });
+        const second = await service.accept({
+          token: acceptUrl.split("/invite/")[1]!,
+          identity: { provider: "supabase", subject: "bo" },
+          verifiedEmail: "bo@example.com",
+        });
+        expect(second.teams).toEqual([]);
+        expect(second.teamsSkipped).toEqual(["team-a"]);
+      });
+
       it("rolls the claim back when the membership step fails inside the transaction", async () => {
         const storage = await seed();
         await storage.invitations.create(base({ roleIds: ["role-viewer"] }));

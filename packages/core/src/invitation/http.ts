@@ -2,7 +2,7 @@ import { InvitationError } from "./repository.js";
 
 /** An HTTP answer for a failed invitation operation, safe to send to whoever holds the link. */
 export interface InvitationHttpError {
-  status: 400 | 409 | 429;
+  status: 400 | 403 | 409 | 429;
   body: { error: string; message: string };
 }
 
@@ -26,6 +26,8 @@ export function invitationErrorToHttp(error: unknown): InvitationHttpError | nul
       return { status: 409, body: { error: "idempotency_conflict", message: error.message } };
     case "duplicate_pending":
       return { status: 409, body: { error: "duplicate_pending", message: error.message } };
+    case "teams_forbidden":
+      return { status: 403, body: { error: "teams_forbidden", message: error.message } };
     case "bad_request":
       return { status: 400, body: { error: "bad_request", message: error.message } };
     default:

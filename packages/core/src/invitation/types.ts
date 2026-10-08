@@ -34,6 +34,11 @@ export interface Invitation {
   /** Normalized (trimmed, lower-cased). */
   readonly email: string;
   readonly roleIds: readonly string[];
+  /**
+   * Teams of the same organization the invitee joins (as plain members) when they accept. An offer, not a grant: accepting
+   * re-checks that the inviter may still add people to each team.
+   */
+  readonly teamIds: readonly string[];
   readonly invitedBy: Identity;
   status: InvitationStatus;
   readonly createdAt: Date;

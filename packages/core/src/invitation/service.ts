@@ -2,6 +2,11 @@ import type { Identity } from "../identity/types.js";
 import type { Membership } from "../membership/types.js";
 import type { UnioraStorage } from "../storage/types.js";
 import { MembershipError } from "../membership/repository.js";
+import { createAuthorizationEngine } from "../authorization/engine.js";
+import type { AuthorizationEngine, AuthorizationEngineOptions } from "../authorization/engine.js";
+import { issueTeamAuthorization } from "../team/authorization.js";
+import type { TeamMembership } from "../team/types.js";
+import { TEAM_PERMISSIONS } from "../team/service.js";
 import { InvitationError } from "./repository.js";
 import { generateInvitationToken, hashInvitationToken, randomId } from "./token.js";
 import { isInvitationUsable, type Invitation } from "./types.js";
@@ -10,6 +15,7 @@ import { sendWithRetry, type DeliveryRetryOptions, type InvitationSender } from 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 const MAX_ROLES_PER_INVITATION = 25;
+const MAX_TEAMS_PER_INVITATION = 10;
 const GENERIC_ACCEPT_MESSAGE = "This invitation is invalid or has expired.";
 
 /** Pragmatic address check: one `@`, a dotted domain, no whitespace, RFC 5321 length limits. */
@@ -55,6 +61,10 @@ export interface InvitationServiceOptions {
    * only shows on accept (`alreadyMember`).
    */
   findIdentitiesByEmail?: (email: string) => Promise<readonly Identity[]>;
+  /** Passed to the engine that checks, for an invitation offering teams, that the inviter may add people to them. */
+  engine?: AuthorizationEngineOptions;
+  /** The permission the inviter needs to offer a team. Default `teams.members.add` (`TEAM_PERMISSIONS.membersAdd`). */
+  teamPermission?: string;
   /** Delivers the e-mail. Without one, invitations are still created and the link is returned for you to hand over. */
   sender?: InvitationSender;
   /** Invitation lifetime. Default 7 days, capped at 30. */
@@ -73,6 +83,13 @@ export interface InviteInput {
   email: string;
   /** At least one regular role of the organization. The Owner role can never be offered by invitation. */
   roleIds: string[];
+  /**
+   * Teams of the organization the invitee joins, as plain members, when they accept (at most 10). The inviter must hold
+   * `teams.members.add` for each (organization-wide, or inside that team) now AND when the invitation is accepted; a team that
+   * is archived or deleted by then, or where the person already has a membership, is skipped and reported, never forced.
+   * Being invited grants no role in the team: assign those afterwards with the team service.
+   */
+  teamIds?: string[];
   /** The member extending the invitation. The host must have authorized this (e.g. a `members.invite` check). */
   invitedBy: Identity;
   /** Language hint passed to the sender (e.g. `"es"`). Not stored. */
@@ -123,6 +140,8 @@ export interface InvitationPreview {
   organizationName: string;
   email: string;
   roleNames: string[];
+  /** Names of the teams the invitee will join on accepting (teams that no longer exist are not listed). */
+  teamNames: string[];
   expiresAt: Date;
 }
 
@@ -151,6 +170,10 @@ export interface AcceptInvitationResult {
   membership: Membership;
   /** `true` when the identity was already a member and only gained the invited roles. */
   alreadyMember: boolean;
+  /** Team memberships created because the invitation offered them. */
+  teams: TeamMembership[];
+  /** Offered teams that were NOT joined (the inviter lost the right, the team is archived, or the person already has a membership there). */
+  teamsSkipped: string[];
 }
 
 export interface InvitationService {
@@ -193,6 +216,7 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
   const { storage, sender } = options;
   const now = options.now ?? (() => new Date());
   const generateId = options.generateId ?? randomId;
+  const teamPermission = options.teamPermission ?? TEAM_PERMISSIONS.membersAdd;
   const ttlMs = Math.min(positive(options.ttlMs, 7 * DAY_MS, "ttlMs"), 30 * DAY_MS);
   if (ttlMs <= 0) throw new RangeError("ttlMs must be greater than zero.");
 
@@ -259,6 +283,31 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
       }
     }
     return unique.map((id) => byId.get(id)!);
+  }
+
+  /** Whether `inviter` may add people to the team: an organization-wide grant, or one inside that very team. */
+  async function mayAddToTeam(engine: AuthorizationEngine, organizationId: string, inviter: Identity, teamId: string): Promise<boolean> {
+    if (await engine.can({ identity: inviter, organizationId, permission: teamPermission })) return true;
+    return engine.can({ identity: inviter, organizationId, permission: teamPermission, teamId });
+  }
+
+  async function assertOfferableTeams(organizationId: string, inviter: Identity, teamIds: string[] | undefined): Promise<string[]> {
+    const unique = [...new Set(teamIds ?? [])];
+    if (unique.length === 0) return [];
+    if (unique.length > MAX_TEAMS_PER_INVITATION) {
+      throw new InvitationError(`An invitation can offer at most ${MAX_TEAMS_PER_INVITATION} teams.`, "bad_request");
+    }
+    const engine = createAuthorizationEngine(storage, options.engine);
+    for (const teamId of unique) {
+      const team = await storage.teams.findById(organizationId, teamId);
+      if (!team || team.status !== "active") {
+        throw new InvitationError("A chosen team does not exist in this organization or is archived.", "bad_request");
+      }
+      if (!(await mayAddToTeam(engine, organizationId, inviter, teamId))) {
+        throw new InvitationError("The inviter may not add people to a chosen team.", "teams_forbidden");
+      }
+    }
+    return unique.sort();
   }
 
   const IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -372,6 +421,7 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
       if (!(await storage.organizations.findById(input.organizationId))) {
         throw new InvitationError("The organization does not exist.", "bad_request");
       }
+      const teamIds = await assertOfferableTeams(input.organizationId, input.invitedBy, input.teamIds);
 
       if (options.findIdentitiesByEmail && !input.allowExistingMember) {
         for (const candidate of await options.findIdentitiesByEmail(email)) {
@@ -389,7 +439,11 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
           : {
               key: assertIdempotencyKey(input.idempotencyKey),
               hash: await hashInvitationToken(
-                JSON.stringify([email, [...new Set(roles.map((role) => role.id))].sort(), input.ttlMs ?? null]),
+                JSON.stringify(
+                  teamIds.length === 0
+                    ? [email, [...new Set(roles.map((role) => role.id))].sort(), input.ttlMs ?? null]
+                    : [email, [...new Set(roles.map((role) => role.id))].sort(), input.ttlMs ?? null, teamIds],
+                ),
               ),
             };
 
@@ -414,13 +468,17 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
             organizationId: input.organizationId,
             email,
             roleIds: roles.map((role) => role.id),
+            ...(teamIds.length > 0 ? { teamIds } : {}),
             tokenHash,
             invitedBy: input.invitedBy,
             createdAt: at,
             expiresAt: new Date(at.getTime() + lifetime),
             ...(idempotency ? { idempotency } : {}),
           });
-          await auditEvent(tx, input.invitedBy, "invitation.created", created, { roles: roles.map((role) => role.name) });
+          await auditEvent(tx, input.invitedBy, "invitation.created", created, {
+            roles: roles.map((role) => role.name),
+            ...(teamIds.length > 0 ? { teamIds } : {}),
+          });
           return { created };
         }),
       );
@@ -475,10 +533,16 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
         storage.roles.findSummariesByIds([...invitation.roleIds]),
       ]);
       if (!organization) return null;
+      const teamNames: string[] = [];
+      for (const teamId of invitation.teamIds) {
+        const team = await storage.teams.findById(invitation.organizationId, teamId);
+        if (team && team.status === "active") teamNames.push(team.name);
+      }
       return {
         organizationName: organization.name,
         email: invitation.email,
         roleNames: roles.map((role) => role.name),
+        teamNames,
         expiresAt: invitation.expiresAt,
       };
     },
@@ -529,11 +593,54 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
             });
           }
 
+          const joined: TeamMembership[] = [];
+          const teamsSkipped: string[] = [];
+          if (invitation.teamIds.length > 0) {
+            // The offer was authorized when it was made, but the inviter may have lost the right since: ask again, here,
+            // over the same transaction, and join only what they could still do themselves.
+            const engine = createAuthorizationEngine(
+              { ...tx, transaction: storage.transaction.bind(storage) } as UnioraStorage,
+              options.engine,
+            );
+            for (const teamId of invitation.teamIds) {
+              const team = await tx.teams.findById(invitation.organizationId, teamId);
+              const existing = team ? await tx.teamMemberships.find(invitation.organizationId, teamId, membership.id) : null;
+              const usableTeam =
+                team !== null &&
+                team.status === "active" &&
+                (existing === null || existing.status === "removed") &&
+                (await mayAddToTeam(engine, invitation.organizationId, invitation.invitedBy, teamId));
+              if (!usableTeam) {
+                teamsSkipped.push(teamId);
+                continue;
+              }
+              const row = await tx.teamMemberships.add({
+                authorization: issueTeamAuthorization(invitation.organizationId, invitation.invitedBy, ["member.add"]),
+                id: generateId(),
+                organizationId: invitation.organizationId,
+                teamId,
+                membershipId: membership.id,
+                invitedBy: invitation.invitedBy,
+                now: at,
+              });
+              joined.push(row);
+              await tx.auditLogs.record({
+                id: generateId(),
+                organizationId: invitation.organizationId,
+                actor: input.identity,
+                action: "team_member.added",
+                target: { type: "team_member", id: row.id },
+                metadata: { teamId, membershipId: membership.id, via: "invitation", invitationId: invitation.id },
+              });
+            }
+          }
+
           await auditEvent(tx, input.identity, "invitation.accepted", claimed, {
             membershipId: membership.id,
             alreadyMember,
+            ...(invitation.teamIds.length > 0 ? { teamsJoined: joined.map((row) => row.teamId), teamsSkipped } : {}),
           });
-          return { invitation: claimed, membership, alreadyMember };
+          return { invitation: claimed, membership, alreadyMember, teams: joined, teamsSkipped };
         });
       } catch (error) {
         if (error instanceof MembershipError) throw fail("roles_unavailable");
