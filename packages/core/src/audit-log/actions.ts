@@ -65,6 +65,19 @@ export const AUDIT_ACTIONS = [
   "identity_link.created",
   "identity_link.removed",
   "audit_log.pruned",
+  "platform.bootstrapped",
+  "platform.role_created",
+  "platform.role_updated",
+  "platform.role_deleted",
+  "platform.member_added",
+  "platform.member_suspended",
+  "platform.member_reactivated",
+  "platform.member_removed",
+  "platform.member_role_assigned",
+  "platform.member_role_unassigned",
+  "platform.organization_status_changed",
+  "platform.support_access_granted",
+  "platform.support_access_revoked",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
