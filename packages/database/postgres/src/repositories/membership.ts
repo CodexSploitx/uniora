@@ -771,6 +771,7 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
 
       throw new MembershipError(
         "Cannot remove the organization's last Owner — every organization must keep at least one.",
+        "last_owner",
       );
     },
 
@@ -833,28 +834,35 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
            where mr.role_id in (select role_id from owner_role_ids)
            order by mr.role_id, mr.membership_id
            for update of mr, lm
+         ),
+         deleted as (
+           delete from uniora.memberships m
+           where m.id = $1
+             and not exists (
+               select 1 from owner_role_ids o
+               where (select count(*) from locked l where l.role_id = o.role_id) <= 1
+                  or (
+                    (select l.status from locked l where l.role_id = o.role_id and l.membership_id = $1) = 'active'
+                    and not exists (select 1 from locked l where l.role_id = o.role_id and l.membership_id <> $1 and l.status = 'active')
+                  )
+             )
+           returning m.id
          )
-         delete from uniora.memberships m
-         where m.id = $1
-           and not exists (
-             select 1 from owner_role_ids o
-             where (select count(*) from locked l where l.role_id = o.role_id) <= 1
-                or (
-                  (select l.status from locked l where l.role_id = o.role_id and l.membership_id = $1) = 'active'
-                  and not exists (select 1 from locked l where l.role_id = o.role_id and l.membership_id <> $1 and l.status = 'active')
-                )
-           )`,
+         -- "existed" is read from this statement's own snapshot, so the verdict (deleted / refused as the last Owner / never
+         -- there) comes from ONE consistent view — never from a second query that could see a different state.
+         select (select count(*) from deleted)::int as deleted,
+                exists (select 1 from uniora.memberships e where e.id = $1) as existed`,
         [membershipId],
       );
-      if ((result.rowCount ?? 0) > 0) return;
-
-      const stillExists = await db.query(`select 1 from uniora.memberships where id = $1`, [membershipId]);
-      if ((stillExists.rowCount ?? 0) > 0) {
+      const verdict = result.rows[0] as { deleted: number; existed: boolean } | undefined;
+      if (verdict && verdict.deleted > 0) return;
+      if (verdict?.existed) {
         throw new MembershipError(
           "Cannot remove the organization's last Owner — every organization must keep at least one.",
+          "last_owner",
         );
       }
-      throw new MembershipError(`Membership not found: ${membershipId}`);
+      throw new MembershipError(`Membership not found: ${membershipId}`, "membership_not_found");
     },
   };
   return repository;

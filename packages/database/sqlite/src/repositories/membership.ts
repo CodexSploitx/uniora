@@ -610,7 +610,7 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
         );
         if (stillAssigned.rowCount === 0) return; // wasn't assigned to begin with — idempotent no-op
 
-        throw new MembershipError(LAST_OWNER_MESSAGE);
+        throw new MembershipError(LAST_OWNER_MESSAGE, "last_owner");
       });
     },
 
@@ -680,8 +680,8 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
         if (result.rowCount > 0) return;
 
         const stillExists = await db.query(`select 1 from uniora_memberships where id = ?1`, [membershipId]);
-        if (stillExists.rowCount > 0) throw new MembershipError(LAST_OWNER_MESSAGE);
-        throw new MembershipError(`Membership not found: ${membershipId}`);
+        if (stillExists.rowCount > 0) throw new MembershipError(LAST_OWNER_MESSAGE, "last_owner");
+        throw new MembershipError(`Membership not found: ${membershipId}`, "membership_not_found");
       });
     },
   };

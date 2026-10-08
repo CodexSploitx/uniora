@@ -328,6 +328,68 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
       expect(await storage.memberships.findById(membership.id)).not.toBeNull();
     });
 
+    it("eliminar al último Owner responde last_owner por cualquier vía y en cualquier estado; solo un id inexistente responde membership_not_found", async () => {
+      const storage = harness.storage();
+      const { ownerRole, membership } = await createOrganizationWithOwner(storage, {
+        organizationId: "org-1",
+        organizationName: "Acme Motors",
+        ownerRoleId: "role-owner",
+        membershipId: "m-1",
+        ownerIdentity: identity,
+      });
+      const admin = { provider: "admin", subject: "root" };
+      const audited = createAuditedStorage(storage, { actor: admin });
+      const refusals = async (label: string) => {
+        const attempts: Array<[string, () => Promise<unknown>]> = [
+          ["delete", () => storage.memberships.delete(membership.id)],
+          ["delete en transacción", () => storage.transaction((tx) => tx.memberships.delete(membership.id))],
+          ["delete auditado", () => audited.memberships.delete(membership.id)],
+          ["unassignOwnerRole", () => storage.memberships.unassignOwnerRole(membership.id, ownerRole.id)],
+        ];
+        for (const [via, attempt] of attempts) {
+          await expect(attempt(), `${label}: ${via}`).rejects.toMatchObject({ code: "last_owner" });
+          await expect(attempt(), `${label}: ${via}`).rejects.toBeInstanceOf(MembershipError);
+        }
+        expect(await storage.memberships.findById(membership.id), label).not.toBeNull(); // nada se borró
+      };
+
+      await refusals("activo");
+      // Un Owner único suspendido o bloqueado sigue siendo el último: la causa es la misma, no "no existe".
+      await storage.memberships.block(membership.id, { actor: admin }).catch(() => undefined);
+      await storage.memberships.unblock(membership.id, { actor: admin });
+      await refusals("tras intentar bloquearlo");
+
+      // Un id que no existe sí es membership_not_found, por las mismas vías.
+      await expect(storage.memberships.delete("no-such")).rejects.toMatchObject({ code: "membership_not_found" });
+      await expect(storage.transaction((tx) => tx.memberships.delete("no-such"))).rejects.toMatchObject({ code: "membership_not_found" });
+      await expect(audited.memberships.delete("no-such")).rejects.toMatchObject({ code: "membership_not_found" });
+
+      // Con un segundo Owner, el primero ya se puede eliminar; entonces el segundo pasa a ser el último y vuelve a ser last_owner.
+      await storage.memberships.create({ id: "m-2", organizationId: "org-1", identity: { provider: "supabase", subject: "user-2" }, roleIds: [ownerRole.id] });
+      await storage.memberships.delete(membership.id);
+      await expect(storage.memberships.delete(membership.id)).rejects.toMatchObject({ code: "membership_not_found" }); // ya no existe
+      await expect(storage.memberships.delete("m-2")).rejects.toMatchObject({ code: "last_owner" });
+    });
+
+    it("dos eliminaciones simultáneas de los dos Owners nunca dejan la organización sin Owner y la rechazada responde last_owner", async () => {
+      const storage = harness.storage();
+      const { ownerRole } = await createOrganizationWithOwner(storage, {
+        organizationId: "org-1",
+        organizationName: "Acme Motors",
+        ownerRoleId: "role-owner",
+        membershipId: "m-1",
+        ownerIdentity: identity,
+      });
+      await storage.memberships.create({ id: "m-2", organizationId: "org-1", identity: { provider: "supabase", subject: "user-2" }, roleIds: [ownerRole.id] });
+      const results = await Promise.allSettled([storage.memberships.delete("m-1"), storage.memberships.delete("m-2")]);
+      const rejected = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0]!.reason).toMatchObject({ code: "last_owner" });
+      const remaining = (await storage.memberships.findById("m-1")) ?? (await storage.memberships.findById("m-2"));
+      expect(remaining?.roleIds).toEqual([ownerRole.id]);
+    });
+
     it("permite unassignRole/delete del Owner role cuando otro membership también lo tiene", async () => {
       const storage = harness.storage();
       const { ownerRole, membership } = await createOrganizationWithOwner(storage, {
