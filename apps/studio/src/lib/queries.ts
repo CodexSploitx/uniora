@@ -17,6 +17,8 @@ import type {
   RolePermissionRow,
   RoleRef,
   RoleRow,
+  TeamMemberRow,
+  TeamRow,
 } from "@/lib/types";
 
 /** Data Access Layer: every read verifies the Studio session itself. */
@@ -811,5 +813,108 @@ export async function getOrgInvitationsPage(organizationId: string, options?: { 
       delivery: { status: invitation.delivery.status, sends: invitation.delivery.sends, lastError: invitation.delivery.lastError },
     })),
     nextCursor: hasMore ? page[page.length - 1]!.id : null,
+  };
+}
+
+const TEAMS_PAGE_SIZE = 20;
+const TEAM_MEMBERS_PAGE_SIZE = 25;
+
+export interface OrgTeamsPage {
+  items: TeamRow[];
+  nextCursor: string | null;
+  total: number;
+}
+
+/** A bounded, searchable page of an organization's teams with the parent's name and member counts. */
+export async function getOrgTeamsPage(organizationId: string, options?: { query?: string; cursor?: string }): Promise<OrgTeamsPage> {
+  await requireSession();
+  const storage = getStorage();
+  const query = cleanQuery(options?.query);
+  const [rows, total] = await Promise.all([
+    storage.teams.search({ organizationId, limit: TEAMS_PAGE_SIZE + 1, after: cleanCursor(options?.cursor), query }),
+    storage.teams.count({ organizationId, query }),
+  ]);
+  const { page, hasMore } = splitPage(rows, TEAMS_PAGE_SIZE);
+  const parentIds = [...new Set(page.flatMap((team) => (team.parentId ? [team.parentId] : [])))];
+  const [parents, memberCounts, childCounts] = await Promise.all([
+    Promise.all(parentIds.map((id) => storage.teams.findById(organizationId, id))),
+    Promise.all(page.map((team) => storage.teamMemberships.count({ organizationId, teamId: team.id, status: "active" }))),
+    Promise.all(page.map((team) => storage.teams.count({ organizationId, parentId: team.id }))),
+  ]);
+  const parentName = new Map(parents.flatMap((team) => (team ? [[team.id, team.name] as const] : [])));
+  return {
+    items: page.map((team, index) => ({
+      id: team.id,
+      name: team.name,
+      slug: team.slug,
+      status: team.status,
+      ...(team.externalId !== undefined ? { externalId: team.externalId } : {}),
+      ...(team.parentId !== undefined ? { parent: { id: team.parentId, name: parentName.get(team.parentId) ?? team.parentId } } : {}),
+      memberCount: memberCounts[index] ?? 0,
+      childCount: childCounts[index] ?? 0,
+    })),
+    nextCursor: hasMore ? page[page.length - 1]!.id : null,
+    total,
+  };
+}
+
+export interface TeamDetailPage {
+  team: TeamRow;
+  /** Top-level team first, the team itself excluded. */
+  ancestors: { id: string; name: string }[];
+  members: TeamMemberRow[];
+  membersTotal: number;
+  membersNextCursor: string | null;
+}
+
+export async function getTeamDetail(organizationId: string, teamId: string, options?: { cursor?: string }): Promise<TeamDetailPage | null> {
+  await requireSession();
+  const storage = getStorage();
+  const team = await storage.teams.findById(organizationId, teamId);
+  if (!team) return null;
+  const [ancestors, rows, membersTotal, activeMembers, children] = await Promise.all([
+    storage.teams.ancestors(organizationId, teamId),
+    storage.teamMemberships.search({ organizationId, teamId, limit: TEAM_MEMBERS_PAGE_SIZE + 1, after: cleanCursor(options?.cursor) }),
+    storage.teamMemberships.count({ organizationId, teamId }),
+    storage.teamMemberships.count({ organizationId, teamId, status: "active" }),
+    storage.teams.count({ organizationId, parentId: teamId }),
+  ]);
+  const { page, hasMore } = splitPage(rows, TEAM_MEMBERS_PAGE_SIZE);
+  const memberships = await Promise.all(page.map((row) => storage.memberships.findById(row.membershipId)));
+  const roleIds = [...new Set(page.flatMap((row) => row.roleIds))];
+  const roleSummaries = roleIds.length > 0 ? await storage.roles.findSummariesByIds(roleIds) : [];
+  const roleById = new Map(roleSummaries.map((role) => [role.id, role]));
+  const members: TeamMemberRow[] = page.flatMap((row, index) => {
+    const membership = memberships[index];
+    if (!membership) return [];
+    return [
+      {
+        id: row.id,
+        membershipId: row.membershipId,
+        identity: { provider: membership.identity.provider, subject: membership.identity.subject },
+        status: row.status,
+        responsibility: row.responsibility,
+        roles: row.roleIds.flatMap((id) => {
+          const role = roleById.get(id);
+          return role ? [{ id: role.id, name: role.name, isOwnerRole: role.isOwnerRole }] : [];
+        }),
+      },
+    ];
+  });
+  return {
+    team: {
+      id: team.id,
+      name: team.name,
+      slug: team.slug,
+      status: team.status,
+      ...(team.externalId !== undefined ? { externalId: team.externalId } : {}),
+      ...(ancestors.length > 0 ? { parent: { id: ancestors[ancestors.length - 1]!.id, name: ancestors[ancestors.length - 1]!.name } } : {}),
+      memberCount: activeMembers,
+      childCount: children,
+    },
+    ancestors: ancestors.map((ancestor) => ({ id: ancestor.id, name: ancestor.name })),
+    members,
+    membersTotal,
+    membersNextCursor: hasMore ? page[page.length - 1]!.id : null,
   };
 }

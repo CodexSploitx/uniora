@@ -48,7 +48,7 @@ Never hard-code the URL. With SQLite, read-only commands (`check`, `doctor`, `mi
 
 ## Studio
 
-A local admin UI over your own database: organizations (with their members, roles, features and invitations), members, the global permission and feature catalogs and the activity log.
+A local admin UI over your own database: organizations (with their members, teams, roles, features and invitations), members, the global permission and feature catalogs and the activity log.
 
 ```bash
 npx uniora studio            # first free port from 4321

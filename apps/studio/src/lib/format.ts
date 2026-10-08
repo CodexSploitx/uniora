@@ -74,6 +74,28 @@ export function describeActivity(
       return { title: t("activity.ownershipTransferred"), tone: "warning" };
     case "membership.left":
       return { title: t("activity.memberLeft"), detail: who, tone: "warning" };
+    case "team.created":
+      return { title: t("activity.teamCreated"), detail: meta(item, "name"), tone: "success" };
+    case "team.updated":
+      return { title: t("activity.teamUpdated"), detail: item.target?.id, tone: "info" };
+    case "team.archived":
+      return { title: t("activity.teamArchived"), detail: item.target?.id, tone: "warning" };
+    case "team.restored":
+      return { title: t("activity.teamRestored"), detail: item.target?.id, tone: "success" };
+    case "team.deleted":
+      return { title: t("activity.teamDeleted"), detail: meta(item, "name"), tone: "destructive" };
+    case "team_member.added":
+    case "team_member.invited":
+    case "team_member.accepted":
+    case "team_member.reactivated":
+      return { title: t("activity.teamMemberAdded"), detail: who ?? item.target?.id, tone: "success" };
+    case "team_member.suspended":
+      return { title: t("activity.teamMemberSuspended"), detail: item.target?.id, tone: "warning" };
+    case "team_member.removed":
+      return { title: t("activity.teamMemberRemoved"), detail: item.target?.id, tone: "destructive" };
+    case "team.owner_changed":
+    case "team.manager_changed":
+      return { title: t("activity.teamResponsibilityChanged"), detail: `${meta(item, "from") ?? ""} → ${meta(item, "to") ?? ""}`, tone: "info" };
     case "identity_link.created": {
       // Global entry (docs/security-pentest-2026-09-24.md Hallazgo 5) — no
       // `role`/`identity` string metadata like the others, just the two
