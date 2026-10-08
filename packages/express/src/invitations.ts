@@ -30,6 +30,7 @@ export function invitationPreview<Req = unknown>(service: InvitationService, opt
         organizationName: preview.organizationName,
         email: preview.email,
         roleNames: preview.roleNames,
+        teamNames: preview.teamNames,
         expiresAt: preview.expiresAt.toISOString(),
       });
     } catch (error) {
@@ -50,7 +51,7 @@ export interface InvitationAcceptOptions<Req> {
 
 /**
  * `POST /invite/:token/accept` — the signed-in caller joins the organization. Answers
- * `200 { organizationId, membershipId, alreadyMember }`. Failures follow `invitationErrorToHttp`
+ * `200 { organizationId, membershipId, alreadyMember, teamIds, teamsSkipped }`. Failures follow `invitationErrorToHttp`
  * (one generic 400 for every way an accept can fail); anything unexpected goes to `next(err)`.
  */
 export function acceptInvitation<Req = unknown>(service: InvitationService, options: InvitationAcceptOptions<Req>) {
@@ -70,6 +71,8 @@ export function acceptInvitation<Req = unknown>(service: InvitationService, opti
         organizationId: result.invitation.organizationId,
         membershipId: result.membership.id,
         alreadyMember: result.alreadyMember,
+        teamIds: result.teams.map((row) => row.teamId),
+        teamsSkipped: result.teamsSkipped,
       });
     } catch (error) {
       const mapped = invitationErrorToHttp(error);

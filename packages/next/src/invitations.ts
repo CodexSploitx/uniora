@@ -7,7 +7,7 @@ function json(status: number, body: unknown): Response {
 
 /**
  * Route Handler for the accept page's data: `GET` with the token from the route. Answers
- * `200 { organizationName, email, roleNames, expiresAt }`, or the same `404 invalid_invitation` for
+ * `200 { organizationName, email, roleNames, teamNames, expiresAt }`, or the same `404 invalid_invitation` for
  * every unusable token.
  */
 export async function previewInvitationRoute(service: InvitationService, token: string | undefined): Promise<Response> {
@@ -17,6 +17,7 @@ export async function previewInvitationRoute(service: InvitationService, token: 
     organizationName: preview.organizationName,
     email: preview.email,
     roleNames: preview.roleNames,
+    teamNames: preview.teamNames,
     expiresAt: preview.expiresAt.toISOString(),
   });
 }
@@ -44,6 +45,8 @@ export async function acceptInvitationRoute(service: InvitationService, input: A
       organizationId: result.invitation.organizationId,
       membershipId: result.membership.id,
       alreadyMember: result.alreadyMember,
+      teamIds: result.teams.map((row) => row.teamId),
+      teamsSkipped: result.teamsSkipped,
     });
   } catch (error) {
     const mapped = invitationErrorToHttp(error);

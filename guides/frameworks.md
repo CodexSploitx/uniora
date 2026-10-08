@@ -86,6 +86,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ orgI
 | `createCachedIdentity(resolve)` | request-scoped memoization of your identity lookup (`react.cache`) |
 | `createCachedAuthorizationSnapshot(engine, storage.features)` | request-scoped memoization of `computeAuthorizationSnapshot` |
 | `previewInvitationRoute` / `acceptInvitationRoute` | invitation endpoints, see [Invitations](invitations.md#routes) |
+| `teamCommandRoute(teams, { command, caller, params })` | one team command over the team service (Express: `teamCommand`), see [Teams](teams.md#serving-teams-over-http) |
 
 `authorizeRoute` uses `access.check`, so passing only `feature` still requires membership; passing neither only checks membership.
 

@@ -293,6 +293,8 @@ export {
   sanitizeTeamName,
   sanitizeTeamReason,
 } from "./team/repository.js";
+export type { TeamCommand, TeamCommandContext, TeamHttpError } from "./team/commands.js";
+export { TEAM_COMMANDS, isTeamCommand, runTeamCommand, teamErrorToHttp } from "./team/commands.js";
 export type { MoveTeamMemberInput, TeamActor, TeamPermissionKeys, TeamService, TeamServiceOptions } from "./team/service.js";
 export { TEAM_PERMISSIONS, createTeamService } from "./team/service.js";
 export type { TeamAuthorization, TeamOperation } from "./team/authorization.js";

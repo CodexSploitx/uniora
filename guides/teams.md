@@ -103,6 +103,25 @@ await engine.can({ identity, organizationId, permission: "vehicles.read", teamId
 
 With `teamId` the answer can only get **narrower**: the identity must be an active member of that active team of the organization **and** hold the permission through its organization roles or the roles it holds in that team. A role held in a team never counts outside it. Being team owner or manager grants nothing, the organization's Owner role does not skip the membership check, and a support grant does not apply. Unknown or foreign teams, archived teams, and pending, suspended or removed members are denied. `engine.access.check({ identity, organizationId, teamId })` answers "is an active member of this team". Which team a resource belongs to is your data; UNIORA only evaluates the context you pass.
 
+## Serving teams over HTTP
+
+`@uniora/express` and `@uniora/next` give you one route per team command over the **service** (never over `storage.teams`):
+
+```ts
+import { createTeamService } from "@uniora/core";
+import { teamCommand } from "@uniora/express";
+
+const teams = createTeamService({ storage });
+const resolve = async (req) => ({ actor: await currentIdentity(req), organizationId: req.params.orgId }); // from YOUR session, not the body
+
+app.post("/orgs/:orgId/teams", teamCommand(teams, { command: "createTeam", resolve }));
+app.patch("/orgs/:orgId/teams/:teamId", teamCommand(teams, { command: "updateTeam", resolve }));
+app.post("/orgs/:orgId/teams/:teamId/members", teamCommand(teams, { command: "addMember", resolve }));
+app.post("/orgs/:orgId/team-moves", teamCommand(teams, { command: "moveMember", resolve }));
+```
+
+In Next, `teamCommandRoute(teams, { command, caller, params })` returns the `Response`. Both go through `runTeamCommand` (also exported from `@uniora/core` for other frameworks), which fixes what a client can ask: the command is chosen by the route, the actor and the organization come from your session, the body is checked field by field and **an unknown field (an `actor`, an `authorization`, an `organizationId`) is rejected** with `team_invalid`; path params win over body fields. The service then does the authorization, so a caller without the right gets a generic `403 { "error": "forbidden" }` (`teamErrorToHttp`: 404 missing, 409 conflicts, 400 bad input, 401 when nobody is signed in). The commands are `TEAM_COMMANDS`: `createTeam`, `updateTeam`, `archiveTeam`, `restoreTeam`, `deleteTeam`, `addMember`, `acceptInvitation`, `leaveTeam`, `removeMember`, `suspendMember`, `reactivateMember`, `setResponsibility`, `assignRole`, `unassignRole`, `moveMember`. Reading teams (lists, trees, who is in which team) is yours to authorize: decide who may see what, then call `storage.teams.search` / `ancestors` / `descendants` and `storage.teamMemberships.search`.
+
 ## What UNIORA does not do for you
 
 - **The permission catalog.** Register `TEAM_PERMISSIONS` (`teams.manage`, `teams.members.add`, `teams.members.remove`, `teams.members.manage`) and give them to the roles that should manage teams.
