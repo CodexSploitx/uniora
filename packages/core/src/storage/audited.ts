@@ -140,31 +140,44 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
             await tx.memberships.unassignOwnerRole(membershipId, roleId);
             await record(tx, "membership.owner_role_unassigned", membership?.organizationId, { type: "membership", id: membershipId }, { roleId });
           }),
+        // A call that changes nothing (blocking someone already blocked, suspending someone already suspended, unblocking
+        // an active member) records nothing: the entry would claim a decision that did not happen. Changed = `version` moved.
         block: (membershipId, input) =>
           run(async (tx) => {
+            const before = await tx.memberships.findById(membershipId);
             const blocked = await tx.memberships.block(membershipId, input);
-            await record(tx, "membership.blocked", blocked.organizationId, { type: "membership", id: membershipId }, {
-              ...(blocked.blocked?.reason ? { reason: blocked.blocked.reason } : {}),
-              requestedBy: `${input.actor.provider}:${input.actor.subject}`,
-            });
+            if (before?.version !== blocked.version) {
+              await record(tx, "membership.blocked", blocked.organizationId, { type: "membership", id: membershipId }, {
+                ...(blocked.blocked?.reason ? { reason: blocked.blocked.reason } : {}),
+                ...(before?.status === "suspended" ? { replacedSuspension: true } : {}),
+                requestedBy: `${input.actor.provider}:${input.actor.subject}`,
+              });
+            }
             return blocked;
           }),
         suspend: (membershipId, input) =>
           run(async (tx) => {
+            const before = await tx.memberships.findById(membershipId);
             const suspended = await tx.memberships.suspend(membershipId, input);
-            await record(tx, "membership.suspended", suspended.organizationId, { type: "membership", id: membershipId }, {
-              ...(suspended.blocked?.reason ? { reason: suspended.blocked.reason } : {}),
-              ...(suspended.blocked?.until ? { until: suspended.blocked.until.toISOString() } : {}),
-              requestedBy: `${input.actor.provider}:${input.actor.subject}`,
-            });
+            if (before?.version !== suspended.version) {
+              await record(tx, "membership.suspended", suspended.organizationId, { type: "membership", id: membershipId }, {
+                ...(suspended.blocked?.reason ? { reason: suspended.blocked.reason } : {}),
+                ...(suspended.blocked?.until ? { until: suspended.blocked.until.toISOString() } : {}),
+                requestedBy: `${input.actor.provider}:${input.actor.subject}`,
+              });
+            }
             return suspended;
           }),
         unblock: (membershipId, input) =>
           run(async (tx) => {
+            const before = await tx.memberships.findById(membershipId);
             const unblocked = await tx.memberships.unblock(membershipId, input);
-            await record(tx, "membership.unblocked", unblocked.organizationId, { type: "membership", id: membershipId }, {
-              requestedBy: `${input.actor.provider}:${input.actor.subject}`,
-            });
+            if (before?.version !== unblocked.version) {
+              await record(tx, "membership.unblocked", unblocked.organizationId, { type: "membership", id: membershipId }, {
+                ...(before?.status === "suspended" && before.blocked?.until ? { endedSuspensionEarly: true } : {}),
+                requestedBy: `${input.actor.provider}:${input.actor.subject}`,
+              });
+            }
             return unblocked;
           }),
         delete: (membershipId) =>

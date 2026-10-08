@@ -216,9 +216,21 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
   async function blockWithin(membershipId: string, input: BlockMembershipInput, until: Date | undefined): Promise<Membership> {
     return db.atomic(async () => {
       await assertNotStale(db, membershipId, input.expectedVersion);
+      if (until === undefined) {
+        // `block` over a timed suspension makes it indefinite (the member was already inactive: no Owner guard applies).
+        const escalated = await db.query(
+          `update uniora_memberships
+           set blocked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), blocked_until = null,
+               blocked_by_provider = ?2, blocked_by_subject = ?3, block_reason = ?4,
+               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1
+           where id = ?1 and status = 'blocked' and ${effectiveStatus()} = 'suspended'`,
+          [membershipId, input.actor.provider, input.actor.subject, sanitizeBlockReason(input.reason) ?? null],
+        );
+        if ((escalated.rowCount ?? 0) > 0) return (await repository.findById(membershipId))!;
+      }
       // Count and update run inside one `begin immediate` unit (single writer), so two Owners blocking each other
       // at once can't both pass: the second sees the first's block.
-      await db.query(
+      const changed = await db.query(
         `update uniora_memberships
          set status = 'blocked', blocked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), blocked_until = ?5,
              blocked_by_provider = ?2, blocked_by_subject = ?3, block_reason = ?4,
@@ -239,7 +251,8 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
       );
       const current = await repository.findById(membershipId);
       if (!current) throw new MembershipError(`Membership not found: ${membershipId}`);
-      if (current.status !== "active") return current; // changed now, or was already blocked or suspended (idempotent)
+      // Also when this very write already lapsed (a suspension ending within milliseconds): it was applied, not refused.
+      if (current.status !== "active" || (changed.rowCount ?? 0) > 0) return current; // changed now, or was already blocked or suspended (idempotent)
       throw new MembershipError(
         "Cannot block the organization's last active Owner — every organization must keep at least one.",
         "last_owner",

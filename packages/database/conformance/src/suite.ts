@@ -826,6 +826,72 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         await expect(storage.memberships.block(a.id, { actor: admin })).rejects.toMatchObject({ code: "last_owner" });
       });
 
+      it("auditoría de la suspensión: fecha demasiado lejana, suspensiones de milisegundos y bloqueo sobre una suspensión", async () => {
+        const { storage, a, b, owner } = await seed();
+        // SQLite compara texto ISO-8601: un año de cinco cifras ordenaría mal y la suspensión se leería como ya vencida.
+        for (const until of [new Date(Date.UTC(10000, 0, 1)), new Date(Date.UTC(20000, 0, 1)), new Date(8.64e15)]) {
+          await expect(storage.memberships.suspend(a.id, { actor: admin, until })).rejects.toMatchObject({ code: "membership_block_until_invalid" });
+        }
+        expect((await storage.memberships.findById(a.id))!.status).toBe("active");
+        const farthest = new Date("9999-12-31T23:59:59.999Z");
+        expect(await storage.memberships.suspend(a.id, { actor: admin, until: farthest })).toMatchObject({ status: "suspended" });
+        expect((await storage.memberships.findById(a.id))!.blocked!.until!.getTime()).toBe(farthest.getTime());
+        await storage.memberships.unblock(a.id, { actor: admin });
+
+        // Una suspensión que vence casi al instante es válida: nunca debe salir como `last_owner` ni dejar un estado a medias.
+        for (let i = 0; i < 15; i++) {
+          const result = await storage.memberships.suspend(a.id, { actor: admin, until: new Date(Date.now() + 2) }).catch((error) => error);
+          expect(result.code).toBeUndefined();
+          expect(["suspended", "active"]).toContain(result.status);
+          await storage.memberships.unblock(a.id, { actor: admin });
+        }
+
+        // `block` sobre una suspensión la convierte en bloqueo indefinido: no vence a la fecha anterior.
+        const soon = new Date(Date.now() + 700);
+        const suspended = await storage.memberships.suspend(a.id, { actor: admin, reason: "temporal", until: soon });
+        const escalated = await storage.memberships.block(a.id, { actor: bob, reason: "definitivo", expectedVersion: suspended.version });
+        expect(escalated).toMatchObject({ status: "blocked", blocked: { by: bob, reason: "definitivo" }, version: suspended.version + 1 });
+        expect(escalated.blocked!.until).toBeUndefined();
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        expect(await createAuthorizationEngine(storage).can({ identity: alice, organizationId: "org-1", permission: "reports.read" })).toBe(false);
+        expect((await storage.memberships.findById(a.id))!).toMatchObject({ status: "blocked" });
+        expect(await storage.memberships.count({ organizationId: "org-1", status: "blocked" })).toBe(1);
+        // Al revés, suspender a quien ya está bloqueado no lo acorta.
+        expect((await storage.memberships.suspend(a.id, { actor: admin, until: new Date(Date.now() + 60_000) })).status).toBe("blocked");
+        await storage.memberships.unblock(a.id, { actor: admin });
+
+        // Un Owner suspendido puede escalarse a bloqueo aunque no quede otro Owner activo (ya estaba inactivo), y vence igual el resto.
+        await storage.memberships.assignOwnerRole(a.id, owner.id);
+        await storage.memberships.suspend(b.id, { actor: admin, until: new Date(Date.now() + 60_000) });
+        expect(await storage.memberships.block(b.id, { actor: admin })).toMatchObject({ status: "blocked" });
+      });
+
+      it("auditoría de la suspensión: quien está sancionado no puede salir de la organización ni recibir la propiedad, y las llamadas sin efecto no se auditan", async () => {
+        const { storage, a, b, owner } = await seed();
+        const audited = createAuditedStorage(storage, { actor: admin });
+        await audited.memberships.suspend(a.id, { actor: admin, until: new Date(Date.now() + 60_000) });
+        await audited.memberships.suspend(a.id, { actor: bob, until: new Date(Date.now() + 120_000) }); // sin efecto
+        await audited.memberships.unblock(b.id, { actor: bob }); // sin efecto: b está activo
+        await audited.memberships.block(a.id, { actor: bob, reason: "definitivo" });
+        await audited.memberships.block(a.id, { actor: bob, reason: "otra vez" }); // sin efecto
+        const log = (await storage.auditLogs.listByOrganization("org-1")).filter((e) => e.action.startsWith("membership.") && /blocked|suspended|unblocked/.test(e.action));
+        expect(log.map((e) => e.action).sort()).toEqual(["membership.blocked", "membership.suspended"]);
+        expect(log.find((e) => e.action === "membership.blocked")!.metadata).toMatchObject({ replacedSuspension: true, requestedBy: "supabase:bob" });
+
+        await storage.memberships.unblock(a.id, { actor: admin });
+        await storage.memberships.suspend(a.id, { actor: admin, until: new Date(Date.now() + 60_000) });
+        // Quien tiene una sanción no la evita saliendo de la organización...
+        await expect(leaveOrganization(storage, { organizationId: "org-1", identity: alice })).rejects.toMatchObject({ code: "membership_blocked" });
+        expect(await storage.memberships.findByIdentity("org-1", alice)).toMatchObject({ status: "suspended" });
+        // ...ni se traspasa la propiedad a quien no podría ejercerla.
+        await expect(
+          transferOwnership(storage, { organizationId: "org-1", fromMembershipId: b.id, toMembershipId: a.id, actor: bob }),
+        ).rejects.toMatchObject({ code: "membership_blocked" });
+        expect(await storage.memberships.findById(b.id)).toMatchObject({ roleIds: [owner.id] });
+        await storage.memberships.unblock(a.id, { actor: admin });
+        expect(await leaveOrganization(storage, { organizationId: "org-1", identity: alice })).toBe(true);
+      });
+
       it("bloquear y desbloquear son idempotentes; el primer bloqueo conserva autor y motivo; ids desconocidos fallan con código", async () => {
         const { storage, a } = await seed();
         await storage.memberships.block(a.id, { actor: admin, reason: "uno" });

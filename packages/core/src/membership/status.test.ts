@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { computeAuthorizationSnapshot, createAuthorizationEngine, createAuditedStorage } from "../index.js";
+import { computeAuthorizationSnapshot, createAuthorizationEngine, createAuditedStorage, createInvitationService, createTrustedTeamStorage, leaveOrganization, transferOwnership } from "../index.js";
 import { createMemoryStorage } from "../storage/memory.js";
 
 const admin = { provider: "p", subject: "admin" };
@@ -161,5 +161,88 @@ describe("MembershipRepository: suspensión con fecha de fin (memoria)", () => {
     await expect(storage.memberships.suspend("m-alice", { actor: admin, until: new Date(Date.now() - 1) })).rejects.toMatchObject({ code: "membership_block_until_invalid" });
     await expect(storage.memberships.suspend("m-alice", { actor: admin, until: new Date("x") })).rejects.toMatchObject({ code: "membership_block_until_invalid" });
     await expect(storage.memberships.suspend("m-bob", { actor: admin, until: new Date(Date.now() + 60_000) })).rejects.toMatchObject({ code: "last_owner" });
+  });
+});
+
+describe("auditoría de la suspensión temporal (memoria)", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("rechaza fechas más allá del año 9999 y acepta el último instante", async () => {
+    const { storage } = await setup();
+    for (const until of [new Date(Date.UTC(10000, 0, 1)), new Date(8.64e15)]) {
+      await expect(storage.memberships.suspend("m-alice", { actor: admin, until })).rejects.toMatchObject({ code: "membership_block_until_invalid" });
+    }
+    expect(await storage.memberships.suspend("m-alice", { actor: admin, until: new Date("9999-12-31T23:59:59.999Z") })).toMatchObject({ status: "suspended" });
+  });
+
+  it("vence en el instante exacto, también para la zona horaria del proceso y con el reloj hacia atrás", async () => {
+    vi.useFakeTimers({ now: new Date("2026-10-07T23:30:00-05:00") });
+    const { storage } = await setup();
+    const engine = createAuthorizationEngine(storage);
+    const input = { identity: alice, organizationId: "org", permission: "reports.read" };
+    const until = new Date("2026-10-08T04:31:00Z"); // 23:31 en UTC-5
+    await storage.memberships.suspend("m-alice", { actor: admin, until });
+    vi.setSystemTime(new Date(until.getTime() - 1));
+    expect(await engine.can(input)).toBe(false);
+    vi.setSystemTime(until);
+    expect(await engine.can(input)).toBe(true);
+    // En memoria, lo vencido queda levantado: un reloj que retrocede después no resucita la sanción (en SQL se deriva del reloj en cada lectura).
+    vi.setSystemTime(new Date(until.getTime() - 60_000));
+    expect((await storage.memberships.findById("m-alice"))!.status).toBe("active");
+  });
+
+  it("block sobre una suspensión la vuelve indefinida; suspend sobre un bloqueo no lo acorta", async () => {
+    vi.useFakeTimers({ now: new Date("2026-10-07T10:00:00Z") });
+    const { storage } = await setup();
+    const engine = createAuthorizationEngine(storage);
+    const input = { identity: alice, organizationId: "org", permission: "reports.read" };
+    const suspended = await storage.memberships.suspend("m-alice", { actor: admin, until: new Date("2026-10-07T11:00:00Z") });
+    const blocked = await storage.memberships.block("m-alice", { actor: bob, reason: "fraude", expectedVersion: suspended.version });
+    expect(blocked).toMatchObject({ status: "blocked", version: suspended.version + 1, blocked: { by: bob, reason: "fraude" } });
+    expect(blocked.blocked!.until).toBeUndefined();
+    vi.setSystemTime(new Date("2026-12-01T00:00:00Z"));
+    expect(await engine.can(input)).toBe(false);
+    expect((await storage.memberships.suspend("m-alice", { actor: admin, until: new Date("2027-01-01T00:00:00Z") })).status).toBe("blocked");
+  });
+
+  it("el suspendido no puede salir, ni recibir la propiedad, ni usar alias, equipos, concesiones de soporte o una invitación; y lo sin efecto no se audita", async () => {
+    const { storage, owner, b } = await setup();
+    const audited = createAuditedStorage(storage, { actor: admin });
+    const engine = createAuthorizationEngine(storage);
+    const until = new Date(Date.now() + 3_600_000);
+    await audited.memberships.suspend("m-alice", { actor: admin, until });
+    await audited.memberships.suspend("m-alice", { actor: bob, until: new Date(until.getTime() + 1000) });
+    await audited.memberships.unblock("m-bob", { actor: bob });
+    expect((await storage.auditLogs.listRecent()).filter((e) => /suspended|unblocked/.test(e.action)).map((e) => e.action)).toEqual(["membership.suspended"]);
+
+    // Salir de la organización no borra la sanción; tampoco se le traspasa la propiedad.
+    await expect(leaveOrganization(storage, { organizationId: "org", identity: alice })).rejects.toMatchObject({ code: "membership_blocked" });
+    await expect(transferOwnership(storage, { organizationId: "org", fromMembershipId: b.id, toMembershipId: "m-alice", actor: bob })).rejects.toMatchObject({ code: "membership_blocked" });
+    expect((await storage.memberships.findById(b.id))!.roleIds).toEqual([owner.id]);
+
+    // Una identidad enlazada llega a la misma membresía y la sanción la sigue.
+    const alias = { provider: "q", subject: "alice-alias" };
+    await storage.identityLinks.link({ from: alias, to: alice, actor: admin });
+    expect(await engine.can({ identity: alias, organizationId: "org", permission: "reports.read" })).toBe(false);
+
+    // Una concesión de soporte a esa persona no esquiva la suspensión.
+    await storage.supportGrants.create({ id: "g", organizationId: "org", operator: alice, grantedBy: admin, reason: "ticket", permissions: ["reports.read"], expiresAt: new Date(Date.now() + 3_600_000) });
+    expect(await engine.can({ identity: alice, organizationId: "org", permission: "reports.read" })).toBe(false);
+    expect(await engine.access.check({ identity: alice, organizationId: "org" })).toBe(false);
+
+    // Equipos: ni el rol del equipo ni ser responsable le devuelven nada.
+    const trusted = createTrustedTeamStorage(storage, { actor: admin, reason: "test" });
+    await trusted.teams.create({ id: "t1", organizationId: "org", name: "T1" });
+    await trusted.teamMemberships.add({ id: "tm1", organizationId: "org", teamId: "t1", membershipId: "m-alice", responsibility: "manager", roleIds: ["staff"] });
+    expect(await engine.can({ identity: alice, organizationId: "org", permission: "reports.read", teamId: "t1" })).toBe(false);
+    expect(await engine.access.check({ identity: alice, organizationId: "org", teamId: "t1" })).toBe(false);
+
+    // Reaceptar una invitación le añade roles, pero la membresía sigue suspendida.
+    await storage.roles.create({ id: "extra", organizationId: "org", name: "Extra", permissionKeys: ["reports.read"] });
+    const service = createInvitationService({ storage, acceptUrl: (t) => `https://x/${t}` });
+    const { acceptUrl } = await service.invite({ organizationId: "org", email: "alice@example.com", roleIds: ["extra"], invitedBy: admin, allowExistingMember: true });
+    const accepted = await service.accept({ token: acceptUrl.split("/").pop()!, identity: alice, verifiedEmail: "alice@example.com" });
+    expect(accepted.membership).toMatchObject({ status: "suspended" });
+    expect(await engine.can({ identity: alice, organizationId: "org", permission: "reports.read" })).toBe(false);
   });
 });

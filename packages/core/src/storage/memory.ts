@@ -400,6 +400,17 @@ export function createMemoryStorage(): UnioraStorage {
     const membership = memberships.get(membershipId);
     if (!membership) throw new MembershipError(`Membership not found: ${membershipId}`);
     assertMembershipVersion(membership, input.expectedVersion);
+    if (membership.status === "suspended" && until === undefined) {
+      // `block` over a timed suspension makes it indefinite; the member was already inactive, so no Owner guard applies.
+      const at = new Date();
+      Object.assign(membership, {
+        status: "blocked" as const,
+        updatedAt: at,
+        version: membership.version + 1,
+        blocked: { at, by: { ...input.actor }, ...(sanitizeBlockReason(input.reason) !== undefined ? { reason: sanitizeBlockReason(input.reason) } : {}) },
+      });
+      return copy(membership);
+    }
     if (membership.status !== "active") return copy(membership);
     // The Owner who is blocked must not be the only ACTIVE one left: the organization would have nobody who can act.
     const ownerRoleIds = membership.roleIds.filter((roleId) => roles.get(roleId)?.isOwnerRole);

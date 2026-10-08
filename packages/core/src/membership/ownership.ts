@@ -21,6 +21,8 @@ export interface TransferOwnershipInput {
  * has it (and the old one doesn't, unless `keepPreviousOwner`) or nothing changed. The organization
  * can never be observed without an owner, and both memberships are checked against `organizationId`.
  *
+ * The member receiving ownership must be active (`membership_blocked` otherwise).
+ *
  * **No authorization of its own.** Guard it with a permission stricter than ordinary role changes
  * (e.g. `organization.transfer_ownership`), the same trust boundary as `assignOwnerRole`.
  */
@@ -39,6 +41,10 @@ export async function transferOwnership(storage: UnioraStorage, input: TransferO
     }
     const ownerRole = (await tx.roles.listByOrganization(input.organizationId)).find((role) => role.isOwnerRole);
     if (!ownerRole) throw new MembershipError("This organization has no Owner role.");
+    // Handing the Owner role to someone who is blocked or suspended could leave the organization with nobody who can act.
+    if (to.status !== "active") {
+      throw new MembershipError("The member receiving ownership is blocked or suspended.", "membership_blocked");
+    }
     if (!from.roleIds.includes(ownerRole.id)) {
       throw new MembershipError("The member handing over ownership is not an Owner.");
     }
@@ -66,7 +72,7 @@ export interface LeaveOrganizationInput {
 }
 
 /**
- * The caller removes THEIR OWN membership. The last Owner can't leave (transfer ownership first):
+ * The caller removes THEIR OWN membership. A blocked or suspended member can't leave (`membership_blocked`; an administrator removes them with `delete`). The last Owner can't leave (transfer ownership first):
  * `MembershipRepository.delete` refuses it, and so does this. Returns `false` when the identity
  * wasn't a member (nothing to do).
  */
@@ -75,6 +81,10 @@ export async function leaveOrganization(storage: UnioraStorage, input: LeaveOrga
   return storage.transaction(async (tx) => {
     const membership = await tx.memberships.findByIdentity(input.organizationId, input.identity);
     if (!membership) return false;
+    // A sanctioned member can't shed the sanction by leaving (and coming back through an invitation they still hold).
+    if (membership.status !== "active") {
+      throw new MembershipError("A blocked or suspended member can't leave the organization.", "membership_blocked");
+    }
     await tx.memberships.delete(membership.id);
     await tx.auditLogs.record({
       id: generateId(),
