@@ -203,7 +203,7 @@ Key: lowercase alphanumerics separated by underscores, up to 63 characters.
 
 Documented in their own guides: [entitlements](entitlements.md) (`storage.entitlements`: `define`, `setLimit`, `clearLimit`, `get`, `list`, `consume`, `release`),
 [support grants](support-grants.md) (`storage.supportGrants`: `create`, `revoke`, `findById`, `search`, `count`, `activePermissions`) and
-[outbox](outbox.md) (`storage.outbox`, `dispatchOutbox`).
+[outbox](outbox.md) (`storage.outbox`, `dispatchOutbox`) and [teams](teams.md) (`storage.teams`, `storage.teamMemberships`).
 
 ---
 

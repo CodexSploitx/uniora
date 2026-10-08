@@ -16,7 +16,7 @@ describe("createAuditedStorage: every mutation is audited, with standard names",
     const raw = createMemoryStorage();
     const audited = createAuditedStorage(raw, { actor });
     const unwrapped: string[] = [];
-    for (const repository of ["organizations", "memberships", "roles", "permissions", "features", "entitlements", "supportGrants"] as const) {
+    for (const repository of ["organizations", "memberships", "roles", "permissions", "features", "entitlements", "supportGrants", "teams", "teamMemberships"] as const) {
       for (const method of Object.keys(raw[repository])) {
         const name = `${repository}.${method}`;
         if (READ_ONLY.test(method) || NOT_AUDITED.has(name)) continue;
@@ -40,6 +40,12 @@ describe("createAuditedStorage: every mutation is audited, with standard names",
     await audited.supportGrants.create({ id: "g1", organizationId: "org", operator: { provider: "p", subject: "ops" }, grantedBy: actor, reason: "ticket 1", permissions: ["reports.read"], expiresAt: soon });
     await audited.supportGrants.revoke("g1", { by: actor });
     await audited.supportGrants.revoke("g1", { by: actor });
+    const barcelona = await audited.teams.create({ id: "t1", organizationId: "org", name: "Barcelona", externalId: "branch_348" });
+    await audited.teams.update("org", barcelona.id, { name: "Barcelona 2", metadata: { type: "branch" } });
+    await audited.teams.archive("org", barcelona.id, { actor, reason: "closed" });
+    await audited.teams.restore("org", barcelona.id, { actor });
+    await audited.teams.archive("org", barcelona.id, { actor });
+    await audited.teams.delete("org", barcelona.id);
     await audited.entitlements.define({ key: "seats", period: "lifetime", defaultLimit: 3 });
     await audited.entitlements.setLimit("org", "seats", 10);
     await audited.entitlements.clearLimit("org", "seats");
@@ -62,6 +68,18 @@ describe("createAuditedStorage: every mutation is audited, with standard names",
     await audited.roles.delete(copy.id, { members: "reject" });
     const a = await audited.memberships.create({ id: "m-a", organizationId: "org", identity: { provider: "p", subject: "a" } });
     const b = await audited.memberships.create({ id: "m-b", organizationId: "org", identity: { provider: "p", subject: "b" } });
+    const madrid = await audited.teams.create({ id: "t2", organizationId: "org", name: "Madrid" });
+    const invited = await audited.teamMemberships.add({ id: "tm-a", organizationId: "org", teamId: madrid.id, membershipId: a.id, status: "pending" });
+    await audited.teamMemberships.setStatus("org", invited.id, "active", { actor });
+    await audited.teamMemberships.setStatus("org", invited.id, "suspended", { actor });
+    await audited.teamMemberships.setStatus("org", invited.id, "active", { actor });
+    await audited.teamMemberships.setResponsibility("org", invited.id, "manager");
+    await audited.teamMemberships.setResponsibility("org", invited.id, "owner");
+    await audited.teamMemberships.assignRole("org", invited.id, staff.id);
+    await audited.teamMemberships.unassignRole("org", invited.id, staff.id);
+    await audited.teamMemberships.setStatus("org", invited.id, "removed", { actor });
+    await audited.teamMemberships.add({ id: "tm-a2", organizationId: "org", teamId: madrid.id, membershipId: a.id });
+    await audited.teamMemberships.add({ id: "tm-b", organizationId: "org", teamId: madrid.id, membershipId: b.id });
     await audited.memberships.assignOwnerRole(a.id, owner.id);
     await audited.memberships.assignOwnerRole(b.id, owner.id);
     await audited.memberships.assignRole(a.id, staff.id);

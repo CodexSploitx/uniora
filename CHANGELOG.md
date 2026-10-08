@@ -4,6 +4,10 @@ All notable changes to UNIORA. Packages are released in lockstep, so one version
 
 ## Unreleased
 
+### Added
+
+- **Teams** (organizational structure): `storage.teams` and `storage.teamMemberships`. A team belongs to one organization (slug and `externalId` unique inside it; every method takes the organization id and treats a team of another organization as missing; composite foreign keys enforce it in the databases), carries free-form `metadata` and `settings` (plain JSON, 16 KB) and has a lifecycle `active` → `archived` → restore, or delete when archived. A team membership links an organization membership to a team (a member can be in none, one or many) with a status `pending` / `active` / `suspended` / `removed`, a `responsibility` label (`owner`, `manager`, `member`) that grants nothing by itself, and roles of the same organization that apply inside the team only (never the Owner role). `version` / `expectedVersion` on both. Audited by `createAuditedStorage` (`team.*`, `team_member.*`). Deleting an organization membership removes its team memberships; deleting a role removes it from them, and `roles.delete(..., { members: "reject" })` counts team holders. Postgres migration `0034`, SQLite `0019`. See `guides/teams.md`. **Breaking (0.x):** `UnioraStorage` / `UnioraTransaction` gain required `teams` and `teamMemberships`, so a custom backend must implement them (the conformance suite covers them). This first step adds the data model only; using a team as context in `engine.can` comes next.
+
 ## 0.4.1 - 2026-10-07
 
 ### Fixed

@@ -242,3 +242,51 @@ export {
   assertValidSupportGrant,
   grantStatus,
 } from "./support-grant/repository.js";
+
+export type {
+  Team,
+  TeamArchive,
+  TeamData,
+  TeamMemberStatus,
+  TeamMemberStatusChange,
+  TeamMembership,
+  TeamResponsibility,
+  TeamStatus,
+} from "./team/types.js";
+export { TEAM_MEMBER_STATUSES, TEAM_RESPONSIBILITIES, TEAM_STATUSES } from "./team/types.js";
+export type {
+  AddTeamMemberInput,
+  ArchiveTeamInput,
+  CreateTeamInput,
+  RestoreTeamInput,
+  SearchTeamMembersOptions,
+  SearchTeamsOptions,
+  SetTeamMemberStatusInput,
+  TeamErrorCode,
+  TeamMemberChangeOptions,
+  TeamMembershipRepository,
+  TeamRepository,
+  UpdateTeamInput,
+  ValidTeamUpdate,
+} from "./team/repository.js";
+export {
+  MAX_TEAM_DATA_BYTES,
+  MAX_TEAM_EXTERNAL_ID_LENGTH,
+  MAX_TEAM_MEMBER_ROLES,
+  MAX_TEAM_NAME_LENGTH,
+  MAX_TEAM_REASON_LENGTH,
+  TeamError,
+  assertTeamMemberStatus,
+  assertTeamResponsibility,
+  assertValidAddTeamMember,
+  assertValidCreateTeam,
+  assertValidUpdateTeam,
+  isTeamMemberTransitionAllowed,
+  isTeamMembershipActive,
+  resolveTeamSlug,
+  sameTeamData,
+  sanitizeTeamData,
+  sanitizeTeamExternalId,
+  sanitizeTeamName,
+  sanitizeTeamReason,
+} from "./team/repository.js";
