@@ -1,5 +1,6 @@
 import { Pool } from "pg";
-import { applyMigrations, createPostgresStorage, getMigrationStatus } from "@uniora/postgres";
+import { bootstrapPlatform } from "@uniora/core";
+import { applyMigrations, createPostgresPlatformStorage, createPostgresStorage, getMigrationStatus } from "@uniora/postgres";
 import { describeDatabaseTarget, type CheckResult } from "../cli/output.js";
 import type { DatabaseDriver } from "./types.js";
 
@@ -59,6 +60,31 @@ export function createPostgresDriver(connectionString: string): DatabaseDriver {
 
     async auditIntegrity(): Promise<CheckResult> {
       return auditIntegrityResult(await createPostgresStorage(pool).auditLogs.verifyIntegrity());
+    },
+
+    async platformStatus() {
+      try {
+        const result = await pool.query<{ members: string; admins: string }>(
+          `select count(*) as members,
+                  count(*) filter (where m.status = 'active' and exists (
+                    select 1 from uniora_platform.member_roles mr
+                    join uniora_platform.roles r on r.id = mr.role_id and r.is_system and r.key = 'platform_admin'
+                    where mr.member_id = m.id)) as admins
+             from uniora_platform.members m`,
+        );
+        const members = Number(result.rows[0]?.members ?? 0);
+        return { migrated: true, initialised: members > 0, members, activeAdmins: Number(result.rows[0]?.admins ?? 0) };
+      } catch (error) {
+        // 3F000 = schema does not exist, 42P01 = table does not exist: the migration has not been applied.
+        const code = (error as { code?: string }).code;
+        if (code === "3F000" || code === "42P01") return { migrated: false, initialised: false, members: 0, activeAdmins: 0 };
+        throw error;
+      }
+    },
+
+    async platformInit(admin, actor) {
+      const { role, member } = await bootstrapPlatform({ platform: createPostgresPlatformStorage(pool), admin, actor });
+      return { memberId: member.id, roleId: role.id };
     },
 
     close: () => pool.end(),

@@ -3,6 +3,7 @@ import { runCheck } from "../commands/check.js";
 import { runDoctor } from "../commands/doctor.js";
 import { runInit } from "../commands/init.js";
 import { runMigrate } from "../commands/migrate.js";
+import { runPlatform } from "../commands/platform.js";
 import { runStudio, STUDIO_SPEC, studioArgsFromFlags } from "../commands/studio.js";
 import { parseArgs, UsageError, type OptionSpec } from "./args.js";
 import { commonFromFlags, JSON_SPEC } from "./common.js";
@@ -22,6 +23,8 @@ interface CommandDef {
   readonly usage: string;
   readonly details: string;
   readonly spec: OptionSpec;
+  /** Cuántos argumentos posicionales acepta (0 por defecto). */
+  readonly positionals?: number;
 }
 
 const COMMANDS: Record<string, CommandDef> = {
@@ -51,6 +54,14 @@ const COMMANDS: Record<string, CommandDef> = {
     details: "",
     spec: JSON_SPEC,
   },
+  platform: {
+    summary: "Ámbito de plataforma (administradores de todo el proyecto): init crea el primer Platform Administrator, status lo consulta",
+    usage: "uniora platform <init --admin proveedor:sujeto | status> [--config <ruta>] [--env <nombre>] [--json]",
+    details: `  init --admin P:S   Crea el rol Platform Administrator y a su primer miembro (una sola vez, requiere acceso a la base)
+  status             Solo lectura: miembros y administradores activos`,
+    spec: { ...JSON_SPEC, admin: "string" },
+    positionals: 1,
+  },
   studio: {
     summary: "Abre UNIORA Studio en local (solo 127.0.0.1, con token por ejecución)",
     usage: "uniora studio [--port N] [--read-only] [--no-open] [--config <ruta>] [--env <nombre>]",
@@ -68,7 +79,7 @@ function version(): string {
 }
 
 function globalHelp(): string {
-  const lines = Object.entries(COMMANDS).map(([name, def]) => `  ${name.padEnd(8)} ${def.summary}`);
+  const lines = Object.entries(COMMANDS).map(([name, def]) => `  ${name.padEnd(9)} ${def.summary}`);
   return `Uso: uniora <comando> [opciones]
 
 Comandos:
@@ -114,7 +125,14 @@ export async function runCli(argv: readonly string[], cwd: string = process.cwd(
     const def = COMMANDS[command] as CommandDef;
     const { flags, positionals } = parseArgs(rest, def.spec);
 
-    if (positionals.length > 0) throw new UsageError(`"${command}" no acepta argumentos posicionales ("${positionals[0]}").`);
+    const allowed = def.positionals ?? 0;
+    if (positionals.length > allowed) {
+      throw new UsageError(
+        allowed === 0
+          ? `"${command}" no acepta argumentos posicionales ("${positionals[0]}").`
+          : `"${command}" acepta como mucho ${allowed} argumento(s) posicional(es) ("${positionals[allowed]}" sobra).`,
+      );
+    }
     if (flags.help) {
       console.log(commandHelp(command));
       return;
@@ -138,6 +156,9 @@ export async function runCli(argv: readonly string[], cwd: string = process.cwd(
         return;
       case "doctor":
         await runDoctor(cwd, commonFromFlags(flags));
+        return;
+      case "platform":
+        await runPlatform(positionals[0], cwd, { ...commonFromFlags(flags), admin: flags.admin as string | undefined });
         return;
       case "studio":
         await runStudio(studioArgsFromFlags(flags), cwd, commonFromFlags(flags));

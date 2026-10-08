@@ -250,6 +250,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@uniora/core':
+        specifier: workspace:^
+        version: link:../core
       '@uniora/postgres':
         specifier: workspace:^
         version: link:../database/postgres

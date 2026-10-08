@@ -355,3 +355,5 @@ export type { BootstrapPlatformInput, BootstrapPlatformResult } from "./platform
 export { bootstrapPlatform } from "./platform/bootstrap.js";
 export type { MemoryPlatformStorageOptions } from "./platform/memory.js";
 export { createMemoryPlatformStorage } from "./platform/memory.js";
+export type { PlatformCommand, PlatformCommandContext, PlatformHttpError } from "./platform/commands.js";
+export { PLATFORM_COMMANDS, isPlatformCommand, platformErrorToHttp, runPlatformCommand } from "./platform/commands.js";

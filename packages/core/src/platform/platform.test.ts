@@ -7,8 +7,11 @@ import {
   createMemoryStorage,
   createPlatformEngine,
   createPlatformService,
+  PlatformError,
   isValidPlatformPermission,
+  platformErrorToHttp,
   platformPermissionsCover,
+  runPlatformCommand,
 } from "../index.js";
 import type { Identity } from "../index.js";
 import { issuePlatformAuthorization } from "./authorization.js";
@@ -251,5 +254,38 @@ describe("platform operations on organizations", () => {
     await bootstrapPlatform({ platform, admin: root });
     const service = createPlatformService({ platform });
     await expect(service.listOrganizations({ actor: root })).rejects.toMatchObject({ code: "platform_support_unavailable" });
+  });
+});
+
+describe("platform commands (the door of a request handler)", () => {
+  it("validates input field by field, rejects unknown fields and cannot smuggle an actor or an authorization", async () => {
+    const { service } = await setup();
+    const run = (command: string, params: unknown, actor: Identity = root) => runPlatformCommand(service, command, { actor }, params);
+    await expect(run("nope", {})).rejects.toMatchObject({ code: "platform_invalid" });
+    await expect(run("createRole", { key: "x_role", name: "X", permissions: [], actor: alice })).rejects.toMatchObject({ code: "platform_invalid" });
+    await expect(run("createRole", { key: "x_role", name: "X", permissions: [], authorization: {} })).rejects.toMatchObject({ code: "platform_invalid" });
+    await expect(run("createRole", { key: "x_role", permissions: [] })).rejects.toMatchObject({ code: "platform_invalid" });
+    await expect(run("createRole", [])).rejects.toMatchObject({ code: "platform_invalid" });
+    const role = (await run("createRole", { key: "support", name: "Support", permissions: ["platform.organizations.read"] })) as { id: string; createdAt: string };
+    expect(typeof role.createdAt).toBe("string");
+    const member = (await run("addMember", { provider: "auth", subject: "alice", roleIds: [role.id] })) as { id: string };
+    // the actor is the one the handler resolved, whatever the body says
+    await expect(run("addMember", { provider: "auth", subject: "bob", roleIds: [] }, alice)).rejects.toMatchObject({ code: "platform_forbidden" });
+    expect(await run("listMembers", { status: "active" })).toHaveLength(2);
+    await expect(run("listMembers", { status: "weird" })).rejects.toMatchObject({ code: "platform_invalid" });
+    expect(await run("suspendMember", { memberId: member.id })).toMatchObject({ status: "suspended" });
+    expect(await run("removeMember", { memberId: member.id })).toEqual({ removed: true });
+  });
+
+  it("maps errors to responses without explaining refusals", () => {
+    expect(platformErrorToHttp(new PlatformError("secret detail", "platform_escalation"))).toEqual({
+      status: 403,
+      body: { error: "forbidden", message: "You are not allowed to do that." },
+    });
+    expect(platformErrorToHttp(new PlatformError("x", "platform_step_up_required"))?.status).toBe(428);
+    expect(platformErrorToHttp(new PlatformError("x", "platform_last_admin"))?.status).toBe(409);
+    expect(platformErrorToHttp(new PlatformError("x", "platform_member_not_found"))?.status).toBe(404);
+    expect(platformErrorToHttp(new PlatformError("x", "platform_authorization_required"))?.status).toBe(500);
+    expect(platformErrorToHttp(new Error("boom"))).toBeNull();
   });
 });

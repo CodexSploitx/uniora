@@ -4,3 +4,5 @@ export type { InvitationAcceptOptions, InvitationPreviewOptions } from "./invita
 export { acceptInvitation, invitationPreview } from "./invitations.js";
 export type { TeamCommandOptions } from "./teams.js";
 export { teamCommand } from "./teams.js";
+export type { PlatformCommandOptions, RequirePlatformPermissionOptions } from "./platform.js";
+export { platformCommand, requirePlatformPermission } from "./platform.js";

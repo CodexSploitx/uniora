@@ -6,3 +6,5 @@ export type { AcceptInvitationRouteInput } from "./invitations.js";
 export { acceptInvitationRoute, previewInvitationRoute } from "./invitations.js";
 export type { TeamCommandRouteInput } from "./teams.js";
 export { teamCommandRoute } from "./teams.js";
+export type { PlatformCommandRouteInput } from "./platform.js";
+export { PlatformDeniedError, assertPlatformCan, platformCommandRoute } from "./platform.js";
