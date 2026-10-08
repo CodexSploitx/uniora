@@ -1,6 +1,6 @@
 {
   "name": "@uniora/studio",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "UNIORA Studio: local-first admin UI for UNIORA data. Launched via `npx uniora studio`.",
   "license": "PolyForm-Shield-1.0.0",
   "keywords": [
