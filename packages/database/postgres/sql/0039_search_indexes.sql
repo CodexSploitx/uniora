@@ -13,9 +13,10 @@
 --
 -- Also: a person's memberships across organizations (`findByIdentity`, the member's "other organizations", every
 -- authorization lookup that starts from an identity) filtered on `(provider, subject)`, and nothing led with those columns
--- (the unique key starts with `organization_id`).
+-- (the unique key starts with `organization_id`). And `(status, id)`: the cross-organization "blocked members" view had no index to start from.
 
 create index if not exists memberships_identity_idx on uniora.memberships (provider, subject);
+create index if not exists memberships_status_idx on uniora.memberships (status, id);
 
 do $$
 declare

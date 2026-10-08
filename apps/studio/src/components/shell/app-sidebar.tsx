@@ -6,6 +6,7 @@ import {
   IconHistory,
   IconKey,
   IconLayoutDashboard,
+  IconShieldLock,
   IconToggleRight,
   IconUsers,
 } from "@tabler/icons-react";
@@ -44,6 +45,7 @@ const NAV: { href: string; label: MessageKey; icon: typeof IconKey }[] = [
   { href: "/members", label: "nav.members", icon: IconUsers },
   { href: "/permissions", label: "nav.permissions", icon: IconKey },
   { href: "/features", label: "nav.features", icon: IconToggleRight },
+  { href: "/platform", label: "nav.platform", icon: IconShieldLock },
   { href: "/activity", label: "nav.activity", icon: IconHistory },
 ];
 

@@ -185,7 +185,7 @@ function TeamDetail({
 }) {
   const { t } = useI18n();
   const { pending, run } = useAction();
-  const { team, ancestors, members, membersTotal, membersNextCursor } = detail;
+  const { team, ancestors, children, members, membersTotal, membersNextCursor } = detail;
   const archived = team.status === "archived";
 
   return (
@@ -257,6 +257,21 @@ function TeamDetail({
           </div>
         )}
       </div>
+
+      {children.length > 0 && (
+        <nav aria-label={t("teams.childrenAria")} className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-muted-foreground">{t("teams.subTeamsLabel")}</span>
+          {children.map((child) => (
+            <Link key={child.id} href={teamsHref(orgPath, { team: child.id })} className="rounded-full border px-2.5 py-0.5 text-xs hover:border-primary/40 hover:text-primary">
+              {child.name}
+              {child.status === "archived" ? ` · ${t("teams.status.archived")}` : ""}
+            </Link>
+          ))}
+          {team.childCount > children.length && (
+            <span className="text-xs text-muted-foreground">{t("teams.moreSubTeams", { count: team.childCount - children.length })}</span>
+          )}
+        </nav>
+      )}
 
       <p className="text-xs text-muted-foreground">{t("teams.hierarchyNote")}</p>
 

@@ -56,6 +56,15 @@ function effectiveStatus(alias?: string): string {
   return `(case when ${prefix}status = 'blocked' and ${prefix}blocked_until is not null then (case when ${prefix}blocked_until <= now() then 'active' else 'suspended' end) else ${prefix}status end)`;
 }
 
+/**
+ * The stored `status` is only ever `active` or `blocked` (a suspension is a block with an end date), so a filter for an
+ * effective `blocked`/`suspended` member can also say `status = 'blocked'`, which the `(status, id)` index answers without
+ * touching the other rows. An `active` filter can't narrow anything (nearly everyone is), so it adds nothing.
+ */
+function storedStatusPrefilter(status: MembershipStatus | undefined): string {
+  return status === "blocked" || status === "suspended" ? "and status = 'blocked'" : "";
+}
+
 /** Columns of `uniora.memberships` a `Membership` needs, qualified with the alias `m`. */
 const MEMBERSHIP_COLUMNS = `m.id, m.organization_id, m.provider, m.subject, ${effectiveStatus("m")} as status, m.created_at, m.updated_at, m.version,
   m.invited_by_provider, m.invited_by_subject, m.last_active_at,
@@ -413,6 +422,7 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
              and ($3::text is null or id > $3)
              and ($5::text is null or (provider = $5 and subject = $6))
              and ($7::text is null or ${effectiveStatus()} = $7)
+             ${storedStatusPrefilter(options?.status)}
              and ($8::text[] is null or id = any($8))
            order by id asc
            limit $4
@@ -471,6 +481,7 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
              and ($3::text is null or id > $3)
              and ($6::text is null or (provider = $6 and subject = $7))
              and ($8::text is null or ${effectiveStatus()} = $8)
+             ${storedStatusPrefilter(options?.status)}
              and ($9::text[] is null or id = any($9))
            order by id asc
            limit $4
@@ -513,6 +524,7 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
              and ($2::text is null or provider ilike $2 or subject ilike $2)
              and ($3::text is null or (provider = $3 and subject = $4))
              and ($5::text is null or ${effectiveStatus()} = $5)
+             ${storedStatusPrefilter(options?.status)}
              and ($7::text[] is null or id = any($7))
            limit $6::integer
          ) matching`,

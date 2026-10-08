@@ -48,6 +48,15 @@ function effectiveStatus(alias?: string): string {
   return `(case when ${prefix}status = 'blocked' and ${prefix}blocked_until is not null then (case when ${prefix}blocked_until <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now') then 'active' else 'suspended' end) else ${prefix}status end)`;
 }
 
+/**
+ * The stored `status` is only ever `active` or `blocked` (a suspension is a block with an end date), so a filter for an
+ * effective `blocked`/`suspended` member can also say `status = 'blocked'`, which the `(status, id)` index answers without
+ * touching the other rows. An `active` filter can't narrow anything (nearly everyone is), so it adds nothing.
+ */
+function storedStatusPrefilter(status: MembershipStatus | undefined): string {
+  return status === "blocked" || status === "suspended" ? "and status = 'blocked'" : "";
+}
+
 /** Columns of `uniora_memberships` a `Membership` needs, qualified with the alias `m`. */
 const MEMBERSHIP_COLUMNS = `m.id, m.organization_id, m.provider, m.subject, ${effectiveStatus("m")} as status, m.created_at, m.updated_at, m.version,
   m.invited_by_provider, m.invited_by_subject, m.last_active_at,
@@ -317,6 +326,7 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
              and (?3 is null or id > ?3)
              and (?5 is null or (provider = ?5 and subject = ?6))
              and (?7 is null or ${effectiveStatus()} = ?7)
+             ${storedStatusPrefilter(options?.status)}
              and (?8 is null or rowid in (select value from json_each(?8)))
            order by id asc
            limit coalesce(?4, -1)
@@ -381,6 +391,7 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
              and (?3 is null or id > ?3)
              and (?6 is null or (provider = ?6 and subject = ?7))
              and (?8 is null or ${effectiveStatus()} = ?8)
+             ${storedStatusPrefilter(options?.status)}
              and (?9 is null or rowid in (select value from json_each(?9)))
            order by id asc
            limit coalesce(?4, -1)
@@ -424,6 +435,7 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
              and (?2 is null or uniora_ilike(provider, ?2) or uniora_ilike(subject, ?2))
              and (?3 is null or (provider = ?3 and subject = ?4))
              and (?5 is null or ${effectiveStatus()} = ?5)
+             ${storedStatusPrefilter(options?.status)}
              and (?6 is null or rowid in (select value from json_each(?6)))
            limit coalesce(?7, -1)
          )`,

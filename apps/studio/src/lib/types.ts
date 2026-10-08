@@ -109,6 +109,8 @@ export interface FeatureView {
   key: string;
   name: string;
   description?: string;
+  /** On for every organization that has no override of its own. */
+  defaultEnabled: boolean;
   /** How many organizations have it enabled. */
   enabledCount: number;
   /** A few of those organizations, for a "used by…" preview (never the full list). */
@@ -142,6 +144,8 @@ export interface InvitationRow {
   /** `pending` past its expiry is shown as `expired`. */
   status: InvitationViewStatus;
   roles: RoleRef[];
+  /** Teams offered with the invitation (the invitee joins them as a plain member on accepting). */
+  teams: { id: string; name: string }[];
   invitedBy: IdentityView;
   createdAt: string;
   expiresAt: string;
@@ -169,4 +173,22 @@ export interface TeamMemberRow {
   status: "pending" | "active" | "suspended" | "removed";
   responsibility: "owner" | "manager" | "member";
   roles: RoleRef[];
+}
+
+export interface PlatformMemberRow {
+  id: string;
+  identity: IdentityView;
+  status: "active" | "suspended";
+  roles: { id: string; name: string; isSystem: boolean }[];
+  createdAt: string;
+  statusReason?: string;
+}
+
+export interface PlatformRoleRow {
+  id: string;
+  key: string;
+  name: string;
+  description?: string;
+  isSystem: boolean;
+  permissions: string[];
 }

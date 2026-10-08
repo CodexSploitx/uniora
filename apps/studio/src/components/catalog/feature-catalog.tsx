@@ -142,6 +142,11 @@ function FeatureRow({ feature, totalOrganizations, readOnly, pending, onUnregist
         <div className="flex flex-col gap-0.5">
           <span className="font-medium">{feature.name}</span>
           <code className="text-xs text-muted-foreground">{feature.key}</code>
+          {feature.defaultEnabled && (
+            <Badge variant="info-light" size="sm" className="mt-1 self-start">
+              {t("feats.onByDefault")}
+            </Badge>
+          )}
         </div>
       </TableCell>
       <TableCell className="max-w-72 align-top whitespace-normal text-muted-foreground">{feature.description ?? "—"}</TableCell>
