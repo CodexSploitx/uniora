@@ -2,6 +2,7 @@ import type { Identity } from "../identity/types.js";
 import { randomId } from "../invitation/token.js";
 import type { FeatureChangeMeta } from "../feature/types.js";
 import { MAX_OUTBOX_PAYLOAD_BYTES } from "../outbox/repository.js";
+import { sameTeamData } from "../team/repository.js";
 import type { UnioraStorage, UnioraTransaction } from "./types.js";
 
 export interface AuditedStorageOptions {
@@ -61,7 +62,7 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
   }
 
   function wrap(scope: Scope, run: <T>(work: (tx: UnioraTransaction) => Promise<T>) => Promise<T>): UnioraTransaction {
-    const { organizations, memberships, roles, permissions, features, entitlements, supportGrants } = scope;
+    const { organizations, memberships, roles, permissions, features, entitlements, supportGrants, teams, teamMemberships } = scope;
     return {
       ...scope,
       organizations: {
@@ -305,6 +306,135 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
               await record(tx, "support_grant.revoked", grant.organizationId, { type: "support_grant", id }, { operator: grant.operator, revokedBy: input.by });
             }
             return grant;
+          }),
+      },
+      teams: {
+        ...teams,
+        create: (input) =>
+          run(async (tx) => {
+            const team = await tx.teams.create(input);
+            await record(tx, "team.created", team.organizationId, { type: "team", id: team.id }, { name: team.name, slug: team.slug });
+            return team;
+          }),
+        update: (organizationId, id, input) =>
+          run(async (tx) => {
+            const before = await tx.teams.findById(organizationId, id);
+            const updated = await tx.teams.update(organizationId, id, input);
+            if (before && before.version !== updated.version) {
+              const changed: Record<string, unknown> = {};
+              if (before.name !== updated.name) changed.name = { from: before.name, to: updated.name };
+              if (before.slug !== updated.slug) changed.slug = { from: before.slug, to: updated.slug };
+              if (before.externalId !== updated.externalId) changed.externalId = { from: before.externalId ?? null, to: updated.externalId ?? null };
+              // Metadata and settings are the host's own data, possibly large: the entry says that they changed, not what they held.
+              if (!sameTeamData(before.metadata, updated.metadata)) changed.metadata = true;
+              if (!sameTeamData(before.settings, updated.settings)) changed.settings = true;
+              await record(tx, "team.updated", organizationId, { type: "team", id }, { changed });
+            }
+            return updated;
+          }),
+        archive: (organizationId, id, input) =>
+          run(async (tx) => {
+            const before = await tx.teams.findById(organizationId, id);
+            const team = await tx.teams.archive(organizationId, id, input);
+            if (before && before.status !== team.status) {
+              await record(tx, "team.archived", organizationId, { type: "team", id }, {
+                requestedBy: `${input.actor.provider}:${input.actor.subject}`,
+                ...(team.archived?.reason !== undefined ? { reason: team.archived.reason } : {}),
+              });
+            }
+            return team;
+          }),
+        restore: (organizationId, id, input) =>
+          run(async (tx) => {
+            const before = await tx.teams.findById(organizationId, id);
+            const team = await tx.teams.restore(organizationId, id, input);
+            if (before && before.status !== team.status) {
+              await record(tx, "team.restored", organizationId, { type: "team", id }, { requestedBy: `${input.actor.provider}:${input.actor.subject}` });
+            }
+            return team;
+          }),
+        delete: (organizationId, id, input) =>
+          run(async (tx) => {
+            const before = await tx.teams.findById(organizationId, id);
+            await tx.teams.delete(organizationId, id, input);
+            await record(tx, "team.deleted", organizationId, { type: "team", id }, before ? { name: before.name, slug: before.slug } : undefined);
+          }),
+      },
+      teamMemberships: {
+        ...teamMemberships,
+        add: (input) =>
+          run(async (tx) => {
+            const before = await tx.teamMemberships.find(input.organizationId, input.teamId, input.membershipId);
+            const row = await tx.teamMemberships.add(input);
+            await record(
+              tx,
+              row.status === "pending" ? "team_member.invited" : before ? "team_member.reactivated" : "team_member.added",
+              row.organizationId,
+              { type: "team_member", id: row.id },
+              { teamId: row.teamId, membershipId: row.membershipId, responsibility: row.responsibility, roleIds: row.roleIds },
+            );
+            return row;
+          }),
+        setStatus: (organizationId, id, status, input) =>
+          run(async (tx) => {
+            const before = await tx.teamMemberships.findById(organizationId, id);
+            const row = await tx.teamMemberships.setStatus(organizationId, id, status, input);
+            if (before && before.status !== row.status) {
+              const action =
+                row.status === "active" ? "team_member.reactivated"
+                : row.status === "suspended" ? "team_member.suspended"
+                : "team_member.removed";
+              await record(tx, action, organizationId, { type: "team_member", id }, {
+                teamId: row.teamId,
+                membershipId: row.membershipId,
+                from: before.status,
+                requestedBy: `${input.actor.provider}:${input.actor.subject}`,
+                ...(row.statusChange?.reason !== undefined ? { reason: row.statusChange.reason } : {}),
+              });
+            }
+            return row;
+          }),
+        accept: (organizationId, id, input) =>
+          run(async (tx) => {
+            const before = await tx.teamMemberships.findById(organizationId, id);
+            const row = await tx.teamMemberships.accept(organizationId, id, input);
+            if (before && before.status === "pending") {
+              await record(tx, "team_member.accepted", organizationId, { type: "team_member", id }, { teamId: row.teamId, membershipId: row.membershipId, from: "pending" });
+            }
+            return row;
+          }),
+        setResponsibility: (organizationId, id, responsibility, options) =>
+          run(async (tx) => {
+            const before = await tx.teamMemberships.findById(organizationId, id);
+            const row = await tx.teamMemberships.setResponsibility(organizationId, id, responsibility, options);
+            if (before && before.responsibility !== row.responsibility) {
+              const ownerInvolved = before.responsibility === "owner" || row.responsibility === "owner";
+              await record(tx, ownerInvolved ? "team.owner_changed" : "team.manager_changed", organizationId, { type: "team_member", id }, {
+                teamId: row.teamId,
+                membershipId: row.membershipId,
+                from: before.responsibility,
+                to: row.responsibility,
+              });
+            }
+            return row;
+          }),
+        assignRole: (organizationId, id, roleId, options) =>
+          run(async (tx) => {
+            const before = await tx.teamMemberships.findById(organizationId, id);
+            const row = await tx.teamMemberships.assignRole(organizationId, id, roleId, options);
+            if (before && !before.roleIds.includes(roleId)) {
+              await record(tx, "team_member.role_assigned", organizationId, { type: "team_member", id }, { teamId: row.teamId, membershipId: row.membershipId, roleId });
+            }
+            return row;
+          }),
+        unassignRole: (organizationId, id, roleId, options) =>
+          run(async (tx) => {
+            const before = await tx.teamMemberships.findById(organizationId, id);
+            const row = await tx.teamMemberships.unassignRole(organizationId, id, roleId, options);
+            if (before?.roleIds.includes(roleId)) {
+              await record(tx, "team_member.role_unassigned", organizationId, { type: "team_member", id }, { teamId: row.teamId, membershipId: row.membershipId, roleId });
+            }
+            return row;
           }),
       },
       features: {

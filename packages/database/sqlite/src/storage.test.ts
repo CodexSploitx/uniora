@@ -1,10 +1,13 @@
 import Database from "better-sqlite3";
 import { expect, it } from "vitest";
+import { createTrustedTeamStorage } from "@uniora/core";
 import { defineStorageConformance, type StorageHarness } from "@uniora/storage-conformance";
 import { applyMigrations } from "./migrate.js";
 import { AUDIT_APPEND_ONLY_TRIGGERS } from "./migrations/0003_audit_log_integrity.js";
 import { AUDIT_CHECKPOINT_TRIGGERS } from "./migrations/0007_audit_log_retention.js";
 import { createSqliteStorage } from "./storage.js";
+
+const identity = { provider: "supabase", subject: "user-1" };
 
 let db: Database.Database;
 
@@ -21,6 +24,9 @@ const harness: StorageHarness = {
     // Children before parents: cascades need `foreign_keys = on`, which the
     // storage enables, but a plain delete in dependency order never relies on it.
     db.exec(`
+      delete from uniora_team_membership_roles;
+      delete from uniora_team_memberships;
+      delete from uniora_teams;
       delete from uniora_outbox;
       delete from uniora_support_grants;
       delete from uniora_entitlement_usage;
@@ -90,4 +96,27 @@ const harness: StorageHarness = {
   },
 };
 
-defineStorageConformance(harness);
+defineStorageConformance(harness, () => {
+  it("teams: la base de datos misma rechaza filas entre organizaciones, aunque alguien escriba SQL directo", async () => {
+    const storage = createTrustedTeamStorage(harness.storage(), { actor: identity, reason: "adapter isolation test" });
+    await storage.organizations.create({ id: "org-a", name: "A" });
+    await storage.organizations.create({ id: "org-b", name: "B" });
+    await storage.teams.create({ id: "team-a", organizationId: "org-a", name: "Equipo A" });
+    await storage.teams.create({ id: "team-b", organizationId: "org-b", name: "Equipo B" });
+    await storage.roles.create({ id: "role-b", organizationId: "org-b", name: "Rol B" });
+    await storage.memberships.create({ id: "m-a", organizationId: "org-a", identity: { provider: "p", subject: "a" } });
+    await storage.memberships.create({ id: "m-b", organizationId: "org-b", identity: { provider: "p", subject: "b" } });
+    const insert = (id: string, org: string, team: string, member: string) =>
+      db
+        .prepare(`insert into uniora_team_memberships (id, organization_id, team_id, membership_id, status, created_at, updated_at) values (?, ?, ?, ?, 'active', 'now', 'now')`)
+        .run(id, org, team, member);
+    expect(() => insert("x1", "org-b", "team-b", "m-a")).toThrow();
+    expect(() => insert("x2", "org-a", "team-b", "m-a")).toThrow();
+    expect(() => insert("x3", "org-a", "team-a", "m-b")).toThrow();
+    insert("ok", "org-a", "team-a", "m-a");
+    expect(() => db.prepare(`insert into uniora_team_membership_roles (team_membership_id, role_id, organization_id) values ('ok', 'role-b', 'org-a')`).run()).toThrow();
+    expect(() => db.prepare(`insert into uniora_team_membership_roles (team_membership_id, role_id, organization_id) values ('ok', 'role-b', 'org-b')`).run()).toThrow();
+    expect(() => db.prepare(`update uniora_team_memberships set team_id = 'team-b' where id = 'ok'`).run()).toThrow();
+    expect(() => db.prepare(`update uniora_team_memberships set organization_id = 'org-b' where id = 'ok'`).run()).toThrow();
+  });
+});

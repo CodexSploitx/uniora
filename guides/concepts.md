@@ -124,6 +124,7 @@ See [Audit log](audit-log.md).
 | Features | `storage.features` | `@uniora/core` |
 | Entitlements | `storage.entitlements` | `@uniora/core` |
 | Support grants | `storage.supportGrants` | `@uniora/core` |
+| Teams (organizational context) | `storage.teams`, `storage.teamMemberships` | `@uniora/core` |
 | Invitations | `storage.invitations` (use `createInvitationService`) | `@uniora/core` |
 | Identity links | `storage.identityLinks` | `@uniora/core` |
 | Audit log | `storage.auditLogs` | `@uniora/core` |

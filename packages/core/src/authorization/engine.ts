@@ -20,6 +20,8 @@ export interface AuthorizationDecision {
   organizationId: string;
   permission?: string;
   feature?: string;
+  /** Present when the question was asked inside a team context. */
+  teamId?: string;
   allowed: boolean;
   /** Only on `can`: what allowed it — the member's roles or a temporary support grant. */
   via?: "membership" | "support_grant";
@@ -48,6 +50,14 @@ export interface CanInput {
   identity: Identity;
   organizationId: string;
   permission: string;
+  /**
+   * Ask inside a team context (for example the team a resource belongs to). It only ever NARROWS the answer: the identity
+   * must be an active member of an active team of this organization AND hold the permission, either through its
+   * organization roles or through the roles it holds in that team. Being a member, manager or owner of the team grants
+   * nothing by itself, there is no Owner shortcut around the membership, and a support grant does not apply here.
+   * Anything else (unknown team, a team of another organization, archived, not a member, suspended or pending) is `false`.
+   */
+  teamId?: string;
 }
 
 export interface AccessCheckInput {
@@ -56,6 +66,8 @@ export interface AccessCheckInput {
   /** At least one of `permission`/`feature` is expected — see `access.check()`. */
   permission?: string;
   feature?: string;
+  /** Same team context as `CanInput.teamId`; with it, the answer also requires an active membership of that team. */
+  teamId?: string;
 }
 
 export interface AuthorizationEngine {
@@ -115,6 +127,7 @@ export function createAuthorizationEngine(
       identity: input.identity,
       organizationId: input.organizationId,
       permission: keyOf(input.permission),
+      ...(input.teamId !== undefined ? { teamId: keyOf(input.teamId) } : {}),
       allowed,
       via,
       reason: isWellFormedPermissionKey(input.permission) ? "evaluated" : "malformed_input",
@@ -145,6 +158,16 @@ export function createAuthorizationEngine(
     // A suspended or archived organization denies everyone in it, Owner included (and an unknown one, fail-closed).
     if (!(await organizationIsActive(input.organizationId))) return { allowed: false };
 
+    if (input.teamId !== undefined) {
+      // Team context only narrows: no membership of the organization, no active team membership, no answer. No support grant.
+      if (!membership || typeof input.teamId !== "string") return { allowed: false };
+      const teamRoleIds = await activeTeamRoleIds(input.organizationId, input.teamId, membership.id);
+      if (teamRoleIds === null) return { allowed: false };
+      const roleIds = [...new Set([...membership.roleIds, ...teamRoleIds])];
+      if (roleIds.length > 0 && (await membershipAllows(input, roleIds))) return { allowed: true, via: "membership" };
+      return { allowed: false };
+    }
+
     if (membership && membership.roleIds.length > 0 && (await membershipAllows(input, membership.roleIds))) {
       return { allowed: true, via: "membership" };
     }
@@ -156,6 +179,14 @@ export function createAuthorizationEngine(
       if (implying.some((key) => granted.includes(key))) return { allowed: true, via: "support_grant" };
     }
     return { allowed: false };
+  }
+
+  /** The roles the membership holds in an ACTIVE team of the organization; `null` when it is not an active member of it. */
+  async function activeTeamRoleIds(organizationId: string, teamId: string, membershipId: string): Promise<string[] | null> {
+    const team = await storage.teams.findById(organizationId, teamId);
+    if (!team || team.status !== "active") return null;
+    const row = await storage.teamMemberships.find(organizationId, teamId, membershipId);
+    return row && row.status === "active" ? row.roleIds : null;
   }
 
   async function membershipAllows(input: CanInput, roleIds: string[]): Promise<boolean> {
@@ -180,6 +211,7 @@ export function createAuthorizationEngine(
       identity: input.identity,
       organizationId: input.organizationId,
       permission: keyOf(input.permission),
+      ...(input.teamId !== undefined ? { teamId: keyOf(input.teamId) } : {}),
       feature: keyOf(input.feature),
       allowed,
       reason:
@@ -214,6 +246,7 @@ export function createAuthorizationEngine(
         identity: input.identity,
         organizationId: input.organizationId,
         permission: input.permission,
+        ...(input.teamId !== undefined ? { teamId: input.teamId } : {}),
       });
       if (!allowed) return false;
     } else {
@@ -233,6 +266,11 @@ export function createAuthorizationEngine(
       const membership = await storage.memberships.findByIdentity(input.organizationId, input.identity);
       if (membership && membership.status !== "active") return false;
       if (!(await organizationIsActive(input.organizationId))) return false;
+      if (input.teamId !== undefined) {
+        // Team context without a permission: just "is an active member of this active team".
+        if (!membership || typeof input.teamId !== "string") return false;
+        return (await activeTeamRoleIds(input.organizationId, input.teamId, membership.id)) !== null;
+      }
       if (!membership) {
         // Not a member: only someone holding an active support grant counts as "inside" the organization.
         const granted = await storage.supportGrants.activePermissions(input.organizationId, await grantIdentities(input.identity));

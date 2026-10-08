@@ -73,6 +73,20 @@ import {
 import type { SupportGrant } from "../support-grant/types.js";
 import type { SearchSupportGrantsOptions, SupportGrantRepository } from "../support-grant/repository.js";
 import { SupportGrantError, assertValidSupportGrant, grantStatus } from "../support-grant/repository.js";
+import type { Team, TeamMembership } from "../team/types.js";
+import type { SearchTeamMembersOptions, SearchTeamsOptions, TeamMembershipRepository, TeamRepository } from "../team/repository.js";
+import {
+  TeamError,
+  assertTeamMemberStatus,
+  assertTeamResponsibility,
+  assertValidAddTeamMember,
+  assertValidCreateTeam,
+  assertValidUpdateTeam,
+  isTeamMemberTransitionAllowed,
+  sameTeamData,
+  sanitizeTeamReason,
+} from "../team/repository.js";
+import { assertTeamAuthorization } from "../team/authorization.js";
 import type { UnioraStorage, UnioraTransaction } from "./types.js";
 
 function identityKey(identity: Identity): string {
@@ -679,6 +693,7 @@ export function createMemoryStorage(): UnioraStorage {
       }
 
       memberships.delete(membershipId);
+      for (const row of [...teamMemberships.values()]) if (row.membershipId === membershipId) teamMemberships.delete(row.id);
     },
   };
 
@@ -911,8 +926,9 @@ export function createMemoryStorage(): UnioraStorage {
       if (role.isSystem) throw new RoleError("Cannot delete a system role.", "role_system_protected");
       const policy = options?.members ?? "detach";
       const holders = [...memberships.values()].filter((membership) => membership.roleIds.includes(roleId));
-      if (policy === "reject" && holders.length > 0) {
-        throw new RoleError(`The role is still held by ${holders.length} membership(s).`, "role_in_use");
+      const teamHolders = [...teamMemberships.values()].filter((row) => row.roleIds.includes(roleId));
+      if (policy === "reject" && holders.length + teamHolders.length > 0) {
+        throw new RoleError(`The role is still held by ${holders.length + teamHolders.length} membership(s).`, "role_in_use");
       }
       if (typeof policy === "object") {
         const target = roles.get(policy.reassignTo);
@@ -928,6 +944,9 @@ export function createMemoryStorage(): UnioraStorage {
       for (const membership of memberships.values()) {
         const index = membership.roleIds.indexOf(roleId);
         if (index !== -1) membership.roleIds.splice(index, 1);
+      }
+      for (const row of teamMemberships.values()) {
+        if (row.roleIds.includes(roleId)) row.roleIds = row.roleIds.filter((candidate) => candidate !== roleId);
       }
     },
   };
@@ -1614,6 +1633,311 @@ export function createMemoryStorage(): UnioraStorage {
     },
   };
 
+  const teams = new Map<string, Team>();
+  const teamMemberships = new Map<string, TeamMembership>();
+  const cloneTeam = (team: Team): Team => structuredClone(team);
+  const cloneTeamMembership = (row: TeamMembership): TeamMembership => structuredClone(row);
+  const teamOf = (organizationId: string, id: string): Team | undefined => {
+    const team = teams.get(id);
+    return team && team.organizationId === organizationId ? team : undefined;
+  };
+  const requireTeam = (organizationId: string, id: string): Team => {
+    const team = teamOf(organizationId, id);
+    if (!team) throw new TeamError(`Team not found: ${id}`, "team_not_found");
+    return team;
+  };
+  const assertTeamVersion = (row: { version: number }, expectedVersion: number | undefined, code: "team_version_conflict" | "team_membership_version_conflict") => {
+    const expected = assertExpectedVersion(expectedVersion);
+    if (expected !== undefined && expected !== row.version) {
+      throw new TeamError(`The ${code === "team_version_conflict" ? "team" : "team membership"} changed (version ${row.version}, expected ${expected}).`, code);
+    }
+  };
+  const teamPage = <T extends { id: string }>(rows: T[], options: { limit?: number; after?: string }): T[] => {
+    const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+    return rows
+      .filter((row) => options.after === undefined || row.id > options.after)
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      .slice(0, limit);
+  };
+  const teamMatches = (team: Team, filter: Omit<SearchTeamsOptions, "limit" | "after">): boolean => {
+    if (team.organizationId !== filter.organizationId) return false;
+    if (filter.status !== undefined && team.status !== filter.status) return false;
+    if (filter.externalId !== undefined && team.externalId !== filter.externalId) return false;
+    const query = filter.query?.trim().toLowerCase();
+    return !query || team.name.toLowerCase().includes(query) || team.slug.includes(query);
+  };
+  const teamRepository: TeamRepository = {
+    async create(input) {
+      assertTeamAuthorization(input.authorization, { organizationId: input.organizationId, operation: "team.create" });
+      const valid = assertValidCreateTeam(input);
+      if (!organizations.has(input.organizationId)) {
+        throw new TeamError(`Organization "${input.organizationId}" does not exist.`, "team_organization_unknown");
+      }
+      if (teams.has(input.id)) throw new TeamError(`A team with id "${input.id}" already exists.`, "team_exists");
+      const inOrganization = [...teams.values()].filter((team) => team.organizationId === input.organizationId);
+      if (inOrganization.some((team) => team.slug === valid.slug)) {
+        throw new TeamError(`A team with slug "${valid.slug}" already exists in this organization.`, "team_slug_taken");
+      }
+      if (valid.externalId !== undefined && inOrganization.some((team) => team.externalId === valid.externalId)) {
+        throw new TeamError(`A team with external id "${valid.externalId}" already exists in this organization.`, "team_external_id_taken");
+      }
+      const team: Team = {
+        id: input.id,
+        organizationId: input.organizationId,
+        slug: valid.slug,
+        name: valid.name,
+        status: "active",
+        ...(valid.externalId !== undefined ? { externalId: valid.externalId } : {}),
+        metadata: valid.metadata,
+        settings: valid.settings,
+        createdAt: valid.now,
+        updatedAt: valid.now,
+        version: 1,
+      };
+      teams.set(team.id, team);
+      return cloneTeam(team);
+    },
+    async findById(organizationId, id) {
+      const team = teamOf(organizationId, id);
+      return team ? cloneTeam(team) : null;
+    },
+    async findBySlug(organizationId, slug) {
+      const team = [...teams.values()].find((candidate) => candidate.organizationId === organizationId && candidate.slug === slug);
+      return team ? cloneTeam(team) : null;
+    },
+    async findByExternalId(organizationId, externalId) {
+      const team = [...teams.values()].find((candidate) => candidate.organizationId === organizationId && candidate.externalId === externalId);
+      return team ? cloneTeam(team) : null;
+    },
+    async search(options) {
+      return teamPage([...teams.values()].filter((team) => teamMatches(team, options)), options).map(cloneTeam);
+    },
+    async count(options) {
+      return [...teams.values()].filter((team) => teamMatches(team, options)).length;
+    },
+    async update(organizationId, id, input) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "team.update" });
+      const team = requireTeam(organizationId, id);
+      const change = assertValidUpdateTeam(input);
+      assertTeamVersion(team, input.expectedVersion, "team_version_conflict");
+      if (team.status === "archived") throw new TeamError("An archived team cannot be changed; restore it first.", "team_archived");
+      const others = [...teams.values()].filter((candidate) => candidate.organizationId === organizationId && candidate.id !== id);
+      if (change.slug !== undefined && others.some((candidate) => candidate.slug === change.slug)) {
+        throw new TeamError(`A team with slug "${change.slug}" already exists in this organization.`, "team_slug_taken");
+      }
+      if (typeof change.externalId === "string" && others.some((candidate) => candidate.externalId === change.externalId)) {
+        throw new TeamError(`A team with external id "${change.externalId}" already exists in this organization.`, "team_external_id_taken");
+      }
+      const next: Team = { ...team };
+      if (change.name !== undefined) next.name = change.name;
+      if (change.slug !== undefined) next.slug = change.slug;
+      if (change.externalId === null) delete next.externalId;
+      else if (change.externalId !== undefined) next.externalId = change.externalId;
+      if (change.metadata !== undefined) next.metadata = change.metadata;
+      if (change.settings !== undefined) next.settings = change.settings;
+      if (
+        next.name === team.name &&
+        next.slug === team.slug &&
+        next.externalId === team.externalId &&
+        sameTeamData(next.metadata, team.metadata) &&
+        sameTeamData(next.settings, team.settings)
+      ) {
+        return cloneTeam(team);
+      }
+      const saved: Team = { ...next, updatedAt: new Date(), version: team.version + 1 };
+      teams.set(id, saved);
+      return cloneTeam(saved);
+    },
+    async archive(organizationId, id, input) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "team.archive", actor: input.actor });
+      const team = requireTeam(organizationId, id);
+      assertTeamVersion(team, input.expectedVersion, "team_version_conflict");
+      if (team.status === "archived") return cloneTeam(team);
+      const reason = sanitizeTeamReason(input.reason);
+      const saved: Team = {
+        ...team,
+        status: "archived",
+        archived: { at: new Date(), by: { ...input.actor }, ...(reason !== undefined ? { reason } : {}) },
+        updatedAt: new Date(),
+        version: team.version + 1,
+      };
+      teams.set(id, saved);
+      return cloneTeam(saved);
+    },
+    async restore(organizationId, id, input) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "team.restore", actor: input.actor });
+      const team = requireTeam(organizationId, id);
+      assertTeamVersion(team, input.expectedVersion, "team_version_conflict");
+      if (team.status === "active") return cloneTeam(team);
+      const { archived: _archived, ...rest } = team;
+      const saved: Team = { ...rest, status: "active", updatedAt: new Date(), version: team.version + 1 };
+      teams.set(id, saved);
+      return cloneTeam(saved);
+    },
+    async delete(organizationId, id, input) {
+      assertTeamAuthorization(input?.authorization, { organizationId, operation: "team.delete" });
+      const team = requireTeam(organizationId, id);
+      if (team.status !== "archived") throw new TeamError("Only an archived team can be deleted; archive it first.", "team_not_archived");
+      teams.delete(id);
+      for (const row of [...teamMemberships.values()]) if (row.teamId === id) teamMemberships.delete(row.id);
+    },
+  };
+
+  const teamMembershipMatches = (row: TeamMembership, filter: Omit<SearchTeamMembersOptions, "limit" | "after">): boolean => {
+    if (row.organizationId !== filter.organizationId) return false;
+    if (filter.teamId !== undefined && row.teamId !== filter.teamId) return false;
+    if (filter.membershipId !== undefined && row.membershipId !== filter.membershipId) return false;
+    if (filter.status !== undefined && row.status !== filter.status) return false;
+    if (filter.responsibility !== undefined && row.responsibility !== filter.responsibility) return false;
+    if (filter.identity !== undefined) {
+      const membership = memberships.get(row.membershipId);
+      if (!membership || !sameIdentity(membership.identity, filter.identity)) return false;
+    }
+    return true;
+  };
+  const requireTeamMembership = (organizationId: string, id: string): TeamMembership => {
+    const row = teamMemberships.get(id);
+    if (!row || row.organizationId !== organizationId) throw new TeamError(`Team membership not found: ${id}`, "team_membership_not_found");
+    return row;
+  };
+  const assertTeamRoles = (organizationId: string, roleIds: string[]): void => {
+    for (const roleId of roleIds) {
+      const role = roles.get(roleId);
+      if (!role || role.organizationId !== organizationId) {
+        throw new TeamError(`Role "${roleId}" does not exist in this organization.`, "team_role_invalid");
+      }
+      if (role.isOwnerRole) throw new TeamError("The Owner role cannot be held inside a team.", "team_role_owner_protected");
+    }
+  };
+  const teamMembershipRepository: TeamMembershipRepository = {
+    async add(input) {
+      assertTeamAuthorization(input.authorization, { organizationId: input.organizationId, operation: "member.add" });
+      const valid = assertValidAddTeamMember(input);
+      const team = requireTeam(input.organizationId, input.teamId);
+      const membership = memberships.get(input.membershipId);
+      if (!membership || membership.organizationId !== input.organizationId) {
+        throw new TeamError(`Membership "${input.membershipId}" does not exist in this organization.`, "team_member_unknown");
+      }
+      if (team.status !== "active") throw new TeamError("An archived team accepts no new members; restore it first.", "team_archived");
+      assertTeamRoles(input.organizationId, valid.roleIds);
+      const existing = [...teamMemberships.values()].find((row) => row.teamId === input.teamId && row.membershipId === input.membershipId);
+      if (existing && existing.status !== "removed") {
+        throw new TeamError("This member already belongs to the team (or has a pending invitation).", "team_membership_exists");
+      }
+      if (!existing && teamMemberships.has(input.id)) throw new TeamError(`A team membership with id "${input.id}" already exists.`, "team_membership_exists");
+      const invitedBy = input.invitedBy ? { ...input.invitedBy } : undefined;
+      const row: TeamMembership = {
+        id: existing?.id ?? input.id,
+        organizationId: input.organizationId,
+        teamId: input.teamId,
+        membershipId: input.membershipId,
+        status: valid.status,
+        responsibility: valid.responsibility,
+        roleIds: valid.roleIds,
+        createdAt: existing?.createdAt ?? valid.now,
+        updatedAt: valid.now,
+        ...(valid.status === "active" ? { joinedAt: existing?.joinedAt ?? valid.now } : existing?.joinedAt ? { joinedAt: existing.joinedAt } : {}),
+        ...(invitedBy ? { invitedBy } : {}),
+        version: (existing?.version ?? 0) + 1,
+      };
+      teamMemberships.set(row.id, row);
+      return cloneTeamMembership(row);
+    },
+    async findById(organizationId, id) {
+      const row = teamMemberships.get(id);
+      return row && row.organizationId === organizationId ? cloneTeamMembership(row) : null;
+    },
+    async find(organizationId, teamId, membershipId) {
+      const row = [...teamMemberships.values()].find(
+        (candidate) => candidate.organizationId === organizationId && candidate.teamId === teamId && candidate.membershipId === membershipId,
+      );
+      return row ? cloneTeamMembership(row) : null;
+    },
+    async search(options) {
+      return teamPage([...teamMemberships.values()].filter((row) => teamMembershipMatches(row, options)), options).map(cloneTeamMembership);
+    },
+    async count(options) {
+      return [...teamMemberships.values()].filter((row) => teamMembershipMatches(row, options)).length;
+    },
+    async setStatus(organizationId, id, status, input) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "member.status", actor: input.actor });
+      const row = requireTeamMembership(organizationId, id);
+      assertTeamMemberStatus(status);
+      assertTeamVersion(row, input.expectedVersion, "team_membership_version_conflict");
+      if (row.status === status) return cloneTeamMembership(row);
+      if (!isTeamMemberTransitionAllowed(row.status, status)) {
+        throw new TeamError(`A ${row.status} team membership cannot become ${status}.`, "team_membership_transition_invalid");
+      }
+      const reason = sanitizeTeamReason(input.reason);
+      const now = new Date();
+      const saved: TeamMembership = {
+        ...row,
+        status,
+        // Removing someone drops the roles they held in the team.
+        roleIds: status === "removed" ? [] : row.roleIds,
+        updatedAt: now,
+        ...(status === "active" && !row.joinedAt ? { joinedAt: now } : {}),
+        statusChange: { at: now, by: { ...input.actor }, ...(reason !== undefined ? { reason } : {}) },
+        version: row.version + 1,
+      };
+      teamMemberships.set(id, saved);
+      return cloneTeamMembership(saved);
+    },
+    async accept(organizationId, id, input) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "member.accept", actor: input.actor });
+      const row = requireTeamMembership(organizationId, id);
+      assertTeamVersion(row, input.expectedVersion, "team_membership_version_conflict");
+      const membership = memberships.get(row.membershipId);
+      if (!membership || !sameIdentity(membership.identity, input.actor)) {
+        throw new TeamError("Only the invited person can accept a team invitation.", "team_accept_forbidden");
+      }
+      if (row.status === "active") return cloneTeamMembership(row);
+      if (row.status !== "pending") {
+        throw new TeamError(`A ${row.status} team membership cannot be accepted.`, "team_membership_transition_invalid");
+      }
+      const now = new Date();
+      const saved: TeamMembership = {
+        ...row,
+        status: "active",
+        updatedAt: now,
+        joinedAt: row.joinedAt ?? now,
+        statusChange: { at: now, by: { ...input.actor } },
+        version: row.version + 1,
+      };
+      teamMemberships.set(id, saved);
+      return cloneTeamMembership(saved);
+    },
+    async setResponsibility(organizationId, id, responsibility, options) {
+      assertTeamAuthorization(options?.authorization, { organizationId, operation: "member.responsibility" });
+      const row = requireTeamMembership(organizationId, id);
+      assertTeamResponsibility(responsibility);
+      assertTeamVersion(row, options?.expectedVersion, "team_membership_version_conflict");
+      if (row.responsibility === responsibility) return cloneTeamMembership(row);
+      const saved: TeamMembership = { ...row, responsibility, updatedAt: new Date(), version: row.version + 1 };
+      teamMemberships.set(id, saved);
+      return cloneTeamMembership(saved);
+    },
+    async assignRole(organizationId, id, roleId, options) {
+      assertTeamAuthorization(options?.authorization, { organizationId, operation: "member.role" });
+      const row = requireTeamMembership(organizationId, id);
+      assertTeamVersion(row, options?.expectedVersion, "team_membership_version_conflict");
+      assertTeamRoles(organizationId, [roleId]);
+      if (row.roleIds.includes(roleId)) return cloneTeamMembership(row);
+      const saved: TeamMembership = { ...row, roleIds: [...row.roleIds, roleId], updatedAt: new Date(), version: row.version + 1 };
+      teamMemberships.set(id, saved);
+      return cloneTeamMembership(saved);
+    },
+    async unassignRole(organizationId, id, roleId, options) {
+      assertTeamAuthorization(options?.authorization, { organizationId, operation: "member.role" });
+      const row = requireTeamMembership(organizationId, id);
+      assertTeamVersion(row, options?.expectedVersion, "team_membership_version_conflict");
+      if (!row.roleIds.includes(roleId)) return cloneTeamMembership(row);
+      const saved: TeamMembership = { ...row, roleIds: row.roleIds.filter((candidate) => candidate !== roleId), updatedAt: new Date(), version: row.version + 1 };
+      teamMemberships.set(id, saved);
+      return cloneTeamMembership(saved);
+    },
+  };
+
   const cloneOutboxEvent = (event: OutboxEvent): OutboxEvent => ({ ...event, payload: event.payload === undefined ? undefined : structuredClone(event.payload) });
   const outboxEvents = new Map<string, OutboxEvent>();
   const outboxLeases = new Map<string, number>(); // id -> lease expiry (ms)
@@ -1724,6 +2048,8 @@ export function createMemoryStorage(): UnioraStorage {
     outbox: outboxRepository,
     entitlements: entitlementRepository,
     supportGrants: supportGrantRepository,
+    teams: teamRepository,
+    teamMemberships: teamMembershipRepository,
     async transaction<T>(callback: (tx: UnioraTransaction) => Promise<T>): Promise<T> {
       // In-memory storage has no isolation to offer; adapters with a real
       // database (e.g. Postgres) must run `callback` inside a DB transaction.
@@ -1739,6 +2065,8 @@ export function createMemoryStorage(): UnioraStorage {
         outbox: outboxRepository,
         entitlements: entitlementRepository,
         supportGrants: supportGrantRepository,
+        teams: teamRepository,
+        teamMemberships: teamMembershipRepository,
       });
     },
   };

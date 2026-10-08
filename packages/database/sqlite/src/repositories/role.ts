@@ -451,7 +451,10 @@ export function createRoleRepository(db: SqliteExecutor): RoleRepository {
         if (role.isOwnerRole) throw new RoleError("Cannot delete the protected Owner role.");
         if (role.isSystem) throw new RoleError("Cannot delete a system role.", "role_system_protected");
         if (policy === "reject") {
-          const held = await db.query(`select 1 from uniora_membership_roles where role_id = ?1 limit 1`, [roleId]);
+          const held = await db.query(
+            `select 1 from uniora_membership_roles where role_id = ?1 union all select 1 from uniora_team_membership_roles where role_id = ?1 limit 1`,
+            [roleId],
+          );
           if (held.rows.length > 0) throw new RoleError("The role is still held by at least one membership.", "role_in_use");
         } else if (typeof policy === "object") {
           const target = await findRoleHead(db, policy.reassignTo);

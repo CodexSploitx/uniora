@@ -496,7 +496,8 @@ export function createRoleRepository(db: Queryable): RoleRepository {
         const result = await db.query(
           `delete from uniora.roles r
            where r.id = $1 and not r.is_owner_role and not r.is_system
-             and not exists (select 1 from uniora.membership_roles mr where mr.role_id = r.id)`,
+             and not exists (select 1 from uniora.membership_roles mr where mr.role_id = r.id)
+             and not exists (select 1 from uniora.team_membership_roles tr where tr.role_id = r.id)`,
           [roleId],
         );
         if ((result.rowCount ?? 0) > 0) return;

@@ -19,7 +19,7 @@ Topic guides that go deeper:
 
 - [Hardening for production](hardening.md): database roles, anchoring the audit head, release settings.
 - [Row-level security](rls.md): SQL functions for your own policies.
-- [Events after commit (outbox)](outbox.md), [quotas (entitlements)](entitlements.md), [support grants](support-grants.md).
+- [Events after commit (outbox)](outbox.md), [quotas (entitlements)](entitlements.md), [support grants](support-grants.md), [teams](teams.md).
 - [SQL migrations as plain files](sql-migrations.md) and [writing your own storage backend](custom-backend.md).
 - [Roadmap](roadmap.md): what UNIORA does not do yet.
 
