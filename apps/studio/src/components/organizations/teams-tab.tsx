@@ -1,5 +1,6 @@
 "use client";
 
+import { capParams } from "@/lib/limits";
 import { IconArrowRight, IconDots, IconPlus, IconTrash, IconUsersGroup } from "@tabler/icons-react";
 import Link from "next/link";
 import { useState } from "react";
@@ -101,7 +102,7 @@ export function TeamsTab(props: TeamsTabProps) {
           />
           {!readOnly && <CreateTeamDialog organizationId={organizationId} teams={teams.filter((team) => team.status === "active")} />}
         </div>
-        <span className="text-xs text-muted-foreground">{t("teams.resultsCount", { count: total })}</span>
+        <span className="text-xs text-muted-foreground">{t("teams.resultsCount", capParams(total))}</span>
 
         {teams.length === 0 ? (
           <Empty className="border">

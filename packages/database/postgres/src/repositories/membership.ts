@@ -532,8 +532,8 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
       return counts;
     },
 
-    async countByOrganization(organizationIds: string[]) {
-      return countByOrganization(db, "memberships", organizationIds);
+    async countByOrganization(organizationIds: string[], options?: { limit?: number }) {
+      return countByOrganization(db, "memberships", organizationIds, options?.limit);
     },
 
     async assignRole(membershipId: string, roleId: string, options?: MembershipVersionOptions) {

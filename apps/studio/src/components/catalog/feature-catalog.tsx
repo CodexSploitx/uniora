@@ -1,5 +1,6 @@
 "use client";
 
+import { capParams } from "@/lib/limits";
 import { IconArrowRight, IconPlus, IconToggleRight, IconTrash } from "@tabler/icons-react";
 import Link from "next/link";
 import { useState } from "react";
@@ -69,7 +70,7 @@ export function FeatureCatalog({ features, total, totalOrganizations, query, nex
           clearKey="feats.clearSearch"
         />
         <div className="flex items-center gap-3">
-          <span className="text-sm text-muted-foreground">{t("feats.resultsCount", { count: total })}</span>
+          <span className="text-sm text-muted-foreground">{t("feats.resultsCount", capParams(total))}</span>
           {!readOnly && <RegisterFeatureDialog />}
         </div>
       </div>

@@ -114,9 +114,10 @@ export interface MembershipRepository {
   countByRole(roleIds: string[]): Promise<Record<string, number>>;
   /**
    * Members per organization for a batch of organization ids, in one call.
-   * Every requested id is present (`0` when it has none).
+   * Every requested id is present (`0` when it has none). With `limit`, each count stops there ("at least this
+   * many"), so an organization with millions of rows costs `limit` index entries.
    */
-  countByOrganization(organizationIds: string[]): Promise<Record<string, number>>;
+  countByOrganization(organizationIds: string[], options?: { limit?: number }): Promise<Record<string, number>>;
   /**
    * Assigns a REGULAR (non-Owner) role. Idempotent (no-op if already
    * assigned). Rejects (`MembershipError`) if `membershipId`/`roleId` don't

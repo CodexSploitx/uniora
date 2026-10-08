@@ -1,5 +1,6 @@
 "use client";
 
+import { capParams } from "@/lib/limits";
 import { IconArrowRight, IconTrash, IconUserPlus, IconX } from "@tabler/icons-react";
 import Link from "next/link";
 import { useState } from "react";
@@ -83,7 +84,7 @@ export function MembersTable({
           clearKey="members.clearSearch"
         />
         <div className="flex items-center gap-3">
-          <span className="text-sm text-muted-foreground">{t("members.resultsCount", { count: total })}</span>
+          <span className="text-sm text-muted-foreground">{t("members.resultsCount", capParams(total))}</span>
           {!readOnly && <AddMemberDialog organizationId={organizationId} defaultProvider={defaultProvider} />}
         </div>
       </div>

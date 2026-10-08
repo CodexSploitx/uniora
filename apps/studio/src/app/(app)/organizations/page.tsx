@@ -1,4 +1,5 @@
 import { IconArrowRight, IconBuildingSkyscraper } from "@tabler/icons-react";
+import { capParams } from "@/lib/limits";
 import Link from "next/link";
 import { CreateOrganizationDialog } from "@/components/organizations/create-organization-dialog";
 import { ListSearch } from "@/components/shared/list-search";
@@ -63,7 +64,7 @@ export default async function OrganizationsPage(props: PageProps<"/organizations
               labelKey="orgs.searchLabel"
               clearKey="orgs.clearSearch"
             />
-            <span className="text-sm text-muted-foreground">{t("orgs.resultsCount", { count: total })}</span>
+            <span className="text-sm text-muted-foreground">{t("orgs.resultsCount", capParams(total))}</span>
           </div>
 
           {organizations.length === 0 ? (

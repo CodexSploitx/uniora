@@ -4038,6 +4038,9 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         expect(await storage.memberships.count({ organizationId: "org-1", limit: 50 })).toBe(5);
         expect(await storage.memberships.count({ query: "count.io", limit: 2 })).toBe(2);
         expect(await storage.organizations.count({ limit: 1 })).toBe(1);
+        expect(await storage.memberships.countByOrganization(["org-1", "nope"], { limit: 3 })).toEqual({ "org-1": 3, nope: 0 });
+        expect(await storage.memberships.countByOrganization(["org-1", "nope"])).toEqual({ "org-1": 5, nope: 0 });
+        expect(await storage.roles.countByOrganization(["org-1"], { limit: 1 })).toEqual({ "org-1": 0 });
       });
 
       it("pages a term that matches thousands of rows, in order and without gaps", async () => {

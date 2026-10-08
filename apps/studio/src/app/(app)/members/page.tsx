@@ -1,4 +1,5 @@
 import { IconArrowRight, IconUsers } from "@tabler/icons-react";
+import { capParams } from "@/lib/limits";
 import Link from "next/link";
 import { ListSearch } from "@/components/shared/list-search";
 import { MemberRolesPopover, RoleChip } from "@/components/shared/member-roles";
@@ -49,7 +50,7 @@ export default async function MembersPage(props: PageProps<"/members">) {
               labelKey="members.searchLabel"
               clearKey="members.clearSearch"
             />
-            <span className="text-sm text-muted-foreground">{t("members.resultsCount", { count: total })}</span>
+            <span className="text-sm text-muted-foreground">{t("members.resultsCount", capParams(total))}</span>
           </div>
 
           {items.length === 0 ? (

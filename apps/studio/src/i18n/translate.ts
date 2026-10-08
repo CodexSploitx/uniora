@@ -24,6 +24,10 @@ export function createTranslator(locale: Locale, messages: Messages): Translator
       template = lookup(`${key}_${plurals.select(params.count) === "one" ? "one" : "other"}`);
     }
     template ??= lookup(key) ?? key;
-    return template.replace(/\{(\w+)\}/g, (match, name: string) => (params && name in params ? String(params[name]) : match));
+    // `countLabel` is a ready-made text for `{count}` (a capped total such as "10,000+"); `count` itself picks the plural.
+    return template.replace(/\{(\w+)\}/g, (match, name: string) => {
+      if (name === "count" && typeof params?.countLabel === "string") return params.countLabel;
+      return params && name in params ? String(params[name]) : match;
+    });
   };
 }

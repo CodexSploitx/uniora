@@ -1,7 +1,9 @@
 import "server-only";
 import type { AuditLogEntry, Organization } from "@uniora/core";
 import { databaseSchemaExists, getStorage } from "@/lib/db";
+import { TOTAL_CAP } from "@/lib/limits";
 import { requireSession } from "@/lib/session";
+import { cachedTotal } from "@/lib/totals-cache";
 import type {
   ActivityItem,
   FeatureView,
@@ -35,6 +37,12 @@ export async function isSchemaReady(): Promise<boolean> {
   schemaKnownReady = await databaseSchemaExists();
   return schemaKnownReady;
 }
+
+/** Whole-table totals are cached for a few seconds (see `cachedTotal`): a count of millions of rows is never on the request path twice. */
+const TOTALS_TTL_MS = 30_000;
+const totalOrganizations = (): Promise<number> =>
+  cachedTotal("organizations", TOTALS_TTL_MS, () => getStorage().organizations.count());
+const totalMembers = (): Promise<number> => cachedTotal("memberships", TOTALS_TTL_MS, () => getStorage().memberships.count());
 
 function toActivity(entry: AuditLogEntry, organizationName: string | undefined): ActivityItem {
   return {
@@ -74,8 +82,8 @@ async function summarizeMany(organizations: Organization[]): Promise<OrgSummary[
   const storage = getStorage();
   const ids = organizations.map((organization) => organization.id);
   const [members, roles, enabledFeatures] = await Promise.all([
-    storage.memberships.countByOrganization(ids),
-    storage.roles.countByOrganization(ids),
+    storage.memberships.countByOrganization(ids, { limit: TOTAL_CAP }),
+    storage.roles.countByOrganization(ids, { limit: TOTAL_CAP }),
     storage.features.countEnabledByOrganization(ids),
   ]);
   return organizations.map((organization) => ({
@@ -128,7 +136,7 @@ export async function getOrganizationsPage(options?: { query?: string; cursor?: 
 
   const [rows, total] = await Promise.all([
     storage.organizations.search({ limit: ORGANIZATIONS_PAGE_SIZE + 1, after, query }),
-    storage.organizations.count({ query }),
+    storage.organizations.count({ query, limit: TOTAL_CAP }),
   ]);
   const hasMore = rows.length > ORGANIZATIONS_PAGE_SIZE;
   const page = hasMore ? rows.slice(0, ORGANIZATIONS_PAGE_SIZE) : rows;
@@ -148,7 +156,7 @@ export async function getOrganizationsPage(options?: { query?: string; cursor?: 
 export async function getSidebarOrganizations(): Promise<{ items: { id: string; name: string }[]; total: number }> {
   await requireSession();
   const storage = getStorage();
-  const [rows, total] = await Promise.all([storage.organizations.search({ limit: 12 }), storage.organizations.count()]);
+  const [rows, total] = await Promise.all([storage.organizations.search({ limit: 12 }), totalOrganizations()]);
   return { items: rows.map(({ id, name }) => ({ id, name })), total };
 }
 
@@ -164,11 +172,11 @@ export async function getOverview(organizationLimit: number): Promise<OverviewDa
   const [organizationRows, organizationCount, memberCount, roleCount, permissionCount, featureCount, recentEntries] =
     await Promise.all([
       storage.organizations.search({ limit: organizationLimit }),
-      storage.organizations.count(),
-      storage.memberships.count(),
-      storage.roles.count(),
-      storage.permissions.count(),
-      storage.features.count(),
+      totalOrganizations(),
+      totalMembers(),
+      cachedTotal("roles", TOTALS_TTL_MS, () => storage.roles.count()),
+      cachedTotal("permissions", TOTALS_TTL_MS, () => storage.permissions.count()),
+      cachedTotal("features", TOTALS_TTL_MS, () => storage.features.count()),
       storage.auditLogs.listRecent({ limit: 8 }),
     ]);
 
@@ -211,7 +219,7 @@ export async function getOrgHeader(id: string): Promise<OrgHeader | null> {
   if (!organization) return null;
 
   const [memberCount, roleCount, featuresEnabled, featuresTotal] = await Promise.all([
-    storage.memberships.count({ organizationId: id }),
+    storage.memberships.count({ organizationId: id, limit: TOTAL_CAP }),
     storage.roles.count({ organizationId: id }),
     storage.features.count({ enabledIn: id }),
     storage.features.count(),
@@ -269,7 +277,7 @@ export async function getOrgMembersPage(
       query,
       rolesPerMember: ROLES_PREVIEW,
     }),
-    storage.memberships.count({ organizationId, query }),
+    storage.memberships.count({ organizationId, query, limit: TOTAL_CAP }),
   ]);
   const { page, hasMore } = splitPage(rows, MEMBERS_PAGE_SIZE);
   // The Owner role always sorts first in a member's preview, so it is visible whenever they hold it.
@@ -303,7 +311,7 @@ export async function getMembersPage(options?: { query?: string; cursor?: string
       query,
       rolesPerMember: ROLES_PREVIEW,
     }),
-    storage.memberships.count({ query }),
+    query ? storage.memberships.count({ query, limit: TOTAL_CAP }) : totalMembers(),
   ]);
   const { page, hasMore } = splitPage(rows, MEMBERS_PAGE_SIZE);
   const organizations = await storage.organizations.findByIds([...new Set(page.map((membership) => membership.organizationId))]);
@@ -475,7 +483,7 @@ export async function getMemberHeader(membershipId: string): Promise<MemberHeade
     storage.roles.count({ organizationId, heldBy: membershipId, isOwnerRole: true }),
     storage.features.count({ enabledIn: organizationId }),
     storage.memberships.search({ identity: member.identity, limit: OTHER_ORGANIZATIONS_PREVIEW + 1 }),
-    storage.memberships.count({ identity: member.identity }),
+    storage.memberships.count({ identity: member.identity, limit: TOTAL_CAP }),
   ]);
   if (!organization) return null;
 
@@ -749,10 +757,10 @@ export async function getFeaturesPage(options?: { query?: string; cursor?: strin
   const query = options?.query?.trim() || undefined;
   const after = options?.cursor && options.cursor.length <= MAX_CURSOR_LENGTH ? options.cursor : undefined;
 
-  const [rows, total, totalOrganizations] = await Promise.all([
+  const [rows, total, organizationTotal] = await Promise.all([
     storage.features.search({ limit: FEATURES_PAGE_SIZE + 1, after, query }),
     storage.features.count({ query }),
-    storage.organizations.count(),
+    totalOrganizations(),
   ]);
   const hasMore = rows.length > FEATURES_PAGE_SIZE;
   const page = hasMore ? rows.slice(0, FEATURES_PAGE_SIZE) : rows;
@@ -780,7 +788,7 @@ export async function getFeaturesPage(options?: { query?: string; cursor?: strin
     }),
     nextCursor: hasMore ? page[page.length - 1]!.key : null,
     total,
-    totalOrganizations,
+    totalOrganizations: organizationTotal,
   };
 }
 
