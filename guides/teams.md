@@ -17,6 +17,7 @@ A team is **context, not authority**. Being a member, a manager or the owner of 
 - **Responsibility** (`owner`, `manager`, `member`) is a label that says who looks after the team. It is not a permission and nothing in UNIORA grants anything because of it.
 - **Team roles**: a team membership can hold roles of the same organization (`roleIds`) that apply inside that team only (Juan is a Manager in Barcelona and a plain member in Madrid). The organization's Owner role can never be held this way. Removing someone from a team drops their roles there.
 - **Lifecycle**: `active` → `archived` (kept for the record, no changes, no new members) → `restore`, or `delete` (only an archived team; it removes its team memberships, never the audit trail).
+- **Hierarchy (optional)**: `parentId` nests a team under another **active** team of the same organization (a branch inside a region, a squad inside a department), at most 8 levels deep and never in a loop (`team_parent_invalid`, `team_cycle`, `team_too_deep`). It is organizational only: a parent grants and inherits nothing, `can({ teamId })` never looks at it, and belonging to a parent says nothing about its sub-teams. `teams.ancestors(organizationId, id)` (top-level team first), `teams.descendants(organizationId, id)` and `search({ organizationId, parentId })` (`null` = top-level teams) read the tree; `update({ parentId })` moves a team with everything below it, `parentId: null` makes it top-level. A team with active sub-teams cannot be archived, one with any sub-team cannot be deleted (`team_has_children`), and a team cannot be restored under an archived parent. On the databases `parent_id` has a foreign key that includes the organization (Postgres) or a trigger that refuses a parent of another organization (SQLite).
 - **Metadata and settings**: free-form JSON objects (at most 16 KB, plain JSON, 8 levels) that UNIORA stores and never interprets. `externalId` links the team to your ERP, CRM or HR system.
 
 ```ts
@@ -89,6 +90,10 @@ await system.teams.create({ id, organizationId, name: "Barcelona", externalId: "
 ```
 
 It keeps every other rule (isolation, lifecycle, validation, versions) and the audit trail; it only skips the permission check, which is why it is a separate, greppable function. What remains out of reach for any library is code that runs SQL against your database by hand; even then, the database refuses rows that mix organizations.
+
+### Hierarchy through the service
+
+Creating a sub-team needs `teams.manage` **in the parent team** (or organization-wide), so a regional manager can open branches under their own region and nowhere else; a top-level team needs the organization-wide grant. Moving a team needs `teams.manage` on the team **and** on the destination parent (the organization-wide grant to take it to the top level). Tree changes of one organization are serialized with an advisory lock, so two moves that are fine alone cannot form a loop together.
 
 ## Team as context for `can`
 

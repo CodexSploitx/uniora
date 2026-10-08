@@ -20,6 +20,10 @@ export type TeamErrorCode =
   | "team_not_archived"
   | "team_version_conflict"
   | "team_invalid"
+  | "team_parent_invalid"
+  | "team_cycle"
+  | "team_too_deep"
+  | "team_has_children"
   | "team_membership_not_found"
   | "team_membership_exists"
   | "team_membership_invalid"
@@ -44,6 +48,31 @@ export const MAX_TEAM_EXTERNAL_ID_LENGTH = 200;
 export const MAX_TEAM_DATA_BYTES = 16 * 1024;
 export const MAX_TEAM_REASON_LENGTH = 500;
 export const MAX_TEAM_MEMBER_ROLES = 50;
+/** Levels in a team tree, counting the top-level team as 1. */
+export const MAX_TEAM_DEPTH = 8;
+
+/**
+ * What a backend learned about the place a team is about to take in the tree; `assertTeamPlacement` turns it into the same
+ * stable error everywhere. `parent` is `null` when the parent does not exist in the organization.
+ */
+export interface TeamPlacementFacts {
+  selfId: string | null;
+  parentId: string;
+  parent: { status: TeamStatus; depth: number } | null;
+  /** The team being moved is the parent itself, or one of the parent's ancestors (so the move would close a loop). */
+  loop: boolean;
+  /** Levels below the team being moved (0 for a leaf; always 0 for a team that is being created). */
+  subtreeHeight: number;
+}
+
+export function assertTeamPlacement(facts: TeamPlacementFacts): void {
+  if (!facts.parent) throw new TeamError(`Parent team not found: ${facts.parentId}`, "team_parent_invalid");
+  if (facts.loop) throw new TeamError("A team cannot be placed under itself or under one of its own sub-teams.", "team_cycle");
+  if (facts.parent.status !== "active") throw new TeamError("An archived team cannot get sub-teams; restore it first.", "team_parent_invalid");
+  if (facts.parent.depth + 1 + facts.subtreeHeight > MAX_TEAM_DEPTH) {
+    throw new TeamError(`Teams can be nested at most ${MAX_TEAM_DEPTH} levels deep.`, "team_too_deep");
+  }
+}
 
 export interface CreateTeamInput {
   /** Proof that the change is authorized (see `TeamAuthorization`). */
@@ -55,6 +84,8 @@ export interface CreateTeamInput {
   /** Derived from the name when omitted. */
   slug?: string;
   externalId?: string;
+  /** An ACTIVE team of the same organization to nest this one under. Omit for a top-level team. */
+  parentId?: string;
   metadata?: TeamData;
   settings?: TeamData;
   now?: Date;
@@ -66,6 +97,8 @@ export interface UpdateTeamInput {
   slug?: string;
   /** A string sets it; `null` clears it. */
   externalId?: string | null;
+  /** Moves the team (with everything under it) below another ACTIVE team of the organization; `null` makes it top-level. */
+  parentId?: string | null;
   /** Replaces the whole metadata object. */
   metadata?: TeamData;
   /** Replaces the whole settings object. */
@@ -93,6 +126,8 @@ export interface SearchTeamsOptions {
   /** Case-insensitive substring of the name or the slug. */
   query?: string;
   externalId?: string;
+  /** The direct sub-teams of this team; `null` for the top-level teams; omitted for all of them. */
+  parentId?: string | null;
   limit?: number;
   /** Keyset cursor: the `id` of the last team of the previous page; results are ordered by `id`. */
   after?: string;
@@ -110,13 +145,18 @@ export interface TeamRepository {
   findByExternalId(organizationId: string, externalId: string): Promise<Team | null>;
   search(options: SearchTeamsOptions): Promise<Team[]>;
   count(options: Omit<SearchTeamsOptions, "limit" | "after">): Promise<number>;
-  /** Changes an ACTIVE team (`team_archived` otherwise). A call that changes nothing keeps the version. Empty input: `team_update_empty`. */
+  /** The chain above a team, top-level team first, the team itself excluded. Empty for a top-level team. */
+  ancestors(organizationId: string, id: string): Promise<Team[]>;
+  /** Every team below this one, at any depth, ordered by `id`. */
+  descendants(organizationId: string, id: string): Promise<Team[]>;
+  /**
+   * Changes an ACTIVE team (`team_archived` otherwise). A call that changes nothing keeps the version. Empty input: `team_update_empty`. A new `parentId` is checked (`team_parent_invalid`, `team_cycle`, `team_too_deep`). */
   update(organizationId: string, id: string, input: UpdateTeamInput): Promise<Team>;
-  /** Idempotent. An archived team keeps its members and history but cannot be changed or joined until it is restored. */
+  /** Idempotent. An archived team keeps its members and history but cannot be changed or joined until it is restored. A team that still has active sub-teams cannot be archived (`team_has_children`). */
   archive(organizationId: string, id: string, input: ArchiveTeamInput): Promise<Team>;
-  /** Idempotent. */
+  /** Idempotent. Under an archived parent it fails (`team_parent_invalid`): restore the parent first. */
   restore(organizationId: string, id: string, input: RestoreTeamInput): Promise<Team>;
-  /** Permanently removes an ARCHIVED team and its team memberships (`team_not_archived` otherwise). The audit trail stays. */
+  /** Permanently removes an ARCHIVED team and its team memberships (`team_not_archived` otherwise), and only one without sub-teams (`team_has_children`: move or delete them first). The audit trail stays. */
   delete(organizationId: string, id: string, input: { authorization: TeamAuthorization }): Promise<void>;
 }
 
@@ -317,6 +357,7 @@ export function assertValidCreateTeam(input: CreateTeamInput): {
   name: string;
   slug: string;
   externalId?: string;
+  parentId?: string;
   metadata: TeamData;
   settings: TeamData;
   now: Date;
@@ -324,7 +365,9 @@ export function assertValidCreateTeam(input: CreateTeamInput): {
   assertTeamId(input.id);
   assertTeamId(input.organizationId, "organization id");
   const name = sanitizeTeamName(input.name);
+  if (input.parentId !== undefined) assertTeamId(input.parentId, "parent team id");
   return {
+    ...(input.parentId !== undefined ? { parentId: input.parentId } : {}),
     name,
     slug: resolveTeamSlug(name, input.slug),
     externalId: input.externalId === undefined ? undefined : sanitizeTeamExternalId(input.externalId),
@@ -339,6 +382,7 @@ export interface ValidTeamUpdate {
   name?: string;
   slug?: string;
   externalId?: string | null;
+  parentId?: string | null;
   metadata?: TeamData;
   settings?: TeamData;
 }
@@ -348,6 +392,10 @@ export function assertValidUpdateTeam(input: UpdateTeamInput): ValidTeamUpdate {
   if (input.name !== undefined) update.name = sanitizeTeamName(input.name);
   if (input.slug !== undefined) update.slug = resolveTeamSlug("", input.slug);
   if (input.externalId !== undefined) update.externalId = input.externalId === null ? null : sanitizeTeamExternalId(input.externalId);
+  if (input.parentId !== undefined) {
+    if (input.parentId !== null) assertTeamId(input.parentId, "parent team id");
+    update.parentId = input.parentId;
+  }
   if (input.metadata !== undefined) update.metadata = sanitizeTeamData(input.metadata, "metadata");
   if (input.settings !== undefined) update.settings = sanitizeTeamData(input.settings, "settings");
   if (Object.keys(update).length === 0) throw new TeamError("Nothing to update.", "team_update_empty");

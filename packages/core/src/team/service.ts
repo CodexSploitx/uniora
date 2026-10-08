@@ -92,6 +92,7 @@ export interface TeamService {
   moveMember(input: MoveTeamMemberInput): Promise<TeamMembership>;
 }
 
+const treeLock = (organizationId: string) => `uniora:team-tree:${organizationId}`;
 const forbidden = (what: string) => new TeamError(`You are not allowed to ${what}.`, "team_forbidden");
 
 export function createTeamService(options: TeamServiceOptions): TeamService {
@@ -161,25 +162,38 @@ export function createTeamService(options: TeamServiceOptions): TeamService {
   return {
     createTeam: ({ actor, ...input }) =>
       run(actor, async (ctx) => {
-        await require(ctx, input.organizationId, keys.manage, "create teams");
+        // A sub-team may be created by whoever manages its parent team; a top-level team needs the organization-wide grant.
+        await require(ctx, input.organizationId, keys.manage, input.parentId === undefined ? "create teams" : "create teams under this team", input.parentId);
+        if (input.parentId !== undefined) await ctx.tx.lock?.(treeLock(input.organizationId));
         return ctx.tx.teams.create({ ...input, authorization: grant(ctx, input.organizationId, "team.create") });
       }),
 
     updateTeam: ({ actor, organizationId, teamId, ...change }) =>
       run(actor, async (ctx) => {
         await require(ctx, organizationId, keys.manage, "change this team", teamId);
+        if (change.parentId !== undefined) {
+          // Moving a team is also putting it somewhere: the destination must be yours to manage (or, for a top-level team, the organization's).
+          const current = await ctx.tx.teams.findById(organizationId, teamId);
+          if (current && (current.parentId ?? null) !== change.parentId) {
+            // Two moves in a tree can each be fine alone and form a loop together: serialize every change of the tree of an organization.
+            await ctx.tx.lock?.(treeLock(organizationId));
+            await require(ctx, organizationId, keys.manage, "place a team there", change.parentId ?? undefined);
+          }
+        }
         return ctx.tx.teams.update(organizationId, teamId, { ...change, authorization: grant(ctx, organizationId, "team.update") });
       }),
 
     archiveTeam: ({ actor, organizationId, teamId, ...rest }) =>
       run(actor, async (ctx) => {
         await require(ctx, organizationId, keys.manage, "archive this team", teamId);
+        await ctx.tx.lock?.(treeLock(organizationId));
         return ctx.tx.teams.archive(organizationId, teamId, { ...rest, actor, authorization: grant(ctx, organizationId, "team.archive") });
       }),
 
     restoreTeam: ({ actor, organizationId, teamId, ...rest }) =>
       run(actor, async (ctx) => {
         await require(ctx, organizationId, keys.manage, "restore this team", teamId);
+        await ctx.tx.lock?.(treeLock(organizationId));
         return ctx.tx.teams.restore(organizationId, teamId, { ...rest, actor, authorization: grant(ctx, organizationId, "team.restore") });
       }),
 

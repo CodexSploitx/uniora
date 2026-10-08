@@ -313,7 +313,11 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
         create: (input) =>
           run(async (tx) => {
             const team = await tx.teams.create(input);
-            await record(tx, "team.created", team.organizationId, { type: "team", id: team.id }, { name: team.name, slug: team.slug });
+            await record(tx, "team.created", team.organizationId, { type: "team", id: team.id }, {
+              name: team.name,
+              slug: team.slug,
+              ...(team.parentId !== undefined ? { parentId: team.parentId } : {}),
+            });
             return team;
           }),
         update: (organizationId, id, input) =>
@@ -326,6 +330,7 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
               if (before.slug !== updated.slug) changed.slug = { from: before.slug, to: updated.slug };
               if (before.externalId !== updated.externalId) changed.externalId = { from: before.externalId ?? null, to: updated.externalId ?? null };
               // Metadata and settings are the host's own data, possibly large: the entry says that they changed, not what they held.
+              if (before.parentId !== updated.parentId) changed.parentId = { from: before.parentId ?? null, to: updated.parentId ?? null };
               if (!sameTeamData(before.metadata, updated.metadata)) changed.metadata = true;
               if (!sameTeamData(before.settings, updated.settings)) changed.settings = true;
               await record(tx, "team.updated", organizationId, { type: "team", id }, { changed });
