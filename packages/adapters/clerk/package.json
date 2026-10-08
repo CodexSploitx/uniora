@@ -1,6 +1,6 @@
 {
   "name": "@uniora/clerk",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Clerk adapter for @uniora/core: turns a Clerk session token into an Identity",
   "license": "PolyForm-Shield-1.0.0",
   "keywords": [

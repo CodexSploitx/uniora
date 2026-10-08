@@ -4,6 +4,14 @@ All notable changes to UNIORA. Packages are released in lockstep, so one version
 
 ## Unreleased
 
+## 0.6.1 - 2026-10-08
+
+No migrations. Nothing breaks existing code.
+
+### Fixed
+
+- **Deleting the last Owner always reports `last_owner`.** `memberships.delete` and `unassignOwnerRole` on the organization's last Owner (active, or the only one left) now throw `MembershipError` with the explicit code `last_owner` in the memory, PostgreSQL and SQLite backends, instead of relying on the code being inferred from the message; only an id that does not exist is `membership_not_found`. On PostgreSQL the verdict of `delete` (deleted / refused as the last Owner / never existed) is now read in the same statement, so it can never come from a different snapshot than the refusal. The conformance suite pins it for every backend: through the plain storage, inside `storage.transaction`, through `createAuditedStorage`, after a block attempt, and with two Owners deleted at once.
+
 ## 0.6.0 - 2026-10-08
 
 Includes new migrations: Postgres `0037`–`0038`, SQLite `0022`–`0023` (run `uniora migrate`). Nothing here breaks existing code: the platform scope is a separate `PlatformStorage`.

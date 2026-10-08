@@ -669,6 +669,7 @@ export function createMemoryStorage(): UnioraStorage {
       if (isLastOwnerRoleHolder(roleId, membershipId)) {
         throw new MembershipError(
           "Cannot remove the organization's last Owner — every organization must keep at least one.",
+          "last_owner",
         );
       }
 
@@ -706,6 +707,7 @@ export function createMemoryStorage(): UnioraStorage {
       if (wouldOrphanOrg) {
         throw new MembershipError(
           "Cannot remove the organization's last Owner — every organization must keep at least one.",
+          "last_owner",
         );
       }
 
