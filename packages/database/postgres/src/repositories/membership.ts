@@ -16,7 +16,7 @@ import { MembershipError, assertBlockUntil, assertExpectedVersion, sanitizeBlock
 import type { Queryable } from "../queryable.js";
 import { countByOrganization } from "../pg-counts.js";
 import { toLikePattern } from "../pg-like.js";
-import { searchCandidates } from "../pg-search.js";
+import { searchCandidates, walkCount } from "../pg-search.js";
 import { isUniqueViolation, violatedConstraint } from "../pg-errors.js";
 
 /** Postgres error code for a serializable-transaction conflict (SSI) — same constant as `identity-link.ts`. */
@@ -63,6 +63,12 @@ function effectiveStatus(alias?: string): string {
  */
 function storedStatusPrefilter(status: MembershipStatus | undefined): string {
   return status === "blocked" || status === "suspended" ? "and status = 'blocked'" : "";
+}
+
+/** A page can be found by walking the table in id order only when nothing but the text and the organization filters it. */
+function pageHint(options?: SearchMembershipsOptions): { after?: string; limit: number } | undefined {
+  if (!options?.limit || options.identity || options.status) return undefined;
+  return { after: options.after, limit: options.limit };
 }
 
 /** Columns of `uniora.memberships` a `Membership` needs, qualified with the alias `m`. */
@@ -407,7 +413,7 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
 
     async search(options?: SearchMembershipsOptions) {
       const query = options?.query?.trim();
-      const candidates = await searchCandidates(db, "memberships", query, options?.organizationId);
+      const candidates = await searchCandidates(db, "memberships", query, options?.organizationId, pageHint(options));
       // Page the memberships FIRST (index-ordered by id, limited), and only
       // then join/aggregate their roles — so the cost is one page of rows,
       // not "every matching member joined to its roles".
@@ -439,7 +445,7 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
 
     async searchListing(options: SearchMembershipsOptions & { rolesPerMember: number }) {
       const query = options.query?.trim();
-      const candidates = await searchCandidates(db, "memberships", query, options.organizationId);
+      const candidates = await searchCandidates(db, "memberships", query, options.organizationId, pageHint(options));
       interface ListingRow {
         id: string;
         organization_id: string;
@@ -513,6 +519,10 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
 
     async count(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus; limit?: number }) {
       const query = options?.query?.trim();
+      // A common term reaches the cap within the first rows of the table: no need to ask the index at all.
+      if (query && options?.limit && !options.identity && !options.status) {
+        if ((await walkCount(db, query, options.organizationId, options.limit)) >= options.limit) return options.limit;
+      }
       const candidates = await searchCandidates(db, "memberships", query, options?.organizationId);
       // With `limit`, counting stops there, so a filter matching millions of rows costs a page of work.
       const result = await db.query<{ count: string }>(
