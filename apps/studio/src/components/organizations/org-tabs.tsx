@@ -2,7 +2,7 @@ import Link from "next/link";
 import { getT } from "@/i18n/server";
 import type { OrgHeader } from "@/lib/types";
 
-export const ORG_TABS = ["members", "roles", "features", "invitations", "activity"] as const;
+export const ORG_TABS = ["members", "roles", "teams", "features", "invitations", "activity"] as const;
 export type OrgTab = (typeof ORG_TABS)[number];
 
 export function parseOrgTab(value: string | undefined): OrgTab {
@@ -19,6 +19,7 @@ export async function OrgTabs({ organizationId, active, header }: { organization
   const labels: Record<OrgTab, string> = {
     members: t("tabs.members", { count: header.memberCount }),
     roles: t("tabs.roles", { count: header.roleCount }),
+    teams: t("tabs.teams"),
     features: t("tabs.features", { enabled: header.featuresEnabled, total: header.featuresTotal }),
     invitations: t("tabs.invitations"),
     activity: t("tabs.activity"),

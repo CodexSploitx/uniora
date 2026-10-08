@@ -7,6 +7,7 @@ import { OrgFeaturesList } from "@/components/organizations/org-features-list";
 import { OrgTabs, parseOrgTab } from "@/components/organizations/org-tabs";
 import { RenameOrganizationDialog } from "@/components/organizations/rename-organization-dialog";
 import { RolesTab } from "@/components/organizations/roles-tab";
+import { TeamsTab } from "@/components/organizations/teams-tab";
 import { ActivityFeed } from "@/components/shared/activity-feed";
 import { CopyButton } from "@/components/shared/copy-button";
 import { PageHeader } from "@/components/shell/page-header";
@@ -22,7 +23,9 @@ import {
   getOrgInvitationsPage,
   getOrgMembersPage,
   getOrgRolesPage,
+  getOrgTeamsPage,
   getRolePermissionsPage,
+  getTeamDetail,
 } from "@/lib/queries";
 import { getInvitationSetup, type MailStatus } from "@/lib/invitations";
 import { getDefaultAuthProvider, isReadOnly } from "@/lib/session";
@@ -88,6 +91,17 @@ export default async function OrganizationPage(props: PageProps<"/organizations/
           permissionQuery={param(searchParams.pq) ?? ""}
           permissionAfter={param(searchParams.pafter)}
           grantedOnly={param(searchParams.pshow) === "granted"}
+        />
+      )}
+      {tab === "teams" && (
+        <TeamsSection
+          organizationId={organization.id}
+          orgPath={orgPath}
+          readOnly={readOnly}
+          q={q}
+          after={after}
+          teamId={param(searchParams.team)}
+          memberAfter={param(searchParams.mafter)}
         />
       )}
       {tab === "features" && (
@@ -172,6 +186,27 @@ async function RolesSection(props: {
             }
           : null
       }
+    />
+  );
+}
+
+async function TeamsSection(props: { organizationId: string; orgPath: string; readOnly: boolean; q: string; after?: string; teamId?: string; memberAfter?: string }) {
+  const page = await getOrgTeamsPage(props.organizationId, { query: props.q, cursor: props.after });
+  // No team chosen yet -> show the first one, so the panel is never empty when teams exist.
+  const selectedTeamId = props.teamId ?? page.items[0]?.id ?? null;
+  const detail = selectedTeamId ? await getTeamDetail(props.organizationId, selectedTeamId, { cursor: props.memberAfter }) : null;
+  return (
+    <TeamsTab
+      organizationId={props.organizationId}
+      orgPath={props.orgPath}
+      readOnly={props.readOnly}
+      teams={page.items}
+      total={page.total}
+      query={props.q}
+      nextCursor={page.nextCursor}
+      selectedTeamId={detail ? selectedTeamId : null}
+      detail={detail}
+      defaultProvider={getDefaultAuthProvider()}
     />
   );
 }

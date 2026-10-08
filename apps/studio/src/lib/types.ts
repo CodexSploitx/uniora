@@ -141,3 +141,26 @@ export interface InvitationRow {
   expiresAt: string;
   delivery: { status: "pending" | "sent" | "failed"; sends: number; lastError?: string };
 }
+
+/** A team as Studio lists it: counts and the parent's name only, never its members or data. */
+export interface TeamRow {
+  id: string;
+  name: string;
+  slug: string;
+  status: "active" | "archived";
+  externalId?: string;
+  parent?: { id: string; name: string };
+  /** Active members of the team. */
+  memberCount: number;
+  childCount: number;
+}
+
+export interface TeamMemberRow {
+  /** The team membership id. */
+  id: string;
+  membershipId: string;
+  identity: IdentityView;
+  status: "pending" | "active" | "suspended" | "removed";
+  responsibility: "owner" | "manager" | "member";
+  roles: RoleRef[];
+}
