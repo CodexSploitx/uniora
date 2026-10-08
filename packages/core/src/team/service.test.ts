@@ -180,3 +180,54 @@ describe("team service: nobody changes team without permission", () => {
     expect(entries[0]).toMatchObject({ action: "team_member.added", actor: hr });
   });
 });
+
+describe("team hierarchy: organizational only", () => {
+  async function seedTree() {
+    const ctx = await seed();
+    await ctx.storage.roles.create({ id: "regional", organizationId: "org", name: "Regional", permissionKeys: [TEAM_PERMISSIONS.manage, "vehicles.read"] });
+    await ctx.storage.teamMemberships.assignRole("org", "tm-juan", "regional", {});
+    return ctx;
+  }
+
+  it("whoever manages a team can create sub-teams under it, but nowhere else", async () => {
+    const { service } = await seedTree();
+    expect(await code(service.createTeam({ actor: juan, id: "bcn-1", organizationId: "org", name: "Eixample", parentId: "bcn" }))).toBe("ok");
+    expect(await code(service.createTeam({ actor: juan, id: "mad-1", organizationId: "org", name: "Retiro", parentId: "mad" }))).toBe("team_forbidden");
+    expect(await code(service.createTeam({ actor: juan, id: "top", organizationId: "org", name: "Top" }))).toBe("team_forbidden");
+    expect(await code(service.createTeam({ actor: luis, id: "luis-1", organizationId: "org", name: "Mine", parentId: "mad" }))).toBe("team_forbidden");
+  });
+
+  it("moving a team needs to manage it AND the destination; taking it to the top needs the organization-wide grant", async () => {
+    const { service } = await seedTree();
+    await service.createTeam({ actor: hr, id: "bcn-1", organizationId: "org", name: "Eixample", parentId: "bcn" });
+    await service.createTeam({ actor: hr, id: "bcn-2", organizationId: "org", name: "Gracia", parentId: "bcn" });
+    const move = (actor: typeof juan, teamId: string, parentId: string | null) => service.updateTeam({ actor, organizationId: "org", teamId, parentId });
+
+    expect(await code(move(juan, "bcn-1", "mad"))).toBe("team_forbidden");
+    expect(await code(move(juan, "bcn-1", null))).toBe("team_forbidden");
+    expect(await code(move(juan, "bcn-1", "bcn-2"))).toBe("team_forbidden"); // manages bcn, not bcn-2: no inheritance
+    expect(await code(move(hr, "bcn-1", "bcn-2"))).toBe("ok");
+    expect(await code(move(hr, "bcn", "bcn-1"))).toBe("team_cycle");
+    expect(await code(move(hr, "bcn-1", null))).toBe("ok");
+  });
+
+  it("a parent grants and inherits nothing: team context and roles stay inside the very team", async () => {
+    const { service, engine } = await seedTree();
+    await service.createTeam({ actor: hr, id: "bcn-1", organizationId: "org", name: "Eixample", parentId: "bcn" });
+    const can = (identity: typeof juan, teamId: string) => engine.can({ identity, organizationId: "org", permission: "vehicles.read", teamId });
+    expect(await can(juan, "bcn")).toBe(true);
+    expect(await can(juan, "bcn-1")).toBe(false); // member of the parent, not of the child
+    expect(await engine.can({ identity: juan, organizationId: "org", permission: TEAM_PERMISSIONS.manage, teamId: "bcn-1" })).toBe(false);
+  });
+
+  it("archive and restore respect the tree, and the audit log records the move", async () => {
+    const { service, raw } = await seedTree();
+    await service.createTeam({ actor: hr, id: "bcn-1", organizationId: "org", name: "Eixample", parentId: "bcn" });
+    expect(await code(service.archiveTeam({ actor: hr, organizationId: "org", teamId: "bcn" }))).toBe("team_has_children");
+    await service.updateTeam({ actor: hr, organizationId: "org", teamId: "bcn-1", parentId: "mad" });
+    expect(await code(service.archiveTeam({ actor: hr, organizationId: "org", teamId: "bcn" }))).toBe("ok");
+    const log = await raw.auditLogs.listByOrganization("org");
+    const moved = log.find((entry) => entry.action === "team.updated" && entry.target?.id === "bcn-1");
+    expect(JSON.stringify(moved?.metadata)).toContain("parentId");
+  });
+});

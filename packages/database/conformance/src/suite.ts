@@ -2103,6 +2103,94 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         await storage.teams.create({ id: "t-other", organizationId: "org-2", name: "Barcelona Sales", externalId: "x1" });
       });
 
+      describe("jerarquía de equipos", () => {
+        const codeOf = (promise: Promise<unknown>) =>
+          promise.then(() => "ok", (error: unknown) => (error instanceof TeamError ? error.code : String(error)));
+        const node = (storage: Awaited<ReturnType<typeof seed>>, id: string, parentId?: string, organizationId = "org-1") =>
+          storage.teams.create({ id, organizationId, name: id, ...(parentId !== undefined ? { parentId } : {}) });
+
+        it("anida equipos, y lista ancestros, descendientes y subequipos directos", async () => {
+          const storage = await seed();
+          await node(storage, "region");
+          expect((await node(storage, "branch", "region")).parentId).toBe("region");
+          await node(storage, "squad", "branch");
+          await node(storage, "other-branch", "region");
+          expect((await storage.teams.findById("org-1", "squad"))?.parentId).toBe("branch");
+          expect((await storage.teams.findById("org-1", "region"))?.parentId).toBeUndefined();
+
+          expect((await storage.teams.ancestors("org-1", "squad")).map((t) => t.id)).toEqual(["region", "branch"]);
+          expect(await storage.teams.ancestors("org-1", "region")).toEqual([]);
+          expect((await storage.teams.descendants("org-1", "region")).map((t) => t.id)).toEqual(["branch", "other-branch", "squad"]);
+          expect((await storage.teams.search({ organizationId: "org-1", parentId: "region" })).map((t) => t.id)).toEqual(["branch", "other-branch"]);
+          expect((await storage.teams.search({ organizationId: "org-1", parentId: null })).map((t) => t.id)).toEqual(["region"]);
+          expect(await storage.teams.count({ organizationId: "org-1", parentId: "branch" })).toBe(1);
+          // Otra organización no ve el árbol.
+          expect(await codeOf(storage.teams.ancestors("org-2", "squad"))).toBe("team_not_found");
+          expect(await codeOf(storage.teams.descendants("org-2", "region"))).toBe("team_not_found");
+        });
+
+        it("rechaza un padre inexistente, de otra organización, archivado, uno mismo, un bucle y más de 8 niveles", async () => {
+          const storage = await seed();
+          await node(storage, "a");
+          await node(storage, "b", "a");
+          await node(storage, "c", "b");
+          await node(storage, "foreign", undefined, "org-2");
+          expect(await codeOf(node(storage, "x", "nope"))).toBe("team_parent_invalid");
+          expect(await codeOf(node(storage, "x", "foreign"))).toBe("team_parent_invalid");
+          expect(await codeOf(storage.teams.update("org-1", "a", { parentId: "foreign" }))).toBe("team_parent_invalid");
+          expect(await codeOf(storage.teams.update("org-1", "a", { parentId: "a" }))).toBe("team_cycle");
+          expect(await codeOf(storage.teams.update("org-1", "a", { parentId: "c" }))).toBe("team_cycle");
+
+          // Ocho niveles caben; el noveno no, ni mover un subárbol que lo superaría.
+          let parent = "c";
+          for (const id of ["d", "e", "f", "g", "h"]) {
+            await node(storage, id, parent);
+            parent = id;
+          }
+          expect(await codeOf(node(storage, "i", "h"))).toBe("team_too_deep");
+          await node(storage, "side");
+          await node(storage, "side-child", "side");
+          expect(await codeOf(storage.teams.update("org-1", "side", { parentId: "h" }))).toBe("team_too_deep");
+          expect(await codeOf(storage.teams.update("org-1", "side-child", { parentId: "g" }))).toBe("ok");
+        });
+
+        it("mover un equipo conserva su subárbol, sube la versión solo si cambia y null lo deja en la raíz", async () => {
+          const storage = await seed();
+          await node(storage, "a");
+          await node(storage, "b");
+          await node(storage, "c", "a");
+          await node(storage, "d", "c");
+          const same = await storage.teams.update("org-1", "c", { parentId: "a" });
+          expect(same.version).toBe(1);
+          const moved = await storage.teams.update("org-1", "c", { parentId: "b" });
+          expect(moved).toMatchObject({ parentId: "b", version: 2 });
+          expect((await storage.teams.descendants("org-1", "b")).map((t) => t.id)).toEqual(["c", "d"]);
+          expect(await storage.teams.descendants("org-1", "a")).toEqual([]);
+          const root = await storage.teams.update("org-1", "c", { parentId: null });
+          expect(root.parentId).toBeUndefined();
+          expect(root.version).toBe(3);
+          expect((await storage.teams.ancestors("org-1", "d")).map((t) => t.id)).toEqual(["c"]);
+        });
+
+        it("no archiva un equipo con subequipos activos, no restaura bajo un padre archivado y no borra un padre", async () => {
+          const storage = await seed();
+          const actor = admin;
+          await node(storage, "a");
+          await node(storage, "b", "a");
+          expect(await codeOf(storage.teams.archive("org-1", "a", { actor }))).toBe("team_has_children");
+          await storage.teams.archive("org-1", "b", { actor });
+          await storage.teams.archive("org-1", "a", { actor });
+          expect(await codeOf(storage.teams.restore("org-1", "b", { actor }))).toBe("team_parent_invalid");
+          expect(await codeOf(storage.teams.update("org-1", "b", { name: "B" }))).toBe("team_archived");
+          // Un padre archivado no admite hijos nuevos.
+          expect(await codeOf(node(storage, "late", "a"))).toBe("team_parent_invalid");
+          expect(await codeOf(storage.teams.delete("org-1", "a")) ).toBe("team_has_children");
+          await storage.teams.delete("org-1", "b");
+          await storage.teams.delete("org-1", "a");
+          expect(await storage.teams.findById("org-1", "a")).toBeNull();
+        });
+      });
+
       it("un teamId de otra organización se trata como inexistente en toda operación", async () => {
         const storage = await seed();
         await team(storage);

@@ -26,6 +26,12 @@ export interface Team {
   slug: string;
   name: string;
   status: TeamStatus;
+  /**
+   * The team this one sits under (a branch inside a region, a squad inside a department), in the same organization;
+   * absent for a top-level team. Purely organizational: it grants and inherits nothing, and `engine.can({ teamId })` never
+   * looks at it. At most 8 levels deep, no cycles.
+   */
+  parentId?: string;
   /** The host's own identifier for this team in another system (ERP, CRM, HR); unique within the organization. */
   externalId?: string;
   /** Free-form data describing the team to the host application. At most 16 KB of JSON. */

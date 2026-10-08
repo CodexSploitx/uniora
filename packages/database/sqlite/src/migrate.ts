@@ -20,6 +20,7 @@ import { MIGRATION_0017_INVITATION_IDEMPOTENCY } from "./migrations/0017_invitat
 import { MIGRATION_0018_MEMBERSHIP_FEATURE_VERSIONS } from "./migrations/0018_membership_feature_versions.js";
 import { MIGRATION_0019_TEAMS } from "./migrations/0019_teams.js";
 import { MIGRATION_0020_INVITATION_TEAMS } from "./migrations/0020_invitation_teams.js";
+import { MIGRATION_0021_TEAM_HIERARCHY } from "./migrations/0021_team_hierarchy.js";
 
 interface Migration {
   readonly id: string;
@@ -48,6 +49,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0018_membership_feature_versions", sql: MIGRATION_0018_MEMBERSHIP_FEATURE_VERSIONS },
   { id: "0019_teams", sql: MIGRATION_0019_TEAMS },
   { id: "0020_invitation_teams", sql: MIGRATION_0020_INVITATION_TEAMS },
+  { id: "0021_team_hierarchy", sql: MIGRATION_0021_TEAM_HIERARCHY },
 ];
 
 const LEDGER_TABLE = "uniora_schema_migrations";

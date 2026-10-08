@@ -76,7 +76,9 @@ import { SupportGrantError, assertValidSupportGrant, grantStatus } from "../supp
 import type { Team, TeamMembership } from "../team/types.js";
 import type { SearchTeamMembersOptions, SearchTeamsOptions, TeamMembershipRepository, TeamRepository } from "../team/repository.js";
 import {
+  MAX_TEAM_DEPTH,
   TeamError,
+  assertTeamPlacement,
   assertTeamMemberStatus,
   assertTeamResponsibility,
   assertValidAddTeamMember,
@@ -1671,10 +1673,57 @@ export function createMemoryStorage(): UnioraStorage {
     if (team.organizationId !== filter.organizationId) return false;
     if (filter.status !== undefined && team.status !== filter.status) return false;
     if (filter.externalId !== undefined && team.externalId !== filter.externalId) return false;
+    if (filter.parentId !== undefined && (team.parentId ?? null) !== filter.parentId) return false;
     const query = filter.query?.trim().toLowerCase();
     return !query || team.name.toLowerCase().includes(query) || team.slug.includes(query);
   };
+  const childrenOf = (organizationId: string, id: string): Team[] =>
+    [...teams.values()].filter((team) => team.organizationId === organizationId && team.parentId === id);
+  const ancestorsOf = (organizationId: string, id: string): Team[] => {
+    const chain: Team[] = [];
+    let current = teamOf(organizationId, id);
+    while (current?.parentId !== undefined && chain.length <= MAX_TEAM_DEPTH * 4) {
+      current = teamOf(organizationId, current.parentId);
+      if (current) chain.unshift(current);
+    }
+    return chain;
+  };
+  const descendantsOf = (organizationId: string, id: string): Team[] => {
+    const found: Team[] = [];
+    const queue = childrenOf(organizationId, id);
+    while (queue.length > 0 && found.length <= teams.size) {
+      const next = queue.shift()!;
+      found.push(next);
+      queue.push(...childrenOf(organizationId, next.id));
+    }
+    return found;
+  };
+  const heightOf = (organizationId: string, id: string): number => {
+    const walk = (team: string, depth: number): number =>
+      childrenOf(organizationId, team).reduce((max, child) => (depth > MAX_TEAM_DEPTH * 4 ? max : Math.max(max, walk(child.id, depth + 1))), depth);
+    return walk(id, 0);
+  };
+  /** The same facts a SQL backend reads with recursive queries, so every backend rejects exactly the same placements. */
+  const checkPlacement = (organizationId: string, selfId: string | null, parentId: string): void => {
+    const parent = teamOf(organizationId, parentId);
+    const above = parent ? ancestorsOf(organizationId, parentId) : [];
+    assertTeamPlacement({
+      selfId,
+      parentId,
+      parent: parent ? { status: parent.status, depth: above.length + 1 } : null,
+      loop: selfId !== null && (parentId === selfId || above.some((team) => team.id === selfId)),
+      subtreeHeight: selfId === null ? 0 : heightOf(organizationId, selfId),
+    });
+  };
   const teamRepository: TeamRepository = {
+    async ancestors(organizationId, id) {
+      requireTeam(organizationId, id);
+      return ancestorsOf(organizationId, id).map(cloneTeam);
+    },
+    async descendants(organizationId, id) {
+      requireTeam(organizationId, id);
+      return descendantsOf(organizationId, id).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).map(cloneTeam);
+    },
     async create(input) {
       assertTeamAuthorization(input.authorization, { organizationId: input.organizationId, operation: "team.create" });
       const valid = assertValidCreateTeam(input);
@@ -1689,12 +1738,14 @@ export function createMemoryStorage(): UnioraStorage {
       if (valid.externalId !== undefined && inOrganization.some((team) => team.externalId === valid.externalId)) {
         throw new TeamError(`A team with external id "${valid.externalId}" already exists in this organization.`, "team_external_id_taken");
       }
+      if (valid.parentId !== undefined) checkPlacement(input.organizationId, null, valid.parentId);
       const team: Team = {
         id: input.id,
         organizationId: input.organizationId,
         slug: valid.slug,
         name: valid.name,
         status: "active",
+        ...(valid.parentId !== undefined ? { parentId: valid.parentId } : {}),
         ...(valid.externalId !== undefined ? { externalId: valid.externalId } : {}),
         metadata: valid.metadata,
         settings: valid.settings,
@@ -1741,10 +1792,16 @@ export function createMemoryStorage(): UnioraStorage {
       if (change.slug !== undefined) next.slug = change.slug;
       if (change.externalId === null) delete next.externalId;
       else if (change.externalId !== undefined) next.externalId = change.externalId;
+      if (change.parentId !== undefined && change.parentId !== (team.parentId ?? null)) {
+        if (change.parentId !== null) checkPlacement(organizationId, id, change.parentId);
+        if (change.parentId === null) delete next.parentId;
+        else next.parentId = change.parentId;
+      }
       if (change.metadata !== undefined) next.metadata = change.metadata;
       if (change.settings !== undefined) next.settings = change.settings;
       if (
         next.name === team.name &&
+        next.parentId === team.parentId &&
         next.slug === team.slug &&
         next.externalId === team.externalId &&
         sameTeamData(next.metadata, team.metadata) &&
@@ -1761,6 +1818,9 @@ export function createMemoryStorage(): UnioraStorage {
       const team = requireTeam(organizationId, id);
       assertTeamVersion(team, input.expectedVersion, "team_version_conflict");
       if (team.status === "archived") return cloneTeam(team);
+      if (childrenOf(organizationId, id).some((child) => child.status === "active")) {
+        throw new TeamError("This team still has active sub-teams; archive or move them first.", "team_has_children");
+      }
       const reason = sanitizeTeamReason(input.reason);
       const saved: Team = {
         ...team,
@@ -1777,6 +1837,9 @@ export function createMemoryStorage(): UnioraStorage {
       const team = requireTeam(organizationId, id);
       assertTeamVersion(team, input.expectedVersion, "team_version_conflict");
       if (team.status === "active") return cloneTeam(team);
+      if (team.parentId !== undefined && teamOf(organizationId, team.parentId)?.status !== "active") {
+        throw new TeamError("The parent team is archived; restore it first.", "team_parent_invalid");
+      }
       const { archived: _archived, ...rest } = team;
       const saved: Team = { ...rest, status: "active", updatedAt: new Date(), version: team.version + 1 };
       teams.set(id, saved);
@@ -1786,6 +1849,9 @@ export function createMemoryStorage(): UnioraStorage {
       assertTeamAuthorization(input?.authorization, { organizationId, operation: "team.delete" });
       const team = requireTeam(organizationId, id);
       if (team.status !== "archived") throw new TeamError("Only an archived team can be deleted; archive it first.", "team_not_archived");
+      if (childrenOf(organizationId, id).length > 0) {
+        throw new TeamError("This team still has sub-teams; move or delete them first.", "team_has_children");
+      }
       teams.delete(id);
       for (const row of [...teamMemberships.values()]) if (row.teamId === id) teamMemberships.delete(row.id);
     },
