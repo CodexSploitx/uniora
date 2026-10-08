@@ -563,7 +563,15 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
         const result = await db.query(
           `delete from uniora_membership_roles
            where membership_id = ?1 and role_id = ?2
-             and (select count(*) from uniora_membership_roles where role_id = ?2) > 1`,
+             and (select count(*) from uniora_membership_roles where role_id = ?2) > 1
+             and (
+               (select ${effectiveStatus("xm")} from uniora_memberships xm where xm.id = ?1) <> 'active'
+               or exists (
+                 select 1 from uniora_membership_roles oh
+                 join uniora_memberships om on om.id = oh.membership_id
+                 where oh.role_id = ?2 and oh.membership_id <> ?1 and ${effectiveStatus("om")} = 'active'
+               )
+             )`,
           [membershipId, roleId],
         );
         if (result.rowCount > 0) {
@@ -630,7 +638,17 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
                from uniora_membership_roles mr
                join uniora_roles r on r.id = mr.role_id
                where mr.membership_id = ?1 and r.is_owner_role = 1
-                 and (select count(*) from uniora_membership_roles holders where holders.role_id = mr.role_id) <= 1
+                 and (
+                   (select count(*) from uniora_membership_roles holders where holders.role_id = mr.role_id) <= 1
+                   or (
+                     (select ${effectiveStatus("xm")} from uniora_memberships xm where xm.id = ?1) = 'active'
+                     and not exists (
+                       select 1 from uniora_membership_roles oh
+                       join uniora_memberships om on om.id = oh.membership_id
+                       where oh.role_id = mr.role_id and oh.membership_id <> ?1 and ${effectiveStatus("om")} = 'active'
+                     )
+                   )
+                 )
              )`,
           [membershipId],
         );

@@ -866,6 +866,26 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         expect(await storage.memberships.block(b.id, { actor: admin })).toMatchObject({ status: "blocked" });
       });
 
+      it("el último Owner activo no se quita ni se elimina mientras los demás Owners están suspendidos o bloqueados", async () => {
+        const { storage, owner, a, b } = await seed();
+        await storage.memberships.assignOwnerRole(a.id, owner.id);
+        await storage.memberships.suspend(a.id, { actor: admin, until: new Date(Date.now() + 60_000) });
+        await expect(storage.memberships.unassignOwnerRole(b.id, owner.id)).rejects.toMatchObject({ code: "last_owner" });
+        await expect(storage.memberships.delete(b.id)).rejects.toMatchObject({ code: "last_owner" });
+        await expect(leaveOrganization(storage, { organizationId: "org-1", identity: bob })).rejects.toMatchObject({ code: "last_owner" });
+        expect(await storage.memberships.findById(b.id)).toMatchObject({ roleIds: [owner.id], status: "active" });
+        // Quitar al que ya no puede actuar sí se puede: no reduce los Owners activos.
+        await storage.memberships.unassignOwnerRole(a.id, owner.id);
+        expect((await storage.memberships.findById(a.id))!.roleIds).not.toContain(owner.id);
+        // Con otro Owner activo, el primero ya se puede quitar (y con el bloqueado de por medio, también eliminar al bloqueado).
+        await storage.memberships.assignOwnerRole(a.id, owner.id);
+        await storage.memberships.unblock(a.id, { actor: admin });
+        await storage.memberships.block(b.id, { actor: admin });
+        await storage.memberships.delete(b.id);
+        expect(await storage.memberships.findById(b.id)).toBeNull();
+        await expect(storage.memberships.delete(a.id)).rejects.toMatchObject({ code: "last_owner" });
+      });
+
       it("auditoría de la suspensión: quien está sancionado no puede salir de la organización ni recibir la propiedad, y las llamadas sin efecto no se auditan", async () => {
         const { storage, a, b, owner } = await seed();
         const audited = createAuditedStorage(storage, { actor: admin });

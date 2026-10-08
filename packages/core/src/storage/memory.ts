@@ -364,11 +364,15 @@ export function createMemoryStorage(): UnioraStorage {
   // "the last Owner holder" of `excludeMembershipId` when that role is the
   // protected Owner role AND no other membership currently has it.
   // Assigning the Owner role to several memberships is allowed — only
-  // dropping the very last holder is blocked.
+  // dropping the very last holder is blocked, and the last ACTIVE one while others are blocked or suspended.
   function isLastOwnerRoleHolder(roleId: string, excludeMembershipId: string): boolean {
     const role = roles.get(roleId);
     if (!role?.isOwnerRole) return false;
-    return ![...memberships.values()].some((m) => m.id !== excludeMembershipId && m.roleIds.includes(roleId));
+    lapseBlocks();
+    const others = [...memberships.values()].filter((m) => m.id !== excludeMembershipId && m.roleIds.includes(roleId));
+    if (others.length === 0) return true;
+    // An Owner who can still act can't be removed when every other holder is blocked or suspended.
+    return memberships.get(excludeMembershipId)?.status === "active" && !others.some((m) => m.status === "active");
   }
 
   function touch(membership: Membership): void {

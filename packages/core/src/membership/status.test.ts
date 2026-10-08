@@ -245,4 +245,14 @@ describe("auditoría de la suspensión temporal (memoria)", () => {
     expect(accepted.membership).toMatchObject({ status: "suspended" });
     expect(await engine.can({ identity: alice, organizationId: "org", permission: "reports.read" })).toBe(false);
   });
+
+  it("el último Owner activo no se quita ni se elimina mientras los demás Owners están suspendidos", async () => {
+    const { storage, owner, b } = await setup();
+    await storage.memberships.assignOwnerRole("m-alice", owner.id);
+    await storage.memberships.suspend("m-alice", { actor: admin, until: new Date(Date.now() + 60_000) });
+    await expect(storage.memberships.unassignOwnerRole(b.id, owner.id)).rejects.toMatchObject({ code: "last_owner" });
+    await expect(storage.memberships.delete(b.id)).rejects.toMatchObject({ code: "last_owner" });
+    await storage.memberships.unassignOwnerRole("m-alice", owner.id); // el que no puede actuar sí se puede quitar
+    expect((await storage.memberships.findById("m-alice"))!.roleIds).not.toContain(owner.id);
+  });
 });
