@@ -351,12 +351,13 @@ export function createMemoryStorage(): UnioraStorage {
       const query = options?.query?.trim().toLowerCase();
       const statuses = statusSet(options?.status);
       const hasFeature = featureFilter(options?.feature);
-      return [...organizations.values()].filter(
+      const total = [...organizations.values()].filter(
         (organization) =>
           (!statuses || statuses.has(organization.status)) &&
           hasFeature(organization.id) &&
           (!query || organization.name.toLowerCase().includes(query) || organization.slug.toLowerCase().includes(query)),
       ).length;
+      return options?.limit === undefined ? total : Math.min(total, options.limit);
     },
   };
 
@@ -436,7 +437,7 @@ export function createMemoryStorage(): UnioraStorage {
     return copy(membership);
   }
 
-  function matchingMemberships(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus }): Membership[] {
+  function matchingMemberships(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus; limit?: number }): Membership[] {
     lapseBlocks();
     const query = options?.query?.trim().toLowerCase();
     return [...memberships.values()].filter(
@@ -574,7 +575,8 @@ export function createMemoryStorage(): UnioraStorage {
       });
     },
     async count(options) {
-      return matchingMemberships(options).length;
+      const total = matchingMemberships(options).length;
+      return options?.limit === undefined ? total : Math.min(total, options.limit);
     },
     async countByRole(roleIds) {
       return tally(roleIds, [...memberships.values()].flatMap((m) => m.roleIds));
@@ -1429,8 +1431,9 @@ export function createMemoryStorage(): UnioraStorage {
       }
       return null;
     },
-    async count(organizationId: string, options?: Pick<SearchInvitationsOptions, "status" | "query">) {
-      return [...invitations.values()].filter((i) => matchesInvitationFilter(i, organizationId, options)).length;
+    async count(organizationId: string, options?: Pick<SearchInvitationsOptions, "status" | "query"> & { limit?: number }) {
+      const total = [...invitations.values()].filter((i) => matchesInvitationFilter(i, organizationId, options)).length;
+      return options?.limit === undefined ? total : Math.min(total, options.limit);
     },
     async search(organizationId: string, options?: SearchInvitationsOptions) {
       const matches = [...invitations.values()]

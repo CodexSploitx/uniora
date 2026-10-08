@@ -10,6 +10,7 @@ import type {
 import { InvitationError } from "@uniora/core";
 import type { Queryable } from "../queryable.js";
 import { toLikePattern } from "../pg-like.js";
+import { searchCandidates } from "../pg-search.js";
 import { isForeignKeyViolation, violatedConstraint } from "../pg-errors.js";
 
 function likeOrNull(query: string | undefined): string | null {
@@ -157,6 +158,7 @@ export function createInvitationRepository(db: Queryable): InvitationRepository 
     },
 
     async search(organizationId: string, options?: SearchInvitationsOptions) {
+      const candidates = await searchCandidates(db, "invitations", options?.query, organizationId);
       const result = await db.query<InvitationRow>(
         `select ${SELECT_COLUMNS}
          from uniora.invitations i
@@ -164,21 +166,28 @@ export function createInvitationRepository(db: Queryable): InvitationRepository 
            and ($2::text is null or i.status = $2)
            and ($3::text is null or (i.created_at, i.id) < (select created_at, id from uniora.invitations where id = $3))
            and ($5::text is null or i.email ilike $5)
+           and ($6::text[] is null or i.id = any($6))
          order by i.created_at desc, i.id desc
          limit $4`,
-        [organizationId, options?.status ?? null, options?.after ?? null, options?.limit ?? null, likeOrNull(options?.query)],
+        [organizationId, options?.status ?? null, options?.after ?? null, options?.limit ?? null, likeOrNull(options?.query), candidates],
       );
       return result.rows.map(toInvitation);
     },
 
-    async count(organizationId: string, options?: Pick<SearchInvitationsOptions, "status" | "query">) {
+    async count(organizationId: string, options?: Pick<SearchInvitationsOptions, "status" | "query"> & { limit?: number }) {
+      const candidates = await searchCandidates(db, "invitations", options?.query, organizationId);
       const result = await db.query<{ count: string }>(
         `select count(*)::text as count
-         from uniora.invitations i
-         where i.organization_id = $1
-           and ($2::text is null or i.status = $2)
-           and ($3::text is null or i.email ilike $3)`,
-        [organizationId, options?.status ?? null, likeOrNull(options?.query)],
+         from (
+           select 1
+           from uniora.invitations i
+           where i.organization_id = $1
+             and ($2::text is null or i.status = $2)
+             and ($3::text is null or i.email ilike $3)
+             and ($5::text[] is null or i.id = any($5))
+           limit $4::integer
+         ) matching`,
+        [organizationId, options?.status ?? null, likeOrNull(options?.query), options?.limit ?? null, candidates],
       );
       return Number(result.rows[0]!.count);
     },
