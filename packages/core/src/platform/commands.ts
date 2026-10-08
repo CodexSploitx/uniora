@@ -79,7 +79,7 @@ function check(name: string, kind: Kind, value: unknown): unknown {
       if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 1_000_000_000) return value;
       break;
     case "strings":
-      if (Array.isArray(value) && value.length <= 100 && value.every((item) => typeof item === "string" && item.length > 0 && item.length <= 2000)) return value;
+      if (Array.isArray(value) && value.length <= 100 && value.every((item) => typeof item === "string" && item.length > 0 && item.length <= 2000)) return [...value];
       break;
     case "memberStatus":
       if ((PLATFORM_MEMBER_STATUSES as readonly unknown[]).includes(value)) return value;
@@ -103,11 +103,11 @@ function clean(command: PlatformCommand, params: unknown): Record<string, unknow
   const shape = SHAPES[command];
   const input = params as Record<string, unknown>;
   for (const key of Object.keys(input)) {
-    if (!(key in shape)) throw bad(`Unknown field "${key}".`);
+    if (!Object.hasOwn(shape, key)) throw bad(`Unknown field "${key}".`);
   }
   const out: Record<string, unknown> = {};
   for (const [name, kind] of Object.entries(shape)) {
-    const value = check(name, kind, input[name]);
+    const value = check(name, kind, Object.hasOwn(input, name) ? input[name] : undefined);
     if (value !== undefined) out[name] = value;
   }
   return out;

@@ -83,7 +83,7 @@ function check(name: string, kind: Kind, value: unknown): unknown {
       if (typeof value === "object" && value !== null && !Array.isArray(value)) return value;
       break;
     case "strings":
-      if (Array.isArray(value) && value.length <= 50 && value.every((item) => typeof item === "string" && item.length > 0 && item.length <= 2000)) return value;
+      if (Array.isArray(value) && value.length <= 50 && value.every((item) => typeof item === "string" && item.length > 0 && item.length <= 2000)) return [...value];
       break;
     case "responsibility":
       if (value === "owner" || value === "manager" || value === "member") return value as TeamResponsibility;
@@ -101,11 +101,11 @@ function clean(command: TeamCommand, params: unknown): Record<string, unknown> {
   const shape = SHAPES[command];
   const input = params as Record<string, unknown>;
   for (const key of Object.keys(input)) {
-    if (!(key in shape)) throw bad(`Unknown field "${key}".`);
+    if (!Object.hasOwn(shape, key)) throw bad(`Unknown field "${key}".`);
   }
   const out: Record<string, unknown> = {};
   for (const [name, kind] of Object.entries(shape)) {
-    const value = check(name, kind, input[name]);
+    const value = check(name, kind, Object.hasOwn(input, name) ? input[name] : undefined);
     if (value !== undefined) out[name] = value;
   }
   return out;

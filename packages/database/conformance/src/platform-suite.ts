@@ -31,6 +31,14 @@ export interface PlatformHarness {
     deleteRoleDirectly(roleId: string): Promise<"rejected" | "applied">;
     /** Gives a non-system role the reserved `platform.*`; the database must refuse. */
     grantWildcardDirectly(roleId: string): Promise<"rejected" | "applied">;
+    /** Re-points the member's role links at another role with a plain UPDATE (no DELETE), the way the last admin could be removed. */
+    moveRoleLinksDirectly(memberId: string, toRoleId: string): Promise<"rejected" | "applied">;
+    /** Overwrites the member row as suspended through the engine's upsert/replace path (INSERT OR REPLACE, ON CONFLICT DO UPDATE). */
+    overwriteMemberDirectly(memberId: string): Promise<"rejected" | "applied">;
+    /** Switches `is_system` on for a non-system role. */
+    promoteToSystemRoleDirectly(roleId: string): Promise<"rejected" | "applied">;
+    /** Inserts a second system role under another key. */
+    insertSystemRoleDirectly(roleId: string): Promise<"rejected" | "applied">;
   };
 }
 
@@ -210,7 +218,12 @@ export function definePlatformConformance(harness: PlatformHarness): void {
       expect(await harness.probe.deleteRoleDirectly(adminRole.id)).toBe("rejected");
       const plain = await service.createRole({ actor: root, key: "plain", name: "Plain", permissions: [] });
       expect(await harness.probe.grantWildcardDirectly(plain.id)).toBe("rejected");
+      expect(await harness.probe.moveRoleLinksDirectly(rootMember.id, plain.id)).toBe("rejected");
+      expect(await harness.probe.overwriteMemberDirectly(rootMember.id)).toBe("rejected");
+      expect(await harness.probe.promoteToSystemRoleDirectly(plain.id)).toBe("rejected");
+      expect(await harness.probe.insertSystemRoleDirectly("evil-system-role")).toBe("rejected");
       expect(await platform.platformMembers.findById(rootMember.id)).toMatchObject({ status: "active", roleIds: [adminRole.id] });
+      expect(await platform.platformRoles.findById(adminRole.id)).toMatchObject({ name: "Platform Administrator", permissions: ["platform.*"] });
       // With a second administrator the first can go (as plain SQL too).
       await service.addMember({ actor: root, identity: alice, roleIds: [adminRole.id] });
       expect(await harness.probe.suspendMemberDirectly(rootMember.id)).toBe("applied");
