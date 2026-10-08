@@ -1349,6 +1349,8 @@ export function createMemoryStorage(): UnioraStorage {
   const clone = (invitation: Invitation): Invitation => ({
     ...invitation,
     roleIds: [...invitation.roleIds],
+    // An offer for a team that was deleted since disappears with it, like the foreign key's cascade in the databases.
+    teamIds: invitation.teamIds.filter((id) => teams.get(id)?.organizationId === invitation.organizationId),
     delivery: { ...invitation.delivery },
   });
 
@@ -1363,11 +1365,17 @@ export function createMemoryStorage(): UnioraStorage {
       if (!organizations.has(input.organizationId)) {
         throw new InvitationError("The organization does not exist.", "bad_request");
       }
+      for (const teamId of input.teamIds ?? []) {
+        if (teams.get(teamId)?.organizationId !== input.organizationId) {
+          throw new InvitationError("The organization, a chosen role or a chosen team does not exist.", "bad_request");
+        }
+      }
       const invitation: Invitation = {
         id: input.id,
         organizationId: input.organizationId,
         email: input.email,
         roleIds: [...input.roleIds],
+        teamIds: [...new Set(input.teamIds ?? [])],
         invitedBy: input.invitedBy,
         status: "pending",
         createdAt: input.createdAt,

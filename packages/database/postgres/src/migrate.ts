@@ -34,6 +34,7 @@ import { MIGRATION_0031_ROLE_NAME_NORMALIZED } from "./migrations/0031_role_name
 import { MIGRATION_0032_INVITATION_IDEMPOTENCY } from "./migrations/0032_invitation_idempotency.js";
 import { MIGRATION_0033_MEMBERSHIP_FEATURE_VERSIONS } from "./migrations/0033_membership_feature_versions.js";
 import { MIGRATION_0034_TEAMS } from "./migrations/0034_teams.js";
+import { MIGRATION_0035_INVITATION_TEAMS } from "./migrations/0035_invitation_teams.js";
 
 interface Migration {
   readonly id: string;
@@ -76,6 +77,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0032_invitation_idempotency", sql: MIGRATION_0032_INVITATION_IDEMPOTENCY },
   { id: "0033_membership_feature_versions", sql: MIGRATION_0033_MEMBERSHIP_FEATURE_VERSIONS },
   { id: "0034_teams", sql: MIGRATION_0034_TEAMS },
+  { id: "0035_invitation_teams", sql: MIGRATION_0035_INVITATION_TEAMS },
 ];
 
 /**

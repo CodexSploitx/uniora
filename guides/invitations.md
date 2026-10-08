@@ -68,6 +68,8 @@ await invitations.revoke({ organizationId, invitationId: invitation.id, actor })
 
   Pass `allowExistingMember: true` to `invite()` to deliberately invite a member anyway (accepting then adds the invited roles). Without the lookup nothing changes.
 
+- **Teams (`teamIds`).** An invitation can also offer membership of up to 10 teams of the organization (see [teams](teams.md)): `invite({ organizationId, email, roleIds, invitedBy, teamIds: ["team-barcelona"] })`. The inviter needs `teams.members.add` (organization-wide, or inside that team) now **and** when the person accepts; if they lost it, or the team was archived or deleted, or the person already has a membership there (a suspension is never lifted this way), that team is skipped and listed in `accept().teamsSkipped` while the organization membership still happens. Joined teams come back in `accept().teams`, always as plain `member` with no team role: assign roles afterwards with the team service. `preview()` lists `teamNames`.
+
 - **Safe retries (`idempotencyKey`).** A network timeout leaves you not knowing whether `invite()` worked, and a plain retry fails with `invitation_duplicate_pending` while the link of the first call is lost. Pass a key of your own per attempt-to-invite (for example the id of the request or form submission):
 
   ```ts

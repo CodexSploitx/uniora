@@ -98,7 +98,8 @@ The code is `invitation_` plus the reason (`InvitationError.reason`):
 | `invitation_idempotency_conflict` | 409 `idempotency_conflict` | `invite` was given an `idempotencyKey` that an earlier invitation of this organization already used for a different request. |
 | `invitation_already_member` | 409 `already_member` | `invite()` found that the address already belongs to a member (only when the service has `findIdentitiesByEmail`). |
 | `invitation_rate_limited`, `invitation_cooldown` | 429 `rate_limited` | Too many invitations, or a resend too soon. |
-| `invitation_bad_request` | 400 `bad_request` | Invalid e-mail, no roles, the Owner role, a role of another organization. |
+| `invitation_teams_forbidden` | 403 `teams_forbidden` | `invite({ teamIds })` offered a team the inviter may not add people to (`teams.members.add`). |
+| `invitation_bad_request` | 400 `bad_request` | Invalid e-mail, no roles, the Owner role, a role of another organization, a team that is missing, archived or of another organization. |
 
 ### Audit log
 

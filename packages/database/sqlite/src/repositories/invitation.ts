@@ -38,6 +38,7 @@ interface InvitationRow {
   delivery_sent_at: string | null;
   delivery_last_error: string | null;
   role_ids: string;
+  team_ids: string;
 }
 
 const SELECT_COLUMNS = `
@@ -47,7 +48,10 @@ const SELECT_COLUMNS = `
   i.delivery_sent_at, i.delivery_last_error,
   (select json_group_array(role_id) from (
      select role_id from uniora_invitation_roles where invitation_id = i.id order by role_id
-   )) as role_ids`;
+   )) as role_ids,
+  (select json_group_array(team_id) from (
+     select team_id from uniora_invitation_teams where invitation_id = i.id order by team_id
+   )) as team_ids`;
 
 function toInvitation(row: InvitationRow): Invitation {
   const acceptedBy: Identity | undefined =
@@ -59,6 +63,7 @@ function toInvitation(row: InvitationRow): Invitation {
     organizationId: row.organization_id,
     email: row.email,
     roleIds: parseList(row.role_ids),
+    teamIds: parseList(row.team_ids),
     invitedBy: { provider: row.invited_by_provider, subject: row.invited_by_subject },
     status: row.status,
     createdAt: new Date(row.created_at),
@@ -109,6 +114,13 @@ export function createInvitationRepository(db: SqliteExecutor): InvitationReposi
           for (const roleId of new Set(input.roleIds)) {
             await db.query(`insert into uniora_invitation_roles (invitation_id, role_id) values (?1, ?2)`, [input.id, roleId]);
           }
+          for (const teamId of new Set(input.teamIds ?? [])) {
+            await db.query(`insert into uniora_invitation_teams (invitation_id, organization_id, team_id) values (?1, ?2, ?3)`, [
+              input.id,
+              input.organizationId,
+              teamId,
+            ]);
+          }
         });
       } catch (error) {
         if (violatedExactly(error, ["uniora_invitations.organization_id", "uniora_invitations.email"])) {
@@ -118,7 +130,7 @@ export function createInvitationRepository(db: SqliteExecutor): InvitationReposi
           throw new InvitationError("This idempotency key was already used.", "idempotency_conflict");
         }
         if (isForeignKeyViolation(error)) {
-          throw new InvitationError("The organization or a chosen role does not exist.", "bad_request");
+          throw new InvitationError("The organization, a chosen role or a chosen team does not exist.", "bad_request");
         }
         if (isUniqueViolation(error)) throw new InvitationError("Could not create the invitation.", "bad_request");
         throw error;

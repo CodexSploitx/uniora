@@ -9,6 +9,7 @@ export type InvitationFailureReason =
   | "already_accepted"
   | "email_mismatch"
   | "roles_unavailable"
+  | "teams_forbidden" // `invite()` offered a team the inviter may not add people to
   | "duplicate_pending"
   | "already_member" // `invite()` found the e-mail already belongs to a member of the organization
   | "idempotency_conflict" // the same `idempotencyKey` was reused for a different invitation
@@ -39,6 +40,8 @@ export interface CreateInvitationInput {
   email: string;
   /** Non-empty, regular (non-Owner) roles of `organizationId`. Validated by the service, re-validated on accept. */
   roleIds: string[];
+  /** Teams of `organizationId` offered with the invitation (optional; possibly empty). Another organization's team is rejected as `bad_request`. */
+  teamIds?: string[];
   /** SHA-256 hex of the accept token. The token itself must never reach a repository. */
   tokenHash: string;
   invitedBy: Identity;
