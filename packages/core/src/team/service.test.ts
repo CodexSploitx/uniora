@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TEAM_PERMISSIONS, TeamError, createAuthorizationEngine, createMemoryStorage, createTeamService } from "../index.js";
+import { TEAM_PERMISSIONS, TeamError, createAuthorizationEngine, createMemoryStorage, createTeamService, createTrustedTeamStorage } from "../index.js";
 
 const boss = { provider: "p", subject: "boss" }; // organization Owner
 const hr = { provider: "p", subject: "hr" }; // organization-wide team administrator
@@ -11,7 +11,8 @@ const stranger = { provider: "p", subject: "stranger" }; // member of another or
 const code = (promise: Promise<unknown>) => promise.then(() => "ok", (error: unknown) => (error instanceof TeamError ? error.code : String(error)));
 
 async function seed() {
-  const storage = createMemoryStorage();
+  const raw = createMemoryStorage();
+  const storage = createTrustedTeamStorage(raw, { actor: boss, reason: "unit test fixtures" });
   await storage.organizations.create({ id: "org", name: "Acme" });
   await storage.organizations.create({ id: "other", name: "Other" });
   const owner = await storage.roles.createOwnerRole({ id: "owner", organizationId: "org" });
@@ -33,7 +34,7 @@ async function seed() {
   await storage.teamMemberships.add({ id: "tm-lead", organizationId: "org", teamId: bcn.id, membershipId: "m-lead", responsibility: "manager", roleIds: ["lead"] });
   await storage.teamMemberships.add({ id: "tm-juan", organizationId: "org", teamId: bcn.id, membershipId: "m-juan", roleIds: ["reader"] });
   await storage.teamMemberships.add({ id: "tm-luis", organizationId: "org", teamId: mad.id, membershipId: "m-luis", roleIds: ["reader"] });
-  return { storage, service: createTeamService({ storage }), engine: createAuthorizationEngine(storage) };
+  return { storage, service: createTeamService({ storage: raw }), engine: createAuthorizationEngine(raw), raw };
 }
 
 describe("engine: team context only narrows, never grants", () => {
@@ -172,7 +173,7 @@ describe("team service: nobody changes team without permission", () => {
   });
 
   it("records who did each change in the audit log", async () => {
-    const { service, storage } = await seed();
+    const { service, raw: storage } = await seed();
     await service.addMember({ actor: hr, id: "aud", organizationId: "org", teamId: "mad", membershipId: "m-juan" });
     const entries = await storage.auditLogs.search({ actionPrefix: "team_member." });
     expect(entries).toHaveLength(1);

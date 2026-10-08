@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AUDIT_ACTIONS, createAuditedStorage, isStandardAuditAction } from "../index.js";
 import { createMemoryStorage } from "./memory.js";
+import { createTrustedTeamStorage } from "../team/trusted.js";
 
 const actor = { provider: "p", subject: "operator" };
 
@@ -29,7 +30,7 @@ describe("createAuditedStorage: every mutation is audited, with standard names",
 
   it("only records action names from the standard catalog, each with the actor", async () => {
     const raw = createMemoryStorage();
-    const audited = createAuditedStorage(raw, { actor });
+    const audited = createTrustedTeamStorage(createAuditedStorage(raw, { actor }), { actor, reason: "audit coverage test" });
     await audited.organizations.create({ id: "org", name: "Acme" });
     await audited.organizations.rename("org", "Acme 2");
     await audited.organizations.update("org", { name: "Acme 3", slug: "acme-3" });

@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import { defineStorageConformance, type StorageHarness } from "@uniora/storage-conformance";
 import { createTestPool } from "./test-pool.js";
 import { applyMigrations } from "./migrate.js";
-import { createInvitationService, createOrganizationWithOwner } from "@uniora/core";
+import { createInvitationService, createOrganizationWithOwner, createTrustedTeamStorage } from "@uniora/core";
 import { createPostgresStorage } from "./storage.js";
 
 let pool: Pool;
@@ -148,7 +148,7 @@ defineStorageConformance(harness, () => {
   });
 
   it("teams: la base de datos misma rechaza filas entre organizaciones, aunque alguien escriba SQL directo", async () => {
-    const storage = harness.storage();
+    const storage = createTrustedTeamStorage(harness.storage(), { actor: identity, reason: "adapter isolation test" });
     await storage.organizations.create({ id: "org-a", name: "A" });
     await storage.organizations.create({ id: "org-b", name: "B" });
     await storage.teams.create({ id: "team-a", organizationId: "org-a", name: "Equipo A" });

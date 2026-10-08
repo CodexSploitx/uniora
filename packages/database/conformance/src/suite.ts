@@ -15,6 +15,7 @@ import {
   TeamError,
   applyRoleTemplates,
   createTeamService,
+  createTrustedTeamStorage,
   dispatchOutbox,
   leaveOrganization,
   transferOwnership,
@@ -2031,7 +2032,8 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
       const admin = { provider: "supabase", subject: "admin" };
       const ana = { provider: "supabase", subject: "ana" };
 
-      async function seed() {
+      /** The plain storage, whose team writes refuse anything without an authorization. */
+      async function seedRaw() {
         const storage = harness.storage();
         await createOrganizationWithOwner(storage, {
           organizationId: "org-1",
@@ -2051,6 +2053,12 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         await storage.roles.create({ id: "role-sales-2", organizationId: "org-2", name: "Sales" });
         await storage.memberships.create({ id: "m-ana", organizationId: "org-1", identity: ana });
         return storage;
+      }
+
+      /** Fixtures and direct repository checks go through the trusted wrapper; `.raw` is the storage as it is. */
+      async function seed() {
+        const raw = await seedRaw();
+        return Object.assign(createTrustedTeamStorage(raw, { actor: admin, reason: "conformance fixtures" }), { raw });
       }
 
       const team = (storage: Awaited<ReturnType<typeof seed>>, overrides: Record<string, unknown> = {}) =>
@@ -2267,10 +2275,34 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         expect(await storage.teams.findById("org-1", "t-bcn")).not.toBeNull();
       });
 
+      it("la base de datos nunca acepta una escritura de equipos sin autorización válida (ni con una falsificada)", async () => {
+        const { raw } = await seed();
+        const bads = [undefined, null, {}, "token", { organizationId: "org-1", actor: admin }] as never[];
+        const attempts: Array<[string, (authorization: never) => Promise<unknown>]> = [
+          ["teams.create", (a) => raw.teams.create({ id: "t9", organizationId: "org-1", name: "Nueve", authorization: a })],
+          ["teams.update", (a) => raw.teams.update("org-1", "t9", { name: "x", authorization: a })],
+          ["teams.archive", (a) => raw.teams.archive("org-1", "t9", { actor: admin, authorization: a })],
+          ["teams.restore", (a) => raw.teams.restore("org-1", "t9", { actor: admin, authorization: a })],
+          ["teams.delete", (a) => raw.teams.delete("org-1", "t9", { authorization: a })],
+          ["teamMemberships.add", (a) => raw.teamMemberships.add({ id: "x", organizationId: "org-1", teamId: "t9", membershipId: "m-ana", authorization: a })],
+          ["teamMemberships.setStatus", (a) => raw.teamMemberships.setStatus("org-1", "x", "suspended", { actor: admin, authorization: a })],
+          ["teamMemberships.accept", (a) => raw.teamMemberships.accept("org-1", "x", { actor: ana, authorization: a })],
+          ["teamMemberships.setResponsibility", (a) => raw.teamMemberships.setResponsibility("org-1", "x", "manager", { authorization: a })],
+          ["teamMemberships.assignRole", (a) => raw.teamMemberships.assignRole("org-1", "x", "role-sales", { authorization: a })],
+          ["teamMemberships.unassignRole", (a) => raw.teamMemberships.unassignRole("org-1", "x", "role-sales", { authorization: a })],
+        ];
+        for (const [name, attempt] of attempts) {
+          for (const bad of bads) {
+            await expect(attempt(bad), name).rejects.toMatchObject({ code: "team_authorization_required" });
+          }
+        }
+        expect(await raw.teams.count({ organizationId: "org-1" })).toBe(0);
+      });
+
       it("el servicio de equipos: nadie cambia de equipo sin permiso, con el motor y la escritura en la misma transacción", async () => {
         const storage = await seed();
-        const service = createTeamService({ storage });
-        const engine = createAuthorizationEngine(storage);
+        const service = createTeamService({ storage: storage.raw });
+        const engine = createAuthorizationEngine(storage.raw);
         const lead = { provider: "supabase", subject: "lead" };
         for (const key of [...Object.values(TEAM_PERMISSIONS), "vehicles.read"]) await storage.permissions.register({ key });
         await storage.roles.create({ id: "role-hr", organizationId: "org-1", name: "HR", permissionKeys: Object.values(TEAM_PERMISSIONS) });
@@ -2313,8 +2345,8 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
       });
 
       it("un storage auditado deja rastro de cada cambio, con nombres estándar y una sola vez", async () => {
-        const raw = await seed();
-        const audited = createAuditedStorage(raw, { actor: admin });
+        const raw = await seedRaw();
+        const audited = createTrustedTeamStorage(createAuditedStorage(raw, { actor: admin }), { actor: admin, reason: "conformance audit check" });
         await audited.teams.create({ id: "t-a", organizationId: "org-1", name: "Auditado" });
         await audited.teams.update("org-1", "t-a", { name: "Auditado 2", metadata: { type: "project" } });
         await audited.teams.update("org-1", "t-a", { name: "Auditado 2" });

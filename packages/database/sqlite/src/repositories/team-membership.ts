@@ -11,6 +11,7 @@ import type {
 import {
   TeamError,
   assertExpectedVersion,
+  assertTeamAuthorization,
   assertTeamMemberStatus,
   assertTeamResponsibility,
   assertValidAddTeamMember,
@@ -140,6 +141,7 @@ export function createTeamMembershipRepository(db: SqliteExecutor): TeamMembersh
 
   return {
     async add(input: AddTeamMemberInput) {
+      assertTeamAuthorization(input.authorization, { organizationId: input.organizationId, operation: "member.add" });
       const valid = assertValidAddTeamMember(input);
       return db.atomic(async () => {
         const team = await db.query<{ status: string }>(`select status from uniora_teams where id = ?1 and organization_id = ?2`, [input.teamId, input.organizationId]);
@@ -214,6 +216,7 @@ export function createTeamMembershipRepository(db: SqliteExecutor): TeamMembersh
     },
 
     async setStatus(organizationId: string, id: string, status: TeamMemberStatus, input: SetTeamMemberStatusInput) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "member.status", actor: input.actor });
       assertTeamMemberStatus(status);
       const reason = sanitizeTeamReason(input.reason);
       return mutate(organizationId, id, input.expectedVersion, async (current) => {
@@ -236,6 +239,7 @@ export function createTeamMembershipRepository(db: SqliteExecutor): TeamMembersh
     },
 
     async accept(organizationId, id, input) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "member.accept", actor: input.actor });
       return mutate(organizationId, id, input.expectedVersion, async (current) => {
         const owner = await db.query(
           `select 1 from uniora_team_memberships tm join uniora_memberships m on m.id = tm.membership_id and m.organization_id = tm.organization_id
@@ -259,7 +263,8 @@ export function createTeamMembershipRepository(db: SqliteExecutor): TeamMembersh
       });
     },
 
-    async setResponsibility(organizationId, id, responsibility, options?: TeamMemberChangeOptions) {
+    async setResponsibility(organizationId, id, responsibility, options: TeamMemberChangeOptions) {
+      assertTeamAuthorization(options?.authorization, { organizationId, operation: "member.responsibility" });
       assertTeamResponsibility(responsibility);
       return mutate(organizationId, id, options?.expectedVersion, async (current) => {
         if (current.responsibility === responsibility) return current;
@@ -271,7 +276,8 @@ export function createTeamMembershipRepository(db: SqliteExecutor): TeamMembersh
       });
     },
 
-    async assignRole(organizationId, id, roleId, options?: TeamMemberChangeOptions) {
+    async assignRole(organizationId, id, roleId, options: TeamMemberChangeOptions) {
+      assertTeamAuthorization(options?.authorization, { organizationId, operation: "member.role" });
       return mutate(organizationId, id, options?.expectedVersion, async (current) => {
         await assertRoles(organizationId, [roleId]);
         if (current.roleIds.includes(roleId)) return current;
@@ -286,7 +292,8 @@ export function createTeamMembershipRepository(db: SqliteExecutor): TeamMembersh
       });
     },
 
-    async unassignRole(organizationId, id, roleId, options?: TeamMemberChangeOptions) {
+    async unassignRole(organizationId, id, roleId, options: TeamMemberChangeOptions) {
+      assertTeamAuthorization(options?.authorization, { organizationId, operation: "member.role" });
       return mutate(organizationId, id, options?.expectedVersion, async (current) => {
         if (!current.roleIds.includes(roleId)) return current;
         await db.query(`delete from uniora_team_membership_roles where team_membership_id = ?1 and role_id = ?2`, [id, roleId]);

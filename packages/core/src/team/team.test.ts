@@ -1,18 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { TeamError, createMemoryStorage, resolveTeamSlug, sameTeamData, sanitizeTeamData } from "../index.js";
+import { TeamError, createMemoryStorage, createTrustedTeamStorage, resolveTeamSlug, sameTeamData, sanitizeTeamData } from "../index.js";
+import { issueTeamAuthorization } from "./authorization.js";
 
 const actor = { provider: "p", subject: "admin" };
 const ana = { provider: "p", subject: "ana" };
 
+const trusted = (raw: ReturnType<typeof createMemoryStorage>) => createTrustedTeamStorage(raw, { actor, reason: "unit test" });
+
 async function seed() {
-  const storage = createMemoryStorage();
+  const raw = createMemoryStorage();
+  const storage = raw;
   await storage.organizations.create({ id: "org-1", name: "Acme" });
   await storage.organizations.create({ id: "org-2", name: "Other" });
   await storage.roles.create({ id: "sales", organizationId: "org-1", name: "Sales" });
   await storage.roles.create({ id: "sales-2", organizationId: "org-2", name: "Sales" });
   await storage.roles.createOwnerRole({ id: "owner", organizationId: "org-1" });
   await storage.memberships.create({ id: "m-ana", organizationId: "org-1", identity: ana });
-  return storage;
+  return Object.assign(trusted(raw), { raw });
 }
 
 const code = (promise: Promise<unknown>) => promise.then(() => "ok", (error: unknown) => (error instanceof TeamError ? error.code : String(error)));
@@ -91,5 +95,61 @@ describe("in-memory teams", () => {
     const removed = await storage.teamMemberships.setStatus("org-1", "tm", "removed", { actor });
     expect(removed.roleIds).toEqual([]);
     await storage.roles.delete("sales", { members: "reject" });
+  });
+});
+
+describe("team writes need an authorization the storage can verify", () => {
+  async function bare() {
+    const storage = await seed();
+    await storage.teams.create({ id: "t1", organizationId: "org-1", name: "Barcelona" });
+    await storage.teamMemberships.add({ id: "tm", organizationId: "org-1", teamId: "t1", membershipId: "m-ana" });
+    return storage;
+  }
+  const missing = (call: () => Promise<unknown>) => expect(call()).rejects.toMatchObject({ code: "team_authorization_required" });
+
+  it("refuses every write without it, with a forged one, or with a copy of a real one", async () => {
+    const { raw } = await bare();
+    const real = issueTeamAuthorization("org-1", actor, ["team.update", "member.role"]);
+    const forged = { organizationId: "org-1", actor, operations: ["team.update"] } as never;
+    const copy = { ...real } as never;
+    const attempts: Array<[string, (authorization: never) => Promise<unknown>]> = [
+      ["teams.create", (a) => raw.teams.create({ id: "t2", organizationId: "org-1", name: "Two", authorization: a })],
+      ["teams.update", (a) => raw.teams.update("org-1", "t1", { name: "x", authorization: a })],
+      ["teams.archive", (a) => raw.teams.archive("org-1", "t1", { actor, authorization: a })],
+      ["teams.restore", (a) => raw.teams.restore("org-1", "t1", { actor, authorization: a })],
+      ["teams.delete", (a) => raw.teams.delete("org-1", "t1", { authorization: a })],
+      ["teamMemberships.add", (a) => raw.teamMemberships.add({ id: "tm2", organizationId: "org-1", teamId: "t1", membershipId: "m-ana", authorization: a })],
+      ["teamMemberships.setStatus", (a) => raw.teamMemberships.setStatus("org-1", "tm", "suspended", { actor, authorization: a })],
+      ["teamMemberships.accept", (a) => raw.teamMemberships.accept("org-1", "tm", { actor: ana, authorization: a })],
+      ["teamMemberships.setResponsibility", (a) => raw.teamMemberships.setResponsibility("org-1", "tm", "manager", { authorization: a })],
+      ["teamMemberships.assignRole", (a) => raw.teamMemberships.assignRole("org-1", "tm", "nope", { authorization: a })],
+      ["teamMemberships.unassignRole", (a) => raw.teamMemberships.unassignRole("org-1", "tm", "nope", { authorization: a })],
+    ];
+    for (const [name, attempt] of attempts) {
+      for (const bad of [undefined, null, {}, "token", forged, copy] as never[]) {
+        await expect(attempt(bad), `${name} with ${JSON.stringify(bad)}`).rejects.toMatchObject({ code: "team_authorization_required" });
+      }
+    }
+    expect((await raw.teams.findById("org-1", "t1"))?.name).toBe("Barcelona");
+    expect(real).toBeTruthy();
+  });
+
+  it("a real token only works for its own organization, operation and actor, and not after it expires", async () => {
+    const { raw } = await bare();
+    const update = issueTeamAuthorization("org-1", actor, ["team.update"]);
+    await missing(() => raw.teams.archive("org-1", "t1", { actor, authorization: update })); // another operation
+    await missing(() => raw.teams.update("org-2", "t1", { name: "x", authorization: update })); // another organization
+    const archive = issueTeamAuthorization("org-1", actor, ["team.archive"]);
+    await missing(() => raw.teams.archive("org-1", "t1", { actor: ana, authorization: archive })); // another actor
+    const stale = issueTeamAuthorization("org-1", actor, ["team.update"], { now: Date.now() - 61_000 });
+    await missing(() => raw.teams.update("org-1", "t1", { name: "x", authorization: stale }));
+    expect((await raw.teams.update("org-1", "t1", { name: "Renamed", authorization: update })).name).toBe("Renamed");
+  });
+
+  it("the trusted wrapper needs a reason and still applies every other rule", async () => {
+    const raw = createMemoryStorage();
+    expect(() => createTrustedTeamStorage(raw, { actor, reason: "  " })).toThrow(TeamError);
+    const { teams } = await bare();
+    await expect(teams.create({ id: "t1", organizationId: "org-1", name: "Dup" })).rejects.toMatchObject({ code: "team_exists" });
   });
 });

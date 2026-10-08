@@ -86,6 +86,7 @@ import {
   sameTeamData,
   sanitizeTeamReason,
 } from "../team/repository.js";
+import { assertTeamAuthorization } from "../team/authorization.js";
 import type { UnioraStorage, UnioraTransaction } from "./types.js";
 
 function identityKey(identity: Identity): string {
@@ -1667,6 +1668,7 @@ export function createMemoryStorage(): UnioraStorage {
   };
   const teamRepository: TeamRepository = {
     async create(input) {
+      assertTeamAuthorization(input.authorization, { organizationId: input.organizationId, operation: "team.create" });
       const valid = assertValidCreateTeam(input);
       if (!organizations.has(input.organizationId)) {
         throw new TeamError(`Organization "${input.organizationId}" does not exist.`, "team_organization_unknown");
@@ -1714,6 +1716,7 @@ export function createMemoryStorage(): UnioraStorage {
       return [...teams.values()].filter((team) => teamMatches(team, options)).length;
     },
     async update(organizationId, id, input) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "team.update" });
       const team = requireTeam(organizationId, id);
       const change = assertValidUpdateTeam(input);
       assertTeamVersion(team, input.expectedVersion, "team_version_conflict");
@@ -1746,6 +1749,7 @@ export function createMemoryStorage(): UnioraStorage {
       return cloneTeam(saved);
     },
     async archive(organizationId, id, input) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "team.archive", actor: input.actor });
       const team = requireTeam(organizationId, id);
       assertTeamVersion(team, input.expectedVersion, "team_version_conflict");
       if (team.status === "archived") return cloneTeam(team);
@@ -1761,6 +1765,7 @@ export function createMemoryStorage(): UnioraStorage {
       return cloneTeam(saved);
     },
     async restore(organizationId, id, input) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "team.restore", actor: input.actor });
       const team = requireTeam(organizationId, id);
       assertTeamVersion(team, input.expectedVersion, "team_version_conflict");
       if (team.status === "active") return cloneTeam(team);
@@ -1769,7 +1774,8 @@ export function createMemoryStorage(): UnioraStorage {
       teams.set(id, saved);
       return cloneTeam(saved);
     },
-    async delete(organizationId, id) {
+    async delete(organizationId, id, input) {
+      assertTeamAuthorization(input?.authorization, { organizationId, operation: "team.delete" });
       const team = requireTeam(organizationId, id);
       if (team.status !== "archived") throw new TeamError("Only an archived team can be deleted; archive it first.", "team_not_archived");
       teams.delete(id);
@@ -1805,6 +1811,7 @@ export function createMemoryStorage(): UnioraStorage {
   };
   const teamMembershipRepository: TeamMembershipRepository = {
     async add(input) {
+      assertTeamAuthorization(input.authorization, { organizationId: input.organizationId, operation: "member.add" });
       const valid = assertValidAddTeamMember(input);
       const team = requireTeam(input.organizationId, input.teamId);
       const membership = memberships.get(input.membershipId);
@@ -1853,6 +1860,7 @@ export function createMemoryStorage(): UnioraStorage {
       return [...teamMemberships.values()].filter((row) => teamMembershipMatches(row, options)).length;
     },
     async setStatus(organizationId, id, status, input) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "member.status", actor: input.actor });
       const row = requireTeamMembership(organizationId, id);
       assertTeamMemberStatus(status);
       assertTeamVersion(row, input.expectedVersion, "team_membership_version_conflict");
@@ -1876,6 +1884,7 @@ export function createMemoryStorage(): UnioraStorage {
       return cloneTeamMembership(saved);
     },
     async accept(organizationId, id, input) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "member.accept", actor: input.actor });
       const row = requireTeamMembership(organizationId, id);
       assertTeamVersion(row, input.expectedVersion, "team_membership_version_conflict");
       const membership = memberships.get(row.membershipId);
@@ -1899,6 +1908,7 @@ export function createMemoryStorage(): UnioraStorage {
       return cloneTeamMembership(saved);
     },
     async setResponsibility(organizationId, id, responsibility, options) {
+      assertTeamAuthorization(options?.authorization, { organizationId, operation: "member.responsibility" });
       const row = requireTeamMembership(organizationId, id);
       assertTeamResponsibility(responsibility);
       assertTeamVersion(row, options?.expectedVersion, "team_membership_version_conflict");
@@ -1908,6 +1918,7 @@ export function createMemoryStorage(): UnioraStorage {
       return cloneTeamMembership(saved);
     },
     async assignRole(organizationId, id, roleId, options) {
+      assertTeamAuthorization(options?.authorization, { organizationId, operation: "member.role" });
       const row = requireTeamMembership(organizationId, id);
       assertTeamVersion(row, options?.expectedVersion, "team_membership_version_conflict");
       assertTeamRoles(organizationId, [roleId]);
@@ -1917,6 +1928,7 @@ export function createMemoryStorage(): UnioraStorage {
       return cloneTeamMembership(saved);
     },
     async unassignRole(organizationId, id, roleId, options) {
+      assertTeamAuthorization(options?.authorization, { organizationId, operation: "member.role" });
       const row = requireTeamMembership(organizationId, id);
       assertTeamVersion(row, options?.expectedVersion, "team_membership_version_conflict");
       if (!row.roleIds.includes(roleId)) return cloneTeamMembership(row);

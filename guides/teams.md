@@ -54,7 +54,7 @@ Everything is paginated with a keyset cursor (`search({ organizationId, after, l
 
 ## Changing who is in which team: the team service
 
-The repositories above are low-level and authorize nothing. For anything driven by a user, use the **team service**: every
+The repositories above are low-level (they demand a `TeamAuthorization`, see below). For anything driven by a user, use the **team service**: every
 operation asks the authorization engine first, inside the same transaction as the change, and records the actor in the audit log.
 
 ```ts
@@ -74,7 +74,21 @@ Rules it enforces (all covered by tests on memory, Postgres and SQLite):
 - **Only the invited person accepts** an invitation (`acceptInvitation`).
 - **Deleting a team** needs `teams.manage` organization-wide.
 
-A guarantee has limits: code that holds `storage` directly can still call the raw repositories, as it can run SQL. Hand your request handlers the service, not the storage. The database does still refuse any row that mixes organizations.
+### The storage itself refuses unauthorized team changes
+
+Every write of `storage.teams` and `storage.teamMemberships` requires a **`TeamAuthorization`**: an opaque proof that cannot be written by hand. Only the team service (after the engine said yes) and `createTrustedTeamStorage` (below) can issue one. The storage (memory, Postgres and SQLite) checks it before anything else and answers `team_authorization_required` to a missing, forged, copied, expired token, or one issued for another organization, operation or actor. So code that gets hold of `storage` and calls `storage.teamMemberships.add(...)` directly no longer works by accident; it has to go through the service or choose, in plain sight, the trusted wrapper. A custom backend must call `assertTeamAuthorization` in each of those writes (the conformance suite checks it).
+
+For imports, migrations, sync jobs, tests and admin tooling that run as the system, and never in a request handler:
+
+```ts
+const system = createTrustedTeamStorage(createAuditedStorage(storage, { actor: jobIdentity }), {
+  actor: jobIdentity,
+  reason: "nightly sync from the HR system",   // required: why this code may skip the permission check
+});
+await system.teams.create({ id, organizationId, name: "Barcelona", externalId: "branch_348" });
+```
+
+It keeps every other rule (isolation, lifecycle, validation, versions) and the audit trail; it only skips the permission check, which is why it is a separate, greppable function. What remains out of reach for any library is code that runs SQL against your database by hand; even then, the database refuses rows that mix organizations.
 
 ## Team as context for `can`
 
@@ -86,7 +100,7 @@ With `teamId` the answer can only get **narrower**: the identity must be an acti
 
 ## What UNIORA does not do for you
 
-- **The raw repositories do not authorize.** Like `roles.assign` or `memberships.block`, they trust the caller: use the team service above (or check with `engine.can` yourself) before calling them.
+- **The permission catalog.** Register `TEAM_PERMISSIONS` (`teams.manage`, `teams.members.add`, `teams.members.remove`, `teams.members.manage`) and give them to the roles that should manage teams.
 - **It does not know your resources.** A vehicle or a ticket belongs to a team because your table says so; you pass that team when you ask the question.
 - **No bypass.** There is no code path where an owner or manager of a team skips the engine.
 

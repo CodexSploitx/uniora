@@ -4,11 +4,12 @@ import type {
   RestoreTeamInput,
   SearchTeamsOptions,
   Team,
+  TeamAuthorization,
   TeamRepository,
   TeamStatus,
   UpdateTeamInput,
 } from "@uniora/core";
-import { TeamError, assertExpectedVersion, assertValidCreateTeam, assertValidUpdateTeam, sameTeamData, sanitizeTeamReason } from "@uniora/core";
+import { TeamError, assertExpectedVersion, assertTeamAuthorization, assertValidCreateTeam, assertValidUpdateTeam, sameTeamData, sanitizeTeamReason } from "@uniora/core";
 import type { SqliteExecutor } from "../executor.js";
 import { isForeignKeyViolation, isUniqueViolation, violatedExactly } from "../sqlite-errors.js";
 import { toLikePattern } from "../like.js";
@@ -96,6 +97,7 @@ export function createTeamRepository(db: SqliteExecutor): TeamRepository {
 
   return {
     async create(input: CreateTeamInput) {
+      assertTeamAuthorization(input.authorization, { organizationId: input.organizationId, operation: "team.create" });
       const valid = assertValidCreateTeam(input);
       try {
         await db.query(
@@ -151,6 +153,7 @@ export function createTeamRepository(db: SqliteExecutor): TeamRepository {
     },
 
     async update(organizationId: string, id: string, input: UpdateTeamInput) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "team.update" });
       const change = assertValidUpdateTeam(input);
       return mutate(organizationId, id, input.expectedVersion, async (current) => {
         if (current.status === "archived") throw new TeamError("An archived team cannot be changed; restore it first.", "team_archived");
@@ -182,6 +185,7 @@ export function createTeamRepository(db: SqliteExecutor): TeamRepository {
     },
 
     async archive(organizationId: string, id: string, input: ArchiveTeamInput) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "team.archive", actor: input.actor });
       const reason = sanitizeTeamReason(input.reason);
       return mutate(organizationId, id, input.expectedVersion, async (current) => {
         if (current.status === "archived") return current;
@@ -197,6 +201,7 @@ export function createTeamRepository(db: SqliteExecutor): TeamRepository {
     },
 
     async restore(organizationId: string, id: string, input: RestoreTeamInput) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "team.restore", actor: input.actor });
       return mutate(organizationId, id, input.expectedVersion, async (current) => {
         if (current.status === "active") return current;
         await db.query(
@@ -209,7 +214,8 @@ export function createTeamRepository(db: SqliteExecutor): TeamRepository {
       });
     },
 
-    async delete(organizationId: string, id: string) {
+    async delete(organizationId: string, id: string, input: { authorization: TeamAuthorization }) {
+      assertTeamAuthorization(input?.authorization, { organizationId, operation: "team.delete" });
       await db.atomic(async () => {
         const team = await byId(organizationId, id);
         if (!team) throw new TeamError(`Team not found: ${id}`, "team_not_found");

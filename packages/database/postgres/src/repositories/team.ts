@@ -6,10 +6,11 @@ import type {
   Team,
   TeamData,
   TeamRepository,
+  TeamAuthorization,
   TeamStatus,
   UpdateTeamInput,
 } from "@uniora/core";
-import { TeamError, assertExpectedVersion, assertValidCreateTeam, assertValidUpdateTeam, sameTeamData, sanitizeTeamReason } from "@uniora/core";
+import { TeamError, assertExpectedVersion, assertTeamAuthorization, assertValidCreateTeam, assertValidUpdateTeam, sameTeamData, sanitizeTeamReason } from "@uniora/core";
 import type { Queryable } from "../queryable.js";
 import { isForeignKeyViolation, isUniqueViolation, violatedConstraint } from "../pg-errors.js";
 import { toLikePattern } from "../pg-like.js";
@@ -114,6 +115,7 @@ export function createTeamRepository(db: Queryable): TeamRepository {
 
   return {
     async create(input: CreateTeamInput) {
+      assertTeamAuthorization(input.authorization, { organizationId: input.organizationId, operation: "team.create" });
       const valid = assertValidCreateTeam(input);
       try {
         const result = await db.query<TeamRow>(
@@ -169,6 +171,7 @@ export function createTeamRepository(db: Queryable): TeamRepository {
     },
 
     async update(organizationId: string, id: string, input: UpdateTeamInput) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "team.update" });
       const change = assertValidUpdateTeam(input);
       return mutate(organizationId, id, input.expectedVersion, async (current) => {
         if (current.status === "archived") throw new TeamError("An archived team cannot be changed; restore it first.", "team_archived");
@@ -202,6 +205,7 @@ export function createTeamRepository(db: Queryable): TeamRepository {
     },
 
     async archive(organizationId: string, id: string, input: ArchiveTeamInput) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "team.archive", actor: input.actor });
       const reason = sanitizeTeamReason(input.reason);
       return mutate(organizationId, id, input.expectedVersion, async (current) => {
         if (current.status === "archived") return current;
@@ -217,6 +221,7 @@ export function createTeamRepository(db: Queryable): TeamRepository {
     },
 
     async restore(organizationId: string, id: string, input: RestoreTeamInput) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "team.restore", actor: input.actor });
       return mutate(organizationId, id, input.expectedVersion, async (current) => {
         if (current.status === "active") return current;
         const result = await db.query<TeamRow>(
@@ -230,7 +235,8 @@ export function createTeamRepository(db: Queryable): TeamRepository {
       });
     },
 
-    async delete(organizationId: string, id: string) {
+    async delete(organizationId: string, id: string, input: { authorization: TeamAuthorization }) {
+      assertTeamAuthorization(input?.authorization, { organizationId, operation: "team.delete" });
       // ONE guarded statement: "only an archived team is deleted" is atomic with the delete itself.
       const result = await db.query(`delete from uniora.teams where id = $1 and organization_id = $2 and status = 'archived'`, [id, organizationId]);
       if ((result.rowCount ?? 0) > 0) return;

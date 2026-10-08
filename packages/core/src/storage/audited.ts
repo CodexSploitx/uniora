@@ -353,10 +353,10 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
             }
             return team;
           }),
-        delete: (organizationId, id) =>
+        delete: (organizationId, id, input) =>
           run(async (tx) => {
             const before = await tx.teams.findById(organizationId, id);
-            await tx.teams.delete(organizationId, id);
+            await tx.teams.delete(organizationId, id, input);
             await record(tx, "team.deleted", organizationId, { type: "team", id }, before ? { name: before.name, slug: before.slug } : undefined);
           }),
       },

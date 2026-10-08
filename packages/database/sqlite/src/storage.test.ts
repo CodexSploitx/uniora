@@ -1,10 +1,13 @@
 import Database from "better-sqlite3";
 import { expect, it } from "vitest";
+import { createTrustedTeamStorage } from "@uniora/core";
 import { defineStorageConformance, type StorageHarness } from "@uniora/storage-conformance";
 import { applyMigrations } from "./migrate.js";
 import { AUDIT_APPEND_ONLY_TRIGGERS } from "./migrations/0003_audit_log_integrity.js";
 import { AUDIT_CHECKPOINT_TRIGGERS } from "./migrations/0007_audit_log_retention.js";
 import { createSqliteStorage } from "./storage.js";
+
+const identity = { provider: "supabase", subject: "user-1" };
 
 let db: Database.Database;
 
@@ -95,7 +98,7 @@ const harness: StorageHarness = {
 
 defineStorageConformance(harness, () => {
   it("teams: la base de datos misma rechaza filas entre organizaciones, aunque alguien escriba SQL directo", async () => {
-    const storage = harness.storage();
+    const storage = createTrustedTeamStorage(harness.storage(), { actor: identity, reason: "adapter isolation test" });
     await storage.organizations.create({ id: "org-a", name: "A" });
     await storage.organizations.create({ id: "org-b", name: "B" });
     await storage.teams.create({ id: "team-a", organizationId: "org-a", name: "Equipo A" });

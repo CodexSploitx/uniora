@@ -292,3 +292,7 @@ export {
 } from "./team/repository.js";
 export type { MoveTeamMemberInput, TeamActor, TeamPermissionKeys, TeamService, TeamServiceOptions } from "./team/service.js";
 export { TEAM_PERMISSIONS, createTeamService } from "./team/service.js";
+export type { TeamAuthorization, TeamOperation } from "./team/authorization.js";
+export { TEAM_OPERATIONS, assertTeamAuthorization } from "./team/authorization.js";
+export type { TrustedTeamStorage, TrustedTeamStorageOptions, TrustedTeamTransaction } from "./team/trusted.js";
+export { createTrustedTeamStorage } from "./team/trusted.js";

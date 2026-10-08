@@ -7,6 +7,8 @@ import type { UnioraStorage, UnioraTransaction } from "../storage/types.js";
 import type { Membership } from "../membership/types.js";
 import type { Role } from "../role/types.js";
 import { TeamError } from "./repository.js";
+import { issueTeamAuthorization } from "./authorization.js";
+import type { TeamOperation } from "./authorization.js";
 import type { AddTeamMemberInput, CreateTeamInput, UpdateTeamInput } from "./repository.js";
 import type { Team, TeamMembership, TeamResponsibility } from "./types.js";
 
@@ -68,14 +70,14 @@ export interface MoveTeamMemberInput extends TeamActor {
  * serves end users.
  */
 export interface TeamService {
-  createTeam(input: CreateTeamInput & TeamActor): Promise<Team>;
-  updateTeam(input: { organizationId: string; teamId: string } & TeamActor & UpdateTeamInput): Promise<Team>;
+  createTeam(input: Omit<CreateTeamInput, "authorization"> & TeamActor): Promise<Team>;
+  updateTeam(input: { organizationId: string; teamId: string } & TeamActor & Omit<UpdateTeamInput, "authorization">): Promise<Team>;
   archiveTeam(input: { organizationId: string; teamId: string; reason?: string; expectedVersion?: number } & TeamActor): Promise<Team>;
   restoreTeam(input: { organizationId: string; teamId: string; expectedVersion?: number } & TeamActor): Promise<Team>;
   deleteTeam(input: { organizationId: string; teamId: string } & TeamActor): Promise<void>;
 
   /** Adds (or, with `status: "pending"`, invites) an organization member to a team. */
-  addMember(input: AddTeamMemberInput & TeamActor): Promise<TeamMembership>;
+  addMember(input: Omit<AddTeamMemberInput, "authorization"> & TeamActor): Promise<TeamMembership>;
   /** The invited person accepts their own invitation. */
   acceptInvitation(input: { organizationId: string; teamMembershipId: string } & TeamActor): Promise<TeamMembership>;
   /** The actor leaves a team, or declines an invitation. */
@@ -121,6 +123,10 @@ export function createTeamService(options: TeamServiceOptions): TeamService {
     if (!(await allowed(ctx, organizationId, permission, teamId))) throw forbidden(what);
   }
 
+  /** Proof for the repositories, issued only AFTER the checks above it passed. Bound to this organization, actor and operation. */
+  const grant = (ctx: Context, organizationId: string, ...operations: TeamOperation[]) =>
+    issueTeamAuthorization(organizationId, ctx.actor, operations);
+
   const actorMembership = (ctx: Context, organizationId: string): Promise<Membership | null> =>
     ctx.tx.memberships.findByIdentity(organizationId, ctx.actor);
 
@@ -156,32 +162,32 @@ export function createTeamService(options: TeamServiceOptions): TeamService {
     createTeam: ({ actor, ...input }) =>
       run(actor, async (ctx) => {
         await require(ctx, input.organizationId, keys.manage, "create teams");
-        return ctx.tx.teams.create(input);
+        return ctx.tx.teams.create({ ...input, authorization: grant(ctx, input.organizationId, "team.create") });
       }),
 
     updateTeam: ({ actor, organizationId, teamId, ...change }) =>
       run(actor, async (ctx) => {
         await require(ctx, organizationId, keys.manage, "change this team", teamId);
-        return ctx.tx.teams.update(organizationId, teamId, change);
+        return ctx.tx.teams.update(organizationId, teamId, { ...change, authorization: grant(ctx, organizationId, "team.update") });
       }),
 
     archiveTeam: ({ actor, organizationId, teamId, ...rest }) =>
       run(actor, async (ctx) => {
         await require(ctx, organizationId, keys.manage, "archive this team", teamId);
-        return ctx.tx.teams.archive(organizationId, teamId, { ...rest, actor });
+        return ctx.tx.teams.archive(organizationId, teamId, { ...rest, actor, authorization: grant(ctx, organizationId, "team.archive") });
       }),
 
     restoreTeam: ({ actor, organizationId, teamId, ...rest }) =>
       run(actor, async (ctx) => {
         await require(ctx, organizationId, keys.manage, "restore this team", teamId);
-        return ctx.tx.teams.restore(organizationId, teamId, { ...rest, actor });
+        return ctx.tx.teams.restore(organizationId, teamId, { ...rest, actor, authorization: grant(ctx, organizationId, "team.restore") });
       }),
 
     deleteTeam: ({ actor, organizationId, teamId }) =>
       run(actor, async (ctx) => {
         // Deleting is irreversible: only an organization-wide grant, not one held inside the team being deleted.
         await require(ctx, organizationId, keys.manage, "delete this team");
-        await ctx.tx.teams.delete(organizationId, teamId);
+        await ctx.tx.teams.delete(organizationId, teamId, { authorization: grant(ctx, organizationId, "team.delete") });
       }),
 
     addMember: ({ actor, ...input }) =>
@@ -192,13 +198,13 @@ export function createTeamService(options: TeamServiceOptions): TeamService {
         }
         await assertCanGrant(ctx, input.organizationId, input.teamId, input.roleIds ?? []);
         // The inviter is whoever is acting, never a name the caller supplies.
-        return ctx.tx.teamMemberships.add({ ...input, invitedBy: actor });
+        return ctx.tx.teamMemberships.add({ ...input, invitedBy: actor, authorization: grant(ctx, input.organizationId, "member.add") });
       }),
 
     acceptInvitation: ({ actor, organizationId, teamMembershipId }) =>
       run(actor, async (ctx) => {
         const row = await loadRow(ctx, organizationId, teamMembershipId);
-        return ctx.tx.teamMemberships.accept(organizationId, row.id, { actor });
+        return ctx.tx.teamMemberships.accept(organizationId, row.id, { actor, authorization: grant(ctx, organizationId, "member.accept") });
       }),
 
     leaveTeam: ({ actor, organizationId, teamId }) =>
@@ -206,21 +212,21 @@ export function createTeamService(options: TeamServiceOptions): TeamService {
         const mine = await actorMembership(ctx, organizationId);
         const row = mine ? await ctx.tx.teamMemberships.find(organizationId, teamId, mine.id) : null;
         if (!row) throw new TeamError("You do not belong to this team.", "team_membership_not_found");
-        return ctx.tx.teamMemberships.setStatus(organizationId, row.id, "removed", { actor, reason: "left" });
+        return ctx.tx.teamMemberships.setStatus(organizationId, row.id, "removed", { actor, reason: "left", authorization: grant(ctx, organizationId, "member.status") });
       }),
 
     removeMember: ({ actor, organizationId, teamMembershipId, reason }) =>
       run(actor, async (ctx) => {
         const row = await loadRow(ctx, organizationId, teamMembershipId);
         if (!(await isOwnRow(ctx, row))) await require(ctx, organizationId, keys.membersRemove, "remove people from this team", row.teamId);
-        return ctx.tx.teamMemberships.setStatus(organizationId, row.id, "removed", { actor, reason });
+        return ctx.tx.teamMemberships.setStatus(organizationId, row.id, "removed", { actor, reason, authorization: grant(ctx, organizationId, "member.status") });
       }),
 
     suspendMember: ({ actor, organizationId, teamMembershipId, reason }) =>
       run(actor, async (ctx) => {
         const row = await loadRow(ctx, organizationId, teamMembershipId);
         await require(ctx, organizationId, keys.membersManage, "suspend people in this team", row.teamId);
-        return ctx.tx.teamMemberships.setStatus(organizationId, row.id, "suspended", { actor, reason });
+        return ctx.tx.teamMemberships.setStatus(organizationId, row.id, "suspended", { actor, reason, authorization: grant(ctx, organizationId, "member.status") });
       }),
 
     reactivateMember: ({ actor, organizationId, teamMembershipId }) =>
@@ -228,7 +234,7 @@ export function createTeamService(options: TeamServiceOptions): TeamService {
         const row = await loadRow(ctx, organizationId, teamMembershipId);
         if (await isOwnRow(ctx, row)) throw forbidden("lift your own suspension");
         await require(ctx, organizationId, keys.membersManage, "reactivate people in this team", row.teamId);
-        return ctx.tx.teamMemberships.setStatus(organizationId, row.id, "active", { actor });
+        return ctx.tx.teamMemberships.setStatus(organizationId, row.id, "active", { actor, authorization: grant(ctx, organizationId, "member.status") });
       }),
 
     setResponsibility: ({ actor, organizationId, teamMembershipId, responsibility }) =>
@@ -239,7 +245,7 @@ export function createTeamService(options: TeamServiceOptions): TeamService {
         if (responsibility === "owner" || row.responsibility === "owner") {
           await require(ctx, organizationId, keys.manage, "change the owner of this team", row.teamId);
         }
-        return ctx.tx.teamMemberships.setResponsibility(organizationId, row.id, responsibility);
+        return ctx.tx.teamMemberships.setResponsibility(organizationId, row.id, responsibility, { authorization: grant(ctx, organizationId, "member.responsibility") });
       }),
 
     assignRole: ({ actor, organizationId, teamMembershipId, roleId }) =>
@@ -248,14 +254,14 @@ export function createTeamService(options: TeamServiceOptions): TeamService {
         if (await isOwnRow(ctx, row)) throw forbidden("give yourself roles");
         await require(ctx, organizationId, keys.membersManage, "give roles in this team", row.teamId);
         await assertCanGrant(ctx, organizationId, row.teamId, [roleId]);
-        return ctx.tx.teamMemberships.assignRole(organizationId, row.id, roleId);
+        return ctx.tx.teamMemberships.assignRole(organizationId, row.id, roleId, { authorization: grant(ctx, organizationId, "member.role") });
       }),
 
     unassignRole: ({ actor, organizationId, teamMembershipId, roleId }) =>
       run(actor, async (ctx) => {
         const row = await loadRow(ctx, organizationId, teamMembershipId);
         await require(ctx, organizationId, keys.membersManage, "take roles away in this team", row.teamId);
-        return ctx.tx.teamMemberships.unassignRole(organizationId, row.id, roleId);
+        return ctx.tx.teamMemberships.unassignRole(organizationId, row.id, roleId, { authorization: grant(ctx, organizationId, "member.role") });
       }),
 
     moveMember: ({ actor, organizationId, membershipId, fromTeamId, toTeamId, id, reason }) =>
@@ -270,8 +276,8 @@ export function createTeamService(options: TeamServiceOptions): TeamService {
         if (!target || target.organizationId !== organizationId) throw new TeamError("Membership does not exist in this organization.", "team_member_unknown");
         if (sameIdentity(target.identity, actor)) throw forbidden("move yourself; ask someone with permission");
         // Add first: if the destination refuses (archived, already a member...), nothing has changed yet.
-        const joined = await ctx.tx.teamMemberships.add({ id, organizationId, teamId: toTeamId, membershipId, invitedBy: actor });
-        await ctx.tx.teamMemberships.setStatus(organizationId, from.id, "removed", { actor, reason: reason ?? "moved" });
+        const joined = await ctx.tx.teamMemberships.add({ id, organizationId, teamId: toTeamId, membershipId, invitedBy: actor, authorization: grant(ctx, organizationId, "member.add") });
+        await ctx.tx.teamMemberships.setStatus(organizationId, from.id, "removed", { actor, reason: reason ?? "moved", authorization: grant(ctx, organizationId, "member.status") });
         return joined;
       }),
   };

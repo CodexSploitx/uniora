@@ -1,6 +1,7 @@
 import { UnioraError } from "../shared/errors.js";
 import { deriveSlug, matchesSlugPattern, MAX_SLUG_LENGTH } from "../shared/slug.js";
 import type { Identity } from "../identity/types.js";
+import type { TeamAuthorization } from "./authorization.js";
 import type { Team, TeamData, TeamMemberStatus, TeamMembership, TeamResponsibility, TeamStatus } from "./types.js";
 import { TEAM_MEMBER_STATUSES, TEAM_RESPONSIBILITIES } from "./types.js";
 
@@ -25,6 +26,7 @@ export type TeamErrorCode =
   | "team_membership_transition_invalid"
   | "team_accept_forbidden"
   | "team_forbidden"
+  | "team_authorization_required"
   | "team_membership_version_conflict"
   | "team_member_unknown"
   | "team_role_invalid"
@@ -44,6 +46,8 @@ export const MAX_TEAM_REASON_LENGTH = 500;
 export const MAX_TEAM_MEMBER_ROLES = 50;
 
 export interface CreateTeamInput {
+  /** Proof that the change is authorized (see `TeamAuthorization`). */
+  authorization: TeamAuthorization;
   id: string;
   /** The organization the team belongs to, forever. */
   organizationId: string;
@@ -57,6 +61,7 @@ export interface CreateTeamInput {
 }
 
 export interface UpdateTeamInput {
+  authorization: TeamAuthorization;
   name?: string;
   slug?: string;
   /** A string sets it; `null` clears it. */
@@ -69,12 +74,14 @@ export interface UpdateTeamInput {
 }
 
 export interface ArchiveTeamInput {
+  authorization: TeamAuthorization;
   actor: Identity;
   reason?: string;
   expectedVersion?: number;
 }
 
 export interface RestoreTeamInput {
+  authorization: TeamAuthorization;
   actor: Identity;
   expectedVersion?: number;
 }
@@ -110,10 +117,11 @@ export interface TeamRepository {
   /** Idempotent. */
   restore(organizationId: string, id: string, input: RestoreTeamInput): Promise<Team>;
   /** Permanently removes an ARCHIVED team and its team memberships (`team_not_archived` otherwise). The audit trail stays. */
-  delete(organizationId: string, id: string): Promise<void>;
+  delete(organizationId: string, id: string, input: { authorization: TeamAuthorization }): Promise<void>;
 }
 
 export interface AddTeamMemberInput {
+  authorization: TeamAuthorization;
   id: string;
   organizationId: string;
   teamId: string;
@@ -142,6 +150,7 @@ export interface SearchTeamMembersOptions {
 }
 
 export interface TeamMemberChangeOptions {
+  authorization: TeamAuthorization;
   /** Apply only if the team membership is still at this `version`; otherwise `team_membership_version_conflict`. */
   expectedVersion?: number;
 }
@@ -179,11 +188,11 @@ export interface TeamMembershipRepository {
    */
   accept(organizationId: string, id: string, input: { actor: Identity } & TeamMemberChangeOptions): Promise<TeamMembership>;
   /** Idempotent. */
-  setResponsibility(organizationId: string, id: string, responsibility: TeamResponsibility, options?: TeamMemberChangeOptions): Promise<TeamMembership>;
+  setResponsibility(organizationId: string, id: string, responsibility: TeamResponsibility, options: TeamMemberChangeOptions): Promise<TeamMembership>;
   /** Idempotent. Same role rules as `add`. */
-  assignRole(organizationId: string, id: string, roleId: string, options?: TeamMemberChangeOptions): Promise<TeamMembership>;
+  assignRole(organizationId: string, id: string, roleId: string, options: TeamMemberChangeOptions): Promise<TeamMembership>;
   /** Idempotent. */
-  unassignRole(organizationId: string, id: string, roleId: string, options?: TeamMemberChangeOptions): Promise<TeamMembership>;
+  unassignRole(organizationId: string, id: string, roleId: string, options: TeamMemberChangeOptions): Promise<TeamMembership>;
 }
 
 const TRANSITIONS: Record<TeamMemberStatus, readonly TeamMemberStatus[]> = {
