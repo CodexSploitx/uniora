@@ -21,6 +21,7 @@ import { MIGRATION_0018_MEMBERSHIP_FEATURE_VERSIONS } from "./migrations/0018_me
 import { MIGRATION_0019_TEAMS } from "./migrations/0019_teams.js";
 import { MIGRATION_0020_INVITATION_TEAMS } from "./migrations/0020_invitation_teams.js";
 import { MIGRATION_0021_TEAM_HIERARCHY } from "./migrations/0021_team_hierarchy.js";
+import { MIGRATION_0022_PLATFORM } from "./migrations/0022_platform.js";
 
 interface Migration {
   readonly id: string;
@@ -50,6 +51,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0019_teams", sql: MIGRATION_0019_TEAMS },
   { id: "0020_invitation_teams", sql: MIGRATION_0020_INVITATION_TEAMS },
   { id: "0021_team_hierarchy", sql: MIGRATION_0021_TEAM_HIERARCHY },
+  { id: "0022_platform", sql: MIGRATION_0022_PLATFORM },
 ];
 
 const LEDGER_TABLE = "uniora_schema_migrations";

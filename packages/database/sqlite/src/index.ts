@@ -4,3 +4,4 @@ export type { AppliedMigration, MigrationRunResult, MigrationStatus } from "./mi
 export type { QueryResult, SqliteExecutor } from "./executor.js";
 export { hasUnioraSchema, openSqliteDatabase, SqliteUrlError, sqlitePathFromUrl } from "./connection.js";
 export type { OpenSqliteOptions } from "./connection.js";
+export { createSqlitePlatformStorage } from "./platform-storage.js";

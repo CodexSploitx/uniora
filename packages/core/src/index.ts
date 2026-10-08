@@ -301,3 +301,59 @@ export type { TeamAuthorization, TeamOperation } from "./team/authorization.js";
 export { TEAM_OPERATIONS, assertTeamAuthorization } from "./team/authorization.js";
 export type { TrustedTeamStorage, TrustedTeamStorageOptions, TrustedTeamTransaction } from "./team/trusted.js";
 export { createTrustedTeamStorage } from "./team/trusted.js";
+
+export type { PlatformMember, PlatformMemberStatus, PlatformRole, PlatformStatusChange } from "./platform/types.js";
+export { PLATFORM_ADMIN_ROLE_KEY, PLATFORM_MEMBER_STATUSES } from "./platform/types.js";
+export type { PlatformErrorCode } from "./platform/errors.js";
+export {
+  MAX_PLATFORM_PERMISSION_LENGTH,
+  MAX_PLATFORM_ROLE_PERMISSIONS,
+  PLATFORM_ALL,
+  PLATFORM_PERMISSIONS,
+  assertValidPlatformPermission,
+  isPlatformWildcard,
+  isValidPlatformPermission,
+  platformKeyCovers,
+  platformPermissionsCover,
+  platformPermissionsCoverAll,
+} from "./platform/permissions.js";
+export type { PlatformAuthorization, PlatformOperation } from "./platform/authorization.js";
+export { PLATFORM_OPERATIONS, assertPlatformAuthorization } from "./platform/authorization.js";
+export type {
+  AddPlatformMemberInput,
+  CreatePlatformRoleInput,
+  PlatformMemberChange,
+  PlatformMemberRepository,
+  PlatformRoleRepository,
+  PlatformStorage,
+  PlatformTransaction,
+  SearchPlatformMembersOptions,
+  SearchPlatformRolesOptions,
+  UpdatePlatformRoleInput,
+} from "./platform/repository.js";
+export {
+  MAX_PLATFORM_MEMBER_ROLES,
+  MAX_PLATFORM_REASON_LENGTH,
+  MAX_PLATFORM_ROLE_DESCRIPTION_LENGTH,
+  MAX_PLATFORM_ROLE_NAME_LENGTH,
+  PLATFORM_LOCK_KEY,
+  PlatformError,
+  assertPlatformId,
+  assertPlatformIdentity,
+  assertPlatformVersion,
+  assertValidAddPlatformMember,
+  assertValidCreatePlatformRole,
+  assertValidUpdatePlatformRole,
+  normalizePlatformPermissions,
+  sanitizePlatformReason,
+} from "./platform/repository.js";
+export type { PlatformDecision, PlatformEngine, PlatformEngineOptions, PlatformReader } from "./platform/engine.js";
+export { createPlatformEngine, permissionsOfRoles } from "./platform/engine.js";
+export type { GrantSupportAccessInput, PlatformActor, PlatformService, PlatformServiceOperation, PlatformServiceOptions } from "./platform/service.js";
+export { createPlatformService } from "./platform/service.js";
+export type { BootstrapPlatformInput, BootstrapPlatformResult } from "./platform/bootstrap.js";
+export { bootstrapPlatform } from "./platform/bootstrap.js";
+export type { MemoryPlatformStorageOptions } from "./platform/memory.js";
+export { createMemoryPlatformStorage } from "./platform/memory.js";
+export type { PlatformCommand, PlatformCommandContext, PlatformHttpError } from "./platform/commands.js";
+export { PLATFORM_COMMANDS, isPlatformCommand, platformErrorToHttp, runPlatformCommand } from "./platform/commands.js";

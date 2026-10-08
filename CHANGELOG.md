@@ -4,6 +4,10 @@ All notable changes to UNIORA. Packages are released in lockstep, so one version
 
 ## Unreleased
 
+### Added
+
+- **Platform administrators** (a scope apart from organizations): who administers the whole project. `PlatformStorage` (`platformRoles`, `platformMembers`, plus the audit log) is a SEPARATE object from `UnioraStorage`, so it is not a breaking change and organization code never holds it. Platform roles are sets of `platform.*` permissions (prefix wildcards such as `platform.organizations.*`; `platform.*` only on the system role **Platform Administrator**, `platform_admin`); members are exact identities (links are never followed). `createPlatformEngine` (`can`, `permissionsOf`, fail-closed, optional `onDecision`), `createPlatformService` (the only way to change roles and members: no self-promotion, no escalation above your own permissions, the last active administrator is protected, optional `stepUp`, audited with the actor as global `platform.*` entries in the same transaction; plus `listOrganizations`, `setOrganizationStatus`, `grantSupportAccess` for yourself and `revokeSupportAccess`), `bootstrapPlatform` (works once) and `runPlatformCommand` / `platformErrorToHttp` with `platformCommand` (Express) and `platformCommandRoute` (Next) and the guards `requirePlatformPermission` / `assertPlatformCan`. **The storage enforces it**: every write needs a single-use `PlatformAuthorization` that only the service and the bootstrap can issue (`platform_authorization_required`), and the databases refuse leaving the platform without an active administrator (`platform_last_admin`) or changing a system role, with triggers, against any SQL client. Backends: `createMemoryPlatformStorage`, `createPostgresPlatformStorage` (own schema `uniora_platform`, migration `0037`) and `createSqlitePlatformStorage` (migration `0022`); `definePlatformConformance` in the conformance suite. CLI: `uniora platform init --admin provider:subject` and `uniora platform status`. New audit actions `platform.*`. See `guides/platform.md`. Postgres tests now run their files one after another (they share one test database).
+
 ## 0.5.1 - 2026-10-08
 
 ### Fixed

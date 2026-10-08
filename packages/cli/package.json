@@ -46,6 +46,7 @@
     "prepack": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@uniora/core": "workspace:^",
     "@uniora/postgres": "workspace:^",
     "@uniora/sqlite": "workspace:^",
     "@uniora/studio": "workspace:^",

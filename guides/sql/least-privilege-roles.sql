@@ -46,3 +46,25 @@ grant select on uniora.schema_migrations to uniora_app;
 
 -- Sequences used by inserts (e.g. the audit chain position).
 grant usage, select on all sequences in schema uniora to uniora_app;
+
+-- ---------------------------------------------------------------------------------------------------------------------
+-- Platform scope (optional; only if you use the platform administrators, see guides/platform.md)
+--
+-- The platform tables live in their OWN schema, `uniora_platform`. uniora_app is deliberately given NO access to it: the code
+-- that serves organizations cannot read or change who administers the platform, even if it is compromised. Give the platform
+-- schema to a separate role that only your platform admin service connects as (and build `createPostgresPlatformStorage` over
+-- its own pool). Run this after `uniora migrate` (migration 0037), as uniora_migrator or a superuser.
+--
+--   create role uniora_platform_app login password '...' nosuperuser nocreaterole nocreatedb;
+-- ---------------------------------------------------------------------------------------------------------------------
+--
+-- grant usage on schema uniora_platform to uniora_platform_app;
+-- grant select, insert, update, delete on all tables in schema uniora_platform to uniora_platform_app;
+--
+-- -- Platform changes are audited in the main audit log (global entries), in the same transaction:
+-- grant usage on schema uniora to uniora_platform_app;
+-- grant select, insert on uniora.audit_logs to uniora_platform_app;
+-- grant usage, select on all sequences in schema uniora to uniora_platform_app;
+--
+-- -- And make sure the organization role can NOT reach it:
+-- revoke all on schema uniora_platform from uniora_app;

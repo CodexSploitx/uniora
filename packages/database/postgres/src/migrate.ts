@@ -36,6 +36,7 @@ import { MIGRATION_0033_MEMBERSHIP_FEATURE_VERSIONS } from "./migrations/0033_me
 import { MIGRATION_0034_TEAMS } from "./migrations/0034_teams.js";
 import { MIGRATION_0035_INVITATION_TEAMS } from "./migrations/0035_invitation_teams.js";
 import { MIGRATION_0036_TEAM_HIERARCHY } from "./migrations/0036_team_hierarchy.js";
+import { MIGRATION_0037_PLATFORM } from "./migrations/0037_platform.js";
 
 interface Migration {
   readonly id: string;
@@ -80,6 +81,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0034_teams", sql: MIGRATION_0034_TEAMS },
   { id: "0035_invitation_teams", sql: MIGRATION_0035_INVITATION_TEAMS },
   { id: "0036_team_hierarchy", sql: MIGRATION_0036_TEAM_HIERARCHY },
+  { id: "0037_platform", sql: MIGRATION_0037_PLATFORM },
 ];
 
 /**

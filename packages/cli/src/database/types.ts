@@ -23,6 +23,21 @@ export interface ConnectionProbe {
   readonly message: string;
 }
 
+/** Estado del ámbito de plataforma (`uniora platform status`). */
+export interface PlatformStatus {
+  /** ¿Existen ya las tablas de plataforma (migración aplicada)? */
+  readonly migrated: boolean;
+  /** ¿Hay al menos un miembro de plataforma? */
+  readonly initialised: boolean;
+  readonly members: number;
+  readonly activeAdmins: number;
+}
+
+export interface PlatformInitResult {
+  readonly memberId: string;
+  readonly roleId: string;
+}
+
 /**
  * Lo que los comandos (`check`, `migrate`, `doctor`) necesitan de una base de
  * datos, sin saber cuál es. Cada proveedor la implementa en su propio
@@ -48,6 +63,10 @@ export interface DatabaseDriver {
   auditIntegrity(): Promise<CheckResult>;
   /** Invariante "toda organización tiene ≥ 1 owner". Solo tiene sentido con el esquema completo. */
   ownerInvariant(): Promise<CheckResult>;
+  /** Solo lectura. */
+  platformStatus(): Promise<PlatformStatus>;
+  /** Crea el rol de sistema y el primer Platform Administrator. Falla si la plataforma ya está inicializada. Solo con intención `"write"`. */
+  platformInit(admin: { provider: string; subject: string }, actor: { provider: string; subject: string }): Promise<PlatformInitResult>;
   close(): Promise<void>;
 }
 
