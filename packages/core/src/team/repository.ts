@@ -48,6 +48,8 @@ export const MAX_TEAM_EXTERNAL_ID_LENGTH = 200;
 export const MAX_TEAM_DATA_BYTES = 16 * 1024;
 export const MAX_TEAM_REASON_LENGTH = 500;
 export const MAX_TEAM_MEMBER_ROLES = 50;
+/** Teams one member can belong to for policy evaluation; a member in more is `subject.teamIds` unavailable (fail closed). */
+export const MAX_SUBJECT_TEAMS = 500;
 /** Levels in a team tree, counting the top-level team as 1. */
 export const MAX_TEAM_DEPTH = 8;
 
@@ -213,6 +215,12 @@ export interface TeamMembershipRepository {
   add(input: AddTeamMemberInput): Promise<TeamMembership>;
   findById(organizationId: string, id: string): Promise<TeamMembership | null>;
   find(organizationId: string, teamId: string, membershipId: string): Promise<TeamMembership | null>;
+  /**
+   * The ids of the ACTIVE teams this organization membership is an ACTIVE member of (a pending, suspended or removed team
+   * membership, or an archived team, does not count), ordered by id, at most `limit` (default 1000). Ask for one more than you
+   * can handle to know whether the list was cut. One indexed query: this is what the policy engine reads as `subject.teamIds`.
+   */
+  activeTeamIds(organizationId: string, membershipId: string, options?: { limit?: number }): Promise<string[]>;
   search(options: SearchTeamMembersOptions): Promise<TeamMembership[]>;
   count(options: Omit<SearchTeamMembersOptions, "limit" | "after">): Promise<number>;
   /**

@@ -14,6 +14,7 @@ import { createEntitlementRepository } from "./repositories/entitlement.js";
 import { createSupportGrantRepository } from "./repositories/support-grant.js";
 import { createTeamRepository } from "./repositories/team.js";
 import { createTeamMembershipRepository } from "./repositories/team-membership.js";
+import { createPolicyRepository } from "./repositories/policy.js";
 
 function createTransactionScope(db: SqliteExecutor): UnioraTransaction {
   // Built once and passed into `createIdentityLinkRepository` too: `link()`
@@ -35,6 +36,7 @@ function createTransactionScope(db: SqliteExecutor): UnioraTransaction {
     supportGrants: createSupportGrantRepository(db),
     teams: createTeamRepository(db),
     teamMemberships: createTeamMembershipRepository(db),
+    policies: createPolicyRepository(db),
   };
 }
 

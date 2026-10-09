@@ -6,6 +6,7 @@ import { assertOrganizationStatus, sanitizeStatusReason } from "../organization/
 import type { CreateOrganizationInput, OrganizationRepository } from "../organization/repository.js";
 import { OrganizationError, assertValidSlug, resolveOrganizationSlug, sanitizeOrganizationName } from "../organization/slug.js";
 import type { Membership, MembershipStatus } from "../membership/types.js";
+import { createMemoryPolicyRepository } from "../policy/memory.js";
 import type { BlockMembershipInput, CreateMembershipInput, MembershipListing, MembershipRepository, SearchMembershipsOptions } from "../membership/repository.js";
 import { MembershipError, assertBlockUntil, sanitizeBlockReason } from "../membership/repository.js";
 import type { Role } from "../role/types.js";
@@ -1943,6 +1944,14 @@ function tally(requestedIds: string[], occurrences: string[]): Record<string, nu
       teamMemberships.set(row.id, row);
       return cloneTeamMembership(row);
     },
+    async activeTeamIds(organizationId, membershipId, options = {}) {
+      const limit = Math.min(Math.max(Math.trunc(options.limit ?? 1000), 1), 5000);
+      return [...teamMemberships.values()]
+        .filter((row) => row.organizationId === organizationId && row.membershipId === membershipId && row.status === "active" && teamOf(organizationId, row.teamId)?.status === "active")
+        .map((row) => row.teamId)
+        .sort()
+        .slice(0, limit);
+    },
     async findById(organizationId, id) {
       const row = teamMemberships.get(id);
       return row && row.organizationId === organizationId ? cloneTeamMembership(row) : null;
@@ -2136,6 +2145,8 @@ function tally(requestedIds: string[], occurrences: string[]): Record<string, nu
     },
   };
 
+  const policyRepository = createMemoryPolicyRepository((organizationId) => organizations.has(organizationId));
+
   return {
     organizations: organizationRepository,
     memberships: membershipRepository,
@@ -2150,6 +2161,7 @@ function tally(requestedIds: string[], occurrences: string[]): Record<string, nu
     supportGrants: supportGrantRepository,
     teams: teamRepository,
     teamMemberships: teamMembershipRepository,
+    policies: policyRepository,
     async transaction<T>(callback: (tx: UnioraTransaction) => Promise<T>): Promise<T> {
       // In-memory storage has no isolation to offer; adapters with a real
       // database (e.g. Postgres) must run `callback` inside a DB transaction.
@@ -2167,6 +2179,7 @@ function tally(requestedIds: string[], occurrences: string[]): Record<string, nu
         supportGrants: supportGrantRepository,
         teams: teamRepository,
         teamMemberships: teamMembershipRepository,
+        policies: policyRepository,
       });
     },
   };

@@ -21,6 +21,7 @@ import {
   transferOwnership,
 } from "@uniora/core";
 import type { StorageHarness } from "./harness.js";
+import { definePolicyConformance } from "./policy-suite.js";
 
 const identity = { provider: "supabase", subject: "user-1" };
 
@@ -45,6 +46,8 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
     // tests: an adapter's dialect-specific checks run here instead of in a
     // second `describe`, which would race the shared one for the same tables.
     adapterSpecificTests?.();
+
+    definePolicyConformance(harness);
 
     it("persists organizations, deriving a slug from the name", async () => {
       const storage = harness.storage();

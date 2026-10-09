@@ -10,6 +10,7 @@ import type { OutboxRepository } from "../outbox/repository.js";
 import type { EntitlementRepository } from "../entitlement/repository.js";
 import type { SupportGrantRepository } from "../support-grant/repository.js";
 import type { TeamMembershipRepository, TeamRepository } from "../team/repository.js";
+import type { PolicyRepository } from "../policy/repository.js";
 
 export interface UnioraTransaction {
   organizations: OrganizationRepository;
@@ -25,6 +26,7 @@ export interface UnioraTransaction {
   supportGrants: SupportGrantRepository;
   teams: TeamRepository;
   teamMemberships: TeamMembershipRepository;
+  policies: PolicyRepository;
   /**
    * Takes a transaction-scoped advisory lock on `key`, held until commit/rollback, so check-then-insert
    * sequences (e.g. invitation rate limits) can't interleave across processes. Optional: backends that
@@ -51,5 +53,6 @@ export interface UnioraStorage {
   readonly supportGrants: SupportGrantRepository;
   readonly teams: TeamRepository;
   readonly teamMemberships: TeamMembershipRepository;
+  readonly policies: PolicyRepository;
   transaction<T>(callback: (tx: UnioraTransaction) => Promise<T>): Promise<T>;
 }

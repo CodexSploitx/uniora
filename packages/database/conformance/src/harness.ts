@@ -1,4 +1,5 @@
 import type { UnioraStorage } from "@uniora/core";
+import type { PolicyProbe } from "./policy-suite.js";
 
 /**
  * Raw access to the adapter's database for the few assertions that must
@@ -47,4 +48,6 @@ export interface StorageHarness {
   /** A storage bound to the already-set-up database. Called once per test. */
   storage(): UnioraStorage;
   readonly probe: StorageProbe;
+  /** Raw SQL for the policy tamper-resistance assertions. */
+  readonly policyProbe: PolicyProbe;
 }

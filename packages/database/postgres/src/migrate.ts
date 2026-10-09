@@ -39,6 +39,7 @@ import { MIGRATION_0036_TEAM_HIERARCHY } from "./migrations/0036_team_hierarchy.
 import { MIGRATION_0037_PLATFORM } from "./migrations/0037_platform.js";
 import { MIGRATION_0038_PLATFORM_HARDENING } from "./migrations/0038_platform_hardening.js";
 import { MIGRATION_0039_SEARCH_INDEXES } from "./migrations/0039_search_indexes.js";
+import { MIGRATION_0040_POLICIES } from "./migrations/0040_policies.js";
 
 interface Migration {
   readonly id: string;
@@ -86,6 +87,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0037_platform", sql: MIGRATION_0037_PLATFORM },
   { id: "0038_platform_hardening", sql: MIGRATION_0038_PLATFORM_HARDENING },
   { id: "0039_search_indexes", sql: MIGRATION_0039_SEARCH_INDEXES },
+  { id: "0040_policies", sql: MIGRATION_0040_POLICIES },
 ];
 
 /**

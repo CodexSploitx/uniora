@@ -24,6 +24,7 @@ import { MIGRATION_0021_TEAM_HIERARCHY } from "./migrations/0021_team_hierarchy.
 import { MIGRATION_0022_PLATFORM } from "./migrations/0022_platform.js";
 import { MIGRATION_0023_PLATFORM_HARDENING } from "./migrations/0023_platform_hardening.js";
 import { MIGRATION_0024_SEARCH_INDEXES } from "./migrations/0024_search_indexes.js";
+import { MIGRATION_0025_POLICIES } from "./migrations/0025_policies.js";
 
 interface Migration {
   readonly id: string;
@@ -56,6 +57,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0022_platform", sql: MIGRATION_0022_PLATFORM },
   { id: "0023_platform_hardening", sql: MIGRATION_0023_PLATFORM_HARDENING },
   { id: "0024_search_indexes", sql: MIGRATION_0024_SEARCH_INDEXES },
+  { id: "0025_policies", sql: MIGRATION_0025_POLICIES },
 ];
 
 const LEDGER_TABLE = "uniora_schema_migrations";

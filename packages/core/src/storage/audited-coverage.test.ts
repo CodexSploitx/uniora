@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import { AUDIT_ACTIONS, createAuditedStorage, isStandardAuditAction } from "../index.js";
 import { createMemoryStorage } from "./memory.js";
 import { createTrustedTeamStorage } from "../team/trusted.js";
+import { createTrustedPolicyStorage } from "../policy/trusted.js";
 
 const actor = { provider: "p", subject: "operator" };
 
 /** Methods that only read (or are deliberately not audited). Anything else a repository exposes must be audited. */
-const READ_ONLY = /^(find|list|search|count|is[A-Z]|enabledKeys$|summarizeUsage$|granting|granted|get|resolve|verify|impliedBy$|expand$|activePermissions$|ancestors$|descendants$)/;
+const READ_ONLY = /^(find|list|search|count|is[A-Z]|enabledKeys$|summarizeUsage$|granting|granted|get|resolve|verify|impliedBy$|expand$|activePermissions$|ancestors$|descendants$|revisions$|activeSet$|setRevision$|activeTeamIds$)/;
 /** Deliberately not audited: a heartbeat, not a change. */
 const NOT_AUDITED = new Set(["memberships.recordActivity", "entitlements.consume", "entitlements.release"]);
 /** Audited by their own service/repository rather than by the wrapper (they already record themselves). */
@@ -17,7 +18,7 @@ describe("createAuditedStorage: every mutation is audited, with standard names",
     const raw = createMemoryStorage();
     const audited = createAuditedStorage(raw, { actor });
     const unwrapped: string[] = [];
-    for (const repository of ["organizations", "memberships", "roles", "permissions", "features", "entitlements", "supportGrants", "teams", "teamMemberships"] as const) {
+    for (const repository of ["organizations", "memberships", "roles", "permissions", "features", "entitlements", "supportGrants", "teams", "teamMemberships", "policies"] as const) {
       for (const method of Object.keys(raw[repository])) {
         const name = `${repository}.${method}`;
         if (READ_ONLY.test(method) || NOT_AUDITED.has(name)) continue;
@@ -30,7 +31,7 @@ describe("createAuditedStorage: every mutation is audited, with standard names",
 
   it("only records action names from the standard catalog, each with the actor", async () => {
     const raw = createMemoryStorage();
-    const audited = createTrustedTeamStorage(createAuditedStorage(raw, { actor }), { actor, reason: "audit coverage test" });
+    const audited = createTrustedPolicyStorage(createTrustedTeamStorage(createAuditedStorage(raw, { actor }), { actor, reason: "audit coverage test" }), { actor, reason: "audit coverage test" });
     await audited.organizations.create({ id: "org", name: "Acme" });
     await audited.organizations.rename("org", "Acme 2");
     await audited.organizations.update("org", { name: "Acme 3", slug: "acme-3" });
@@ -95,6 +96,16 @@ describe("createAuditedStorage: every mutation is audited, with standard names",
     await audited.features.unregister("agenda_chat");
     await audited.features.unregister("agenda");
     await audited.permissions.unregister("reports.read");
+    const rule = { kind: "access", effect: "deny", actions: ["reports.read"], condition: { not: { exists: "subject.teamIds" } } };
+    await audited.policies.create({ id: "p1", organizationId: "org", key: "needs-team", name: "Needs a team", definition: rule, createdBy: actor });
+    await audited.policies.update("org", "p1", { actor, name: "Needs a team (renamed)" });
+    await audited.policies.update("org", "p1", { actor, definition: { ...rule, denyReason: "no_team" }, note: "explain it" });
+    await audited.policies.activate("org", "p1", { actor });
+    await audited.policies.disable("org", "p1", { actor, reason: "testing" });
+    await audited.policies.activate("org", "p1", { actor });
+    await audited.policies.retire("org", "p1", { actor, reason: "obsolete" });
+    await audited.policies.create({ id: "p2", organizationId: "org", key: "scratch", name: "Scratch", definition: rule, createdBy: actor });
+    await audited.policies.delete("org", "p2");
 
     const entries = await raw.auditLogs.search();
     expect(entries.length).toBeGreaterThanOrEqual(20);
@@ -105,7 +116,7 @@ describe("createAuditedStorage: every mutation is audited, with standard names",
     // Every standard action the wrapper can emit was exercised at least once, none is orphaned from the catalog.
     const emitted = new Set(entries.map((entry) => entry.action));
     for (const action of AUDIT_ACTIONS) {
-      if (action.startsWith("platform.") || action.startsWith("invitation.") || action.startsWith("identity_link.") || action === "membership.left" || action === "audit_log.pruned" || action === "organization.ownership_transferred") continue;
+      if (action.startsWith("platform.") || action.startsWith("invitation.") || action.startsWith("identity_link.") || action === "membership.left" || action.startsWith("policy.decision_") || action === "audit_log.pruned" || action === "organization.ownership_transferred") continue;
       expect(emitted.has(action), `${action} is in the catalog but never emitted`).toBe(true);
     }
   });
