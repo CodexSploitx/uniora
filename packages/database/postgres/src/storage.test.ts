@@ -69,7 +69,67 @@ const harness: StorageHarness = {
       await withoutAuditProtection(`delete from uniora.audit_logs where id = '${id.replace(/'/g, "''")}'`);
     },
   },
+  policyProbe: {
+    updateRevisionDirectly: (policyId, revision) => attempt(`update uniora.policy_revisions set note = 'tampered' where policy_id = $1 and revision = $2`, [policyId, revision]),
+    deleteRevisionDirectly: (policyId, revision) => attempt(`delete from uniora.policy_revisions where policy_id = $1 and revision = $2`, [policyId, revision]),
+    reviveRetiredDirectly: (policyId) => attempt(`update uniora.policies set status = 'active', version = version + 1 where id = $1`, [policyId]),
+    deleteDirectly: (policyId) => attempt(`delete from uniora.policies where id = $1`, [policyId]),
+    attachRevisionOfOtherOrganizationDirectly: (policyId, organizationId) =>
+      attempt(
+        `insert into uniora.policy_revisions (policy_id, organization_id, revision, definition, definition_hash, created_by_provider, created_by_subject)
+         select id, $2, 99, definition, definition_hash, 'p', 's' from uniora.policies where id = $1`,
+        [policyId, organizationId],
+      ),
+    moveToOtherOrganizationDirectly: (policyId, organizationId) =>
+      attempt(`update uniora.policies set organization_id = $2, version = version + 1 where id = $1`, [policyId, organizationId]),
+    changeHashDirectly: (policyId) => attempt(`update uniora.policies set definition_hash = repeat('f', 64), version = version + 1 where id = $1`, [policyId]),
+    changeDefinitionDirectly: (policyId) => attempt(`update uniora.policies set definition = definition || '{"extra": true}'::jsonb, version = version + 1 where id = $1`, [policyId]),
+    skipVersionDirectly: (policyId) => attempt(`update uniora.policies set name = 'renamed' where id = $1`, [policyId]),
+    insertWithoutRevisionDirectly: (organizationId, id) =>
+      attempt(
+        `insert into uniora.policies (id, organization_id, key, name, kind, effect, definition, definition_hash, created_by_provider, created_by_subject)
+         values ($1, $2, $1, 'orphan', 'access', 'deny', '{"kind":"access","effect":"deny"}'::jsonb, repeat('a', 64), 'p', 's')`,
+        [id, organizationId],
+      ),
+    async fillDraftsDirectly(organizationId, total) {
+      const definition = `'{"kind":"access","effect":"deny","actions":["reports.run"],"condition":{"not":{"exists":"subject.teamIds"}}}'::jsonb`;
+      const client = await pool.connect();
+      try {
+        await client.query("begin");
+        await client.query(
+          `insert into uniora.policies (id, organization_id, key, name, kind, effect, definition, definition_hash, created_by_provider, created_by_subject)
+           select 'fill-' || lpad(i::text, 4, '0'), $1, 'fill-' || lpad(i::text, 4, '0'), 'fill', 'access', 'deny', ${definition}, repeat('a', 64), 'p', 's' from generate_series(0, $2::int - 1) i`,
+          [organizationId, total],
+        );
+        await client.query(
+          `insert into uniora.policy_revisions (policy_id, organization_id, revision, definition, definition_hash, created_by_provider, created_by_subject)
+           select 'fill-' || lpad(i::text, 4, '0'), $1, 1, ${definition}, repeat('a', 64), 'p', 's' from generate_series(0, $2::int - 1) i`,
+          [organizationId, total],
+        );
+        await client.query("commit");
+      } catch (error) {
+        await client.query("rollback").catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+    deleteOrganizationDirectly: (organizationId) => attempt(`delete from uniora.organizations where id = $1`, [organizationId]),
+    async countRows(organizationId) {
+      const count = async (table: string) =>
+        Number((await pool.query<{ n: string }>(`select count(*)::text as n from uniora.${table} where organization_id = $1`, [organizationId])).rows[0]!.n);
+      return { policies: await count("policies"), revisions: await count("policy_revisions"), counters: await count("policy_set_revisions") };
+    },
+  },
 };
+
+/** Runs a statement as any client could; `"rejected"` when the database refuses it. */
+function attempt(sql: string, params: unknown[]): Promise<"rejected" | "applied"> {
+  return pool.query(sql, params).then(
+    () => "applied" as const,
+    () => "rejected" as const,
+  );
+}
 
 /** What a superuser (or the table owner) could do: switch the append-only trigger off, edit, switch it back on. */
 async function withoutAuditProtection(statement: string): Promise<void> {

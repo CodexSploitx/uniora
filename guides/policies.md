@@ -161,9 +161,35 @@ cached by UNIORA; if you cache them, key them on `policyRevision` plus whatever 
   authentication through `environment.*`; they complement, never replace, the host's own step-up flow.
 - **Platform baseline policies** that apply to every organization, administered from the platform scope.
 
+## Storage
+
+Policies live in `storage.policies` (memory, SQLite, PostgreSQL), all held to the same conformance suite.
+
+- **Isolation by construction.** Every method takes the organization id and treats a policy of another organization like one that does
+  not exist. In the databases, `policy_revisions` references its policy through a composite key that includes `organization_id`, and
+  the policy points at its current revision with another one, so a revision can never be attached to a policy of another organization.
+- **Writes need an authorization.** Like Teams, every write of `storage.policies` demands a short-lived (60 s) `PolicyAuthorization`
+  bound to the organization, the actor and the operation. `createPolicyService` issues it after asking the authorization engine;
+  `createTrustedPolicyStorage` is the audited back-office route (imports, sync jobs, tests) and must never serve end-user requests.
+- **The database enforces the lifecycle too**, with triggers: a retired policy cannot change, only legal status moves are accepted,
+  `activated_at` is set once, a policy that was ever active cannot be deleted, `version` goes up by one per change, revisions are
+  immutable (no update, no delete) and the definition on the policy row must equal its current revision. Limits are enforced as well:
+  1000 policies per organization, 200 active, 1000 revisions per policy. Concurrent activations at the limit are serialised (an
+  advisory lock on PostgreSQL, the single writer on SQLite) so exactly one of two wins.
+- **Limits of that protection.** Someone who can disable triggers (PostgreSQL superuser, `session_replication_role = replica`) or
+  rewrite the file (SQLite) can bypass them; the revision hash is computed by UNIORA, the database checks that it is consistent
+  between the policy and its revision but cannot recompute it.
+- **Performance.** A single organization has at most 1000 policies, and every query starts with `organization_id`, so each read is a
+  short index range scan regardless of how many organizations or members exist. Measured with `EXPLAIN (ANALYZE)` on PostgreSQL with
+  200,000 policies spread over 4,000 organizations: the active set (`policies_active_idx`), a search with filters and cursor, a lookup
+  by key and the policy-set revision all use an index and finish in well under a millisecond. `subject.teamIds` is one indexed query
+  (`team_memberships_member_idx`), capped at 500 teams.
+
 ## Status of this release
 
 Phase 1 is built as a stack of changes. This section is updated by each.
 
 - Definition language, validation and the pure evaluator (`parsePolicyDefinition`, `evaluatePolicy`, `evaluatePolicySet`): **done**.
-- Storage (memory, SQLite, PostgreSQL), authorization tokens, service, engine integration, audit: in progress.
+- Storage (memory, SQLite migration 0025, PostgreSQL migration 0040), authorization tokens, service, engine integration
+  (`engine.authorize`), audit (`policy.*` entries and the decision auditor): **done**.
+- Express and Next routes, Studio read-only view, internal red team and release: in progress.
