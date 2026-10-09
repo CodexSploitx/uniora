@@ -466,3 +466,5 @@ export type { PolicyActor, PolicyPermissionKeys, PolicyService, PolicyServiceOpt
 export { POLICY_PERMISSIONS, createPolicyService } from "./policy/service.js";
 export type { PolicyDecisionAuditorOptions } from "./policy/auditor.js";
 export { createPolicyDecisionAuditor } from "./policy/auditor.js";
+export type { PolicyCommand, PolicyCommandContext, PolicyHttpError } from "./policy/commands.js";
+export { POLICY_COMMANDS, isPolicyCommand, policyErrorToHttp, runPolicyCommand } from "./policy/commands.js";

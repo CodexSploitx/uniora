@@ -8,3 +8,5 @@ export type { TeamCommandRouteInput } from "./teams.js";
 export { teamCommandRoute } from "./teams.js";
 export type { PlatformCommandRouteInput } from "./platform.js";
 export { PlatformDeniedError, assertPlatformCan, platformCommandRoute } from "./platform.js";
+export type { PolicyCommandRouteInput } from "./policies.js";
+export { PolicyDeniedError, assertAuthorized, authorizeResourceRoute, policyCommandRoute } from "./policies.js";
