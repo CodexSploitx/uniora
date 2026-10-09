@@ -165,6 +165,27 @@ export interface TeamRow {
   childCount: number;
 }
 
+/** A policy as Studio lists it: the summary only, never the definition. */
+export interface PolicyRow {
+  id: string;
+  key: string;
+  name: string;
+  kind: "access" | "resource" | "scope" | "feature";
+  effect: "deny" | "require";
+  status: "draft" | "active" | "disabled" | "retired";
+  revision: number;
+  updatedAt: string;
+}
+
+export interface PolicyRevisionRow {
+  revision: number;
+  createdAt: string;
+  createdBy: { provider: string; subject: string };
+  note?: string;
+  /** First characters of the SHA-256 of the canonical definition. */
+  hash: string;
+}
+
 export interface TeamMemberRow {
   /** The team membership id. */
   id: string;

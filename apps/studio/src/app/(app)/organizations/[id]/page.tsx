@@ -9,6 +9,7 @@ import { OrganizationStatusDialog } from "@/components/organizations/organizatio
 import { StatusBadge } from "@/components/shared/status";
 import { RenameOrganizationDialog } from "@/components/organizations/rename-organization-dialog";
 import { RolesTab } from "@/components/organizations/roles-tab";
+import { PoliciesTab } from "@/components/organizations/policies-tab";
 import { TeamsTab } from "@/components/organizations/teams-tab";
 import { ActivityFeed } from "@/components/shared/activity-feed";
 import { CopyButton } from "@/components/shared/copy-button";
@@ -24,6 +25,8 @@ import {
   getOrgHeader,
   getOrgInvitationsPage,
   getOrgMembersPage,
+  getOrgPoliciesPage,
+  getPolicyDetail,
   getOrgRolesPage,
   getOrgTeamsPage,
   getRolePermissionsPage,
@@ -57,6 +60,9 @@ export default async function OrganizationPage(props: PageProps<"/organizations/
   const after = param(searchParams.after);
   const rawStatus = param(searchParams.status);
   const memberStatus = rawStatus === "active" || rawStatus === "suspended" || rawStatus === "blocked" ? rawStatus : undefined;
+
+  const rawPolicyStatus = param(searchParams.pstatus);
+  const policyStatus = rawPolicyStatus === "draft" || rawPolicyStatus === "active" || rawPolicyStatus === "disabled" || rawPolicyStatus === "retired" ? rawPolicyStatus : undefined;
 
   return (
     <>
@@ -108,6 +114,17 @@ export default async function OrganizationPage(props: PageProps<"/organizations/
           after={after}
           teamId={param(searchParams.team)}
           memberAfter={param(searchParams.mafter)}
+        />
+      )}
+      {tab === "policies" && (
+        <PoliciesSection
+          organizationId={organization.id}
+          orgPath={orgPath}
+          q={q}
+          after={after}
+          status={policyStatus}
+          policyId={param(searchParams.policy)}
+          revisionsBefore={param(searchParams.rbefore)}
         />
       )}
       {tab === "features" && (
@@ -214,6 +231,34 @@ async function TeamsSection(props: { organizationId: string; orgPath: string; re
       selectedTeamId={detail ? selectedTeamId : null}
       detail={detail}
       defaultProvider={getDefaultAuthProvider()}
+    />
+  );
+}
+
+async function PoliciesSection(props: {
+  organizationId: string;
+  orgPath: string;
+  q: string;
+  after?: string;
+  status?: "draft" | "active" | "disabled" | "retired";
+  policyId?: string;
+  revisionsBefore?: string;
+}) {
+  const page = await getOrgPoliciesPage(props.organizationId, { query: props.q, cursor: props.after, status: props.status });
+  // No policy chosen yet -> show the first one, so the panel is never empty when policies exist.
+  const selectedId = props.policyId ?? page.items[0]?.id ?? null;
+  const before = props.revisionsBefore ? Number(props.revisionsBefore) : undefined;
+  const detail = selectedId ? await getPolicyDetail(props.organizationId, selectedId, { before }) : null;
+  return (
+    <PoliciesTab
+      orgPath={props.orgPath}
+      policies={page.items}
+      total={page.total}
+      query={props.q}
+      status={props.status}
+      nextCursor={page.nextCursor}
+      selectedPolicyId={detail ? selectedId : null}
+      detail={detail}
     />
   );
 }
