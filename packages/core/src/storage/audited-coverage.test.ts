@@ -105,7 +105,7 @@ describe("createAuditedStorage: every mutation is audited, with standard names",
     // Every standard action the wrapper can emit was exercised at least once, none is orphaned from the catalog.
     const emitted = new Set(entries.map((entry) => entry.action));
     for (const action of AUDIT_ACTIONS) {
-      if (action.startsWith("platform.") || action.startsWith("invitation.") || action.startsWith("identity_link.") || action === "membership.left" || action === "audit_log.pruned" || action === "organization.ownership_transferred") continue;
+      if (action.startsWith("platform.") || action.startsWith("access.") || action.startsWith("invitation.") || action.startsWith("identity_link.") || action === "membership.left" || action === "audit_log.pruned" || action === "organization.ownership_transferred") continue;
       expect(emitted.has(action), `${action} is in the catalog but never emitted`).toBe(true);
     }
   });

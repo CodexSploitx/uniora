@@ -122,10 +122,10 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
             await tx.memberships.assignRole(membershipId, roleId, options);
             await record(tx, "membership.role_assigned", membership?.organizationId, { type: "membership", id: membershipId }, { roleId });
           }),
-        assignOwnerRole: (membershipId, roleId) =>
+        assignOwnerRole: (membershipId, roleId, options) =>
           run(async (tx) => {
             const membership = await tx.memberships.findById(membershipId);
-            await tx.memberships.assignOwnerRole(membershipId, roleId);
+            await tx.memberships.assignOwnerRole(membershipId, roleId, options);
             await record(tx, "membership.owner_role_assigned", membership?.organizationId, { type: "membership", id: membershipId }, { roleId });
           }),
         unassignRole: (membershipId, roleId, options) =>
@@ -134,10 +134,10 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
             await tx.memberships.unassignRole(membershipId, roleId, options);
             await record(tx, "membership.role_unassigned", membership?.organizationId, { type: "membership", id: membershipId }, { roleId });
           }),
-        unassignOwnerRole: (membershipId, roleId) =>
+        unassignOwnerRole: (membershipId, roleId, options) =>
           run(async (tx) => {
             const membership = await tx.memberships.findById(membershipId);
-            await tx.memberships.unassignOwnerRole(membershipId, roleId);
+            await tx.memberships.unassignOwnerRole(membershipId, roleId, options);
             await record(tx, "membership.owner_role_unassigned", membership?.organizationId, { type: "membership", id: membershipId }, { roleId });
           }),
         // A call that changes nothing (blocking someone already blocked, suspending someone already suspended, unblocking
@@ -180,10 +180,10 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
             }
             return unblocked;
           }),
-        delete: (membershipId) =>
+        delete: (membershipId, options) =>
           run(async (tx) => {
             const membership = await tx.memberships.findById(membershipId);
-            await tx.memberships.delete(membershipId);
+            await tx.memberships.delete(membershipId, options);
             await record(tx, "membership.deleted", membership?.organizationId, { type: "membership", id: membershipId });
           }),
       },
@@ -201,21 +201,21 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
             await record(tx, "role.owner_created", created.organizationId, { type: "role", id: created.id });
             return created;
           }),
-        grantPermission: (roleId, permissionKey) =>
+        grantPermission: (roleId, permissionKey, options) =>
           run(async (tx) => {
             const [role] = await tx.roles.findByIds([roleId]);
-            await tx.roles.grantPermission(roleId, permissionKey);
+            await tx.roles.grantPermission(roleId, permissionKey, options);
             await record(tx, "role.permission_granted", role?.organizationId, { type: "role", id: roleId }, { permission: permissionKey });
           }),
-        revokePermission: (roleId, permissionKey) =>
+        revokePermission: (roleId, permissionKey, options) =>
           run(async (tx) => {
             const [role] = await tx.roles.findByIds([roleId]);
-            await tx.roles.revokePermission(roleId, permissionKey);
+            await tx.roles.revokePermission(roleId, permissionKey, options);
             await record(tx, "role.permission_revoked", role?.organizationId, { type: "role", id: roleId }, { permission: permissionKey });
           }),
-        rename: (roleId, name) =>
+        rename: (roleId, name, options) =>
           run(async (tx) => {
-            const renamed = await tx.roles.rename(roleId, name);
+            const renamed = await tx.roles.rename(roleId, name, options);
             await record(tx, "role.renamed", renamed.organizationId, { type: "role", id: roleId }, { name });
             return renamed;
           }),

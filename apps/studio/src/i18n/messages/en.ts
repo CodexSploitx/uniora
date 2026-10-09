@@ -527,6 +527,7 @@ export const en = {
   "activity.teamMemberRoleChanged": "Team role changed",
   "activity.supportAccess": "Support access changed",
   "activity.platformChange": "Platform change",
+  "activity.accessRefused": "Change of roles refused by the access rules",
   "field.reason": "Reason",
   "field.until": "End date",
   "errors.untilInvalid": "Choose an end date in the future.",

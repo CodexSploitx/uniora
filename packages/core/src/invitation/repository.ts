@@ -1,5 +1,6 @@
 import { UnioraError } from "../shared/errors.js";
 import type { Identity } from "../identity/types.js";
+import type { AccessAuthorization, AccessWriteOptions } from "../access/authorization.js";
 import type { Invitation, InvitationDeliveryStatus, InvitationStatus } from "./types.js";
 
 export type InvitationFailureReason =
@@ -50,6 +51,8 @@ export interface CreateInvitationInput {
   expiresAt: Date;
   /** The caller's idempotency key for this creation and a hash of what was asked (see `InviteInput.idempotencyKey`). */
   idempotency?: { key: string; hash: string };
+  /** Needed by a guarded storage (see `createGuardedStorage`); the invitation service issues it. Ignored otherwise. */
+  authorization?: AccessAuthorization;
 }
 
 export interface SearchInvitationsOptions {
@@ -103,9 +106,9 @@ export interface InvitationRepository {
    * expiry of a still-pending invitation, and resets its delivery to
    * `pending`. `null` when it isn't pending.
    */
-  rotateToken(id: string, input: { tokenHash: string; expiresAt: Date }): Promise<Invitation | null>;
+  rotateToken(id: string, input: { tokenHash: string; expiresAt: Date; authorization?: AccessAuthorization }): Promise<Invitation | null>;
   /** `pending` → `revoked`. `null` when it isn't pending (already accepted, revoked, expired, or unknown). */
-  revoke(id: string, now: Date): Promise<Invitation | null>;
+  revoke(id: string, now: Date, options?: AccessWriteOptions): Promise<Invitation | null>;
   /**
    * Atomically claims an invitation: `pending` and not expired → `accepted`,
    * recording who accepted it. Exactly one concurrent caller wins; everyone

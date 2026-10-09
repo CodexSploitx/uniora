@@ -20,6 +20,7 @@ import {
   leaveOrganization,
   transferOwnership,
 } from "@uniora/core";
+import { defineAccessScenarios } from "./access-suite.js";
 import type { StorageHarness } from "./harness.js";
 
 const identity = { provider: "supabase", subject: "user-1" };
@@ -45,6 +46,9 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
     // tests: an adapter's dialect-specific checks run here instead of in a
     // second `describe`, which would race the shared one for the same tables.
     adapterSpecificTests?.();
+
+    // Who may give which power to whom (guard, rules and invitations), over this very database.
+    defineAccessScenarios(harness);
 
     it("persists organizations, deriving a slug from the name", async () => {
       const storage = harness.storage();

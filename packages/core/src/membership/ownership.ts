@@ -2,6 +2,7 @@ import type { Identity } from "../identity/types.js";
 import type { UnioraStorage } from "../storage/types.js";
 import { MembershipError } from "./repository.js";
 import { randomId } from "../invitation/token.js";
+import { issueAccessAuthorization } from "../access/authorization.js";
 
 export interface TransferOwnershipInput {
   organizationId: string;
@@ -85,7 +86,10 @@ export async function leaveOrganization(storage: UnioraStorage, input: LeaveOrga
     if (membership.status !== "active") {
       throw new MembershipError("A blocked or suspended member can't leave the organization.", "membership_blocked");
     }
-    await tx.memberships.delete(membership.id);
+    // Leaving is always your own act on your own membership, so a guarded storage lets it through.
+    await tx.memberships.delete(membership.id, {
+      authorization: issueAccessAuthorization(input.identity, { operation: "member.delete", target: membership.id }),
+    });
     await tx.auditLogs.record({
       id: generateId(),
       organizationId: input.organizationId,

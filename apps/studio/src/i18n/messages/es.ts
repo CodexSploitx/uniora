@@ -524,6 +524,7 @@ export const es: Record<keyof typeof en, string> = {
   "activity.teamMemberRoleChanged": "Rol de equipo cambiado",
   "activity.supportAccess": "Acceso de soporte modificado",
   "activity.platformChange": "Cambio de plataforma",
+  "activity.accessRefused": "Cambio de roles rechazado por las reglas de acceso",
   "field.reason": "Motivo",
   "field.until": "Fecha de fin",
   "errors.untilInvalid": "Elige una fecha de fin en el futuro.",

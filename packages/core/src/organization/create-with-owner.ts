@@ -2,6 +2,7 @@ import type { Identity } from "../identity/types.js";
 import type { Membership } from "../membership/types.js";
 import type { Role } from "../role/types.js";
 import type { UnioraStorage } from "../storage/types.js";
+import { accessSet, issueAccessAuthorization } from "../access/authorization.js";
 import type { Organization } from "./types.js";
 
 export interface CreateOrganizationWithOwnerInput {
@@ -45,6 +46,13 @@ export async function createOrganizationWithOwner(
       organizationId: organization.id,
       identity: input.ownerIdentity,
       roleIds: [ownerRole.id],
+      // Founding a NEW organization gives its founder power over nothing that existed before, so a guarded storage lets it through.
+      authorization: issueAccessAuthorization(input.ownerIdentity, {
+        operation: "member.create",
+        target: input.membershipId,
+        detail: accessSet([ownerRole.id]),
+        organizationId: organization.id,
+      }),
     });
     return { organization, ownerRole, membership };
   });

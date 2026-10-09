@@ -32,7 +32,9 @@ const invitations = createInvitationService({
 
 ## Invite, resend, revoke
 
-**The service does not authorize the caller.** Check your own permission first (we suggest `members.invite`).
+**By default the service does not authorize the caller.** Check your own permission first (we suggest `members.invite`). Over a storage wrapped by
+`createGuardedStorage` (or with `access: true`) it does: the inviter needs `members.invite` and every permission of the roles they offer, and `accept`
+re-checks what the inviter can still give. See [Delegated administration](access-admin.md#invitations).
 
 ```ts
 if (!(await engine.can({ identity: actor, organizationId, permission: "members.invite" }))) throw forbidden();
