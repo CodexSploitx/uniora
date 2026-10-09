@@ -570,6 +570,7 @@ export const en = {
   "activity.policyDecisionAllowed": "Access evaluated by policy",
   "activity.supportAccess": "Support access changed",
   "activity.platformChange": "Platform change",
+  "activity.accessRefused": "Change of roles refused by the access rules",
   "field.reason": "Reason",
   "field.until": "End date",
   "errors.untilInvalid": "Choose an end date in the future.",

@@ -7,6 +7,14 @@ import type { AuthorizationEngine, AuthorizationEngineOptions } from "../authori
 import { issueTeamAuthorization } from "../team/authorization.js";
 import type { TeamMembership } from "../team/types.js";
 import { TEAM_PERMISSIONS } from "../team/service.js";
+import { AccessError } from "../access/errors.js";
+import { accessSet, issueAccessAuthorization } from "../access/authorization.js";
+import type { AccessAuthorization } from "../access/authorization.js";
+import { isGuardedStorage } from "../access/guard.js";
+import { ACCESS_PERMISSIONS, accessLockKey } from "../access/permissions.js";
+import type { AccessPermissionKeys } from "../access/permissions.js";
+import { NO_HOLDINGS, covers, holdingsOf, isSameMember, needsOfMembership, needsOfRole } from "../access/power.js";
+import { recordAccessRefusal } from "../access/refusal.js";
 import { InvitationError } from "./repository.js";
 import { generateInvitationToken, hashInvitationToken, randomId } from "./token.js";
 import { isInvitationUsable, type Invitation } from "./types.js";
@@ -46,6 +54,17 @@ export interface InvitationRateLimits {
   resendCooldownMs?: number;
 }
 
+/** Settings for the access rules of the invitation service (see `InvitationServiceOptions.access`). */
+export interface InvitationAccessOptions {
+  /** Replace any of the default permission keys (`members.invite` is the one this service asks about). */
+  permissions?: Partial<AccessPermissionKeys>;
+  /**
+   * Enforce the rules on a storage that is not wrapped by `createGuardedStorage`. The service then follows them, but other code
+   * that holds the storage can still write roles and invitations directly. Off by default (`access_storage_not_guarded`).
+   */
+  allowUnguardedStorage?: boolean;
+}
+
 export interface InvitationServiceOptions {
   storage: UnioraStorage;
   /**
@@ -65,6 +84,19 @@ export interface InvitationServiceOptions {
   engine?: AuthorizationEngineOptions;
   /** The permission the inviter needs to offer a team. Default `teams.members.add` (`TEAM_PERMISSIONS.membersAdd`). */
   teamPermission?: string;
+  /**
+   * Make the service decide who may invite with which roles, instead of leaving it to the host (see `createAccessAdminService`
+   * for the rules): the inviter needs `members.invite` and must hold every permission of every role offered (the Owner holds all);
+   * resending and revoking need the same and a reach over the invitation's roles. Accepting re-checks all of it against what the
+   * inviter holds NOW and gives only the roles they could still give (`rolesSkipped`), none at all to the inviter themselves or to
+   * a member who holds more power than they do. Refusals are `AccessError`s (`invitationErrorToHttp` answers 403).
+   *
+   * Default: on when `storage` is wrapped by `createGuardedStorage` (the guard refuses the writes otherwise), off otherwise,
+   * which keeps the old behaviour "the host authorizes". `false` turns it off on a guarded storage too, which only works with a
+   * trusted one (`createTrustedAccessStorage`). `true` or an object turns it on; on an unguarded storage that also needs
+   * `allowUnguardedStorage`.
+   */
+  access?: boolean | InvitationAccessOptions;
   /** Delivers the e-mail. Without one, invitations are still created and the link is returned for you to hand over. */
   sender?: InvitationSender;
   /** Invitation lifetime. Default 7 days, capped at 30. */
@@ -168,6 +200,8 @@ export interface AcceptInvitationInput {
 export interface AcceptInvitationResult {
   invitation: Invitation;
   membership: Membership;
+  /** Invited roles that were NOT given because the inviter could no longer give them (always empty without `access`). */
+  rolesSkipped: string[];
   /** `true` when the identity was already a member and only gained the invited roles. */
   alreadyMember: boolean;
   /** Team memberships created because the invitation offered them. */
@@ -217,6 +251,15 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
   const now = options.now ?? (() => new Date());
   const generateId = options.generateId ?? randomId;
   const teamPermission = options.teamPermission ?? TEAM_PERMISSIONS.membersAdd;
+  const accessOptions = typeof options.access === "object" ? options.access : undefined;
+  const accessEnabled = options.access === undefined ? isGuardedStorage(storage) : options.access !== false;
+  if (accessEnabled && !isGuardedStorage(storage) && accessOptions?.allowUnguardedStorage !== true) {
+    throw new AccessError(
+      "The invitation service enforces the access rules only over a storage wrapped by createGuardedStorage(...). Pass access: { allowUnguardedStorage: true } to accept that.",
+      "access_storage_not_guarded",
+    );
+  }
+  const accessKeys: AccessPermissionKeys = { ...ACCESS_PERMISSIONS, ...accessOptions?.permissions };
   const ttlMs = Math.min(positive(options.ttlMs, 7 * DAY_MS, "ttlMs"), 30 * DAY_MS);
   if (ttlMs <= 0) throw new RangeError("ttlMs must be greater than zero.");
 
@@ -308,6 +351,33 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
       }
     }
     return unique.sort();
+  }
+
+  /** The engine the access rules ask, bound to `tx` so the decision and the write see the same data. */
+  const engineOver = (tx: Parameters<Parameters<UnioraStorage["transaction"]>[0]>[0]) =>
+    createAuthorizationEngine({ ...tx, transaction: storage.transaction.bind(storage) } as UnioraStorage, options.engine);
+
+  /**
+   * The access rules for creating, resending or revoking: the inviter needs `members.invite` and must hold everything the
+   * invitation's roles hold. Runs inside `tx`; returns nothing, throws `AccessError`.
+   */
+  async function assertMayInvite(
+    tx: Parameters<Parameters<UnioraStorage["transaction"]>[0]>[0],
+    organizationId: string,
+    inviter: Identity,
+    roleIds: readonly string[],
+  ): Promise<void> {
+    await tx.lock?.(accessLockKey(organizationId));
+    if (!(await engineOver(tx).can({ identity: inviter, organizationId, permission: accessKeys.membersInvite }))) {
+      throw new AccessError("You are not allowed to manage invitations.", "access_forbidden");
+    }
+    const roles = (await tx.roles.findByIds([...roleIds])).filter((role) => role.organizationId === organizationId);
+    const holder = await holdingsOf(tx, organizationId, inviter);
+    for (const role of roles) {
+      if (!covers(holder, needsOfRole(role))) {
+        throw new AccessError("You cannot offer a role that holds permissions you do not hold yourself.", "access_escalation");
+      }
+    }
   }
 
   const IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -450,7 +520,11 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
       const outcome = await serialized(() =>
         storage.transaction(async (tx): Promise<{ replay: Invitation } | { created: Invitation }> => {
           // Cross-process: sorted advisory locks so concurrent invites to the same email/org can't both pass the check.
-          for (const key of [`invite:email:${email}`, `invite:org:${input.organizationId}`].sort()) await tx.lock?.(key);
+          const lockKeys = [`invite:email:${email}`, `invite:org:${input.organizationId}`];
+          if (accessEnabled) lockKeys.push(accessLockKey(input.organizationId));
+          for (const key of lockKeys.sort()) await tx.lock?.(key);
+          // Before the idempotency lookup too: a replay shows an invitation, which only someone allowed to invite may see.
+          if (accessEnabled) await assertMayInvite(tx, input.organizationId, input.invitedBy, roles.map((role) => role.id));
           if (idempotency) {
             const earlier = await tx.invitations.findByIdempotencyKey(input.organizationId, idempotency.key);
             if (earlier) {
@@ -460,11 +534,21 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
               return { replay: earlier.invitation };
             }
           }
+          const invitationId = generateId();
+          let authorization: AccessAuthorization | undefined;
+          if (accessEnabled) {
+            authorization = issueAccessAuthorization(input.invitedBy, {
+              operation: "invitation.create",
+              target: invitationId,
+              detail: accessSet(roles.map((role) => role.id)),
+              organizationId: input.organizationId,
+            });
+          }
           await checkRate(tx.invitations, input.organizationId, email);
           const at = now();
           await tx.invitations.expireStale(input.organizationId, email, at);
           const created = await tx.invitations.create({
-            id: generateId(),
+            id: invitationId,
             organizationId: input.organizationId,
             email,
             roleIds: roles.map((role) => role.id),
@@ -474,6 +558,7 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
             createdAt: at,
             expiresAt: new Date(at.getTime() + lifetime),
             ...(idempotency ? { idempotency } : {}),
+            ...(authorization ? { authorization } : {}),
           });
           await auditEvent(tx, input.invitedBy, "invitation.created", created, {
             roles: roles.map((role) => role.name),
@@ -481,7 +566,15 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
           });
           return { created };
         }),
-      );
+      ).catch(async (error: unknown) => {
+        await recordAccessRefusal(storage, error, {
+          organizationId: input.organizationId,
+          actor: input.invitedBy,
+          operation: "invite",
+          target: { type: "organization", id: input.organizationId },
+        });
+        throw error;
+      });
 
       if ("replay" in outcome) return replayResult(outcome.replay);
       return deliver(outcome.created, token, input.locale, input.invitedBy);
@@ -501,14 +594,28 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
       const token = generateInvitationToken();
       const at = now();
       const tokenHash = await hashInvitationToken(token);
-      const rotated = await storage.transaction(async (tx) => {
-        const next = await tx.invitations.rotateToken(existing.id, {
-          tokenHash,
-          expiresAt: new Date(at.getTime() + lifetime),
+      const rotated = await storage
+        .transaction(async (tx) => {
+          if (accessEnabled) await assertMayInvite(tx, existing.organizationId, ref.actor, existing.roleIds);
+          const next = await tx.invitations.rotateToken(existing.id, {
+            tokenHash,
+            expiresAt: new Date(at.getTime() + lifetime),
+            ...(accessEnabled
+              ? { authorization: issueAccessAuthorization(ref.actor, { operation: "invitation.manage", target: existing.id, detail: "rotate" }) }
+              : {}),
+          });
+          if (next) await auditEvent(tx, ref.actor, "invitation.resent", next);
+          return next;
+        })
+        .catch(async (error: unknown) => {
+          await recordAccessRefusal(storage, error, {
+            organizationId: existing.organizationId,
+            actor: ref.actor,
+            operation: "resend",
+            target: { type: "invitation", id: existing.id },
+          });
+          throw error;
         });
-        if (next) await auditEvent(tx, ref.actor, "invitation.resent", next);
-        return next;
-      });
       if (!rotated) throw new InvitationError("Only a pending invitation can be sent again.", "invalid");
       return deliver(rotated, token, resendOptions?.locale, ref.actor);
     },
@@ -516,11 +623,26 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
     async revoke(ref) {
       const existing = await findInOrganization(ref);
       if (!existing) throw new InvitationError("Only a pending invitation can be revoked.", "invalid");
-      const revoked = await storage.transaction(async (tx) => {
-        const result = await tx.invitations.revoke(existing.id, now());
-        if (result) await auditEvent(tx, ref.actor, "invitation.revoked", result);
-        return result;
-      });
+      const revoked = await storage
+        .transaction(async (tx) => {
+          if (accessEnabled) await assertMayInvite(tx, existing.organizationId, ref.actor, existing.roleIds);
+          const result = await tx.invitations.revoke(
+            existing.id,
+            now(),
+            accessEnabled ? { authorization: issueAccessAuthorization(ref.actor, { operation: "invitation.manage", target: existing.id, detail: "revoke" }) } : undefined,
+          );
+          if (result) await auditEvent(tx, ref.actor, "invitation.revoked", result);
+          return result;
+        })
+        .catch(async (error: unknown) => {
+          await recordAccessRefusal(storage, error, {
+            organizationId: existing.organizationId,
+            actor: ref.actor,
+            operation: "revoke",
+            target: { type: "invitation", id: existing.id },
+          });
+          throw error;
+        });
       if (!revoked) throw new InvitationError("Only a pending invitation can be revoked.", "invalid");
       return revoked;
     },
@@ -575,21 +697,57 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
 
       try {
         return await storage.transaction(async (tx) => {
+          if (accessEnabled) await tx.lock?.(accessLockKey(invitation.organizationId));
+          let membership = await tx.memberships.findByIdentity(invitation.organizationId, input.identity);
+          const alreadyMember = membership !== null;
+
+          // The offer was authorized when it was made; ask again, here, what the inviter can give NOW. Roles they could not give
+          // (they lost the permission, left, or the role grew past them) are skipped and reported, never forced; so is everything
+          // when the invitee is the inviter themselves or already holds more power than the inviter (nobody changes their own
+          // roles, nobody touches someone above them).
+          let grantable = usable;
+          let rolesSkipped: string[] = [];
+          if (accessEnabled) {
+            const inviter = invitation.invitedBy;
+            const mayInvite = await engineOver(tx).can({ identity: inviter, organizationId: invitation.organizationId, permission: accessKeys.membersInvite });
+            const holder = mayInvite ? await holdingsOf(tx, invitation.organizationId, inviter) : NO_HOLDINGS;
+            let reachable = mayInvite;
+            // Nobody gives themselves roles by inviting their own address (a support operator would turn a grant into a membership).
+            if (reachable) {
+              const [a, b] = await Promise.all([tx.identityLinks.resolve(inviter), tx.identityLinks.resolve(input.identity)]);
+              reachable = !(a.provider === b.provider && a.subject === b.subject);
+            }
+            if (reachable && membership) {
+              reachable = !(await isSameMember(tx, inviter, membership)) && covers(holder, await needsOfMembership(tx, membership));
+            }
+            const full = reachable ? await tx.roles.findByIds(usable.map((role) => role.id)) : [];
+            const giveable = new Set(full.filter((role) => role.organizationId === invitation.organizationId && !role.isOwnerRole && covers(holder, needsOfRole(role))).map((role) => role.id));
+            grantable = usable.filter((role) => giveable.has(role.id));
+            rolesSkipped = usable.filter((role) => !giveable.has(role.id)).map((role) => role.id);
+            if (grantable.length === 0) throw fail("roles_unavailable");
+          }
+          // Decided above, before the invitation is claimed: a refusal never uses the invitation up (not even on a backend without rollback).
           const claimed = await tx.invitations.markAccepted({ tokenHash, identity: input.identity, now: at });
           if (!claimed) throw fail("already_accepted"); // lost a race
 
-          let membership = await tx.memberships.findByIdentity(invitation.organizationId, input.identity);
-          const alreadyMember = membership !== null;
+          const proof = (binding: Parameters<typeof issueAccessAuthorization>[1]) =>
+            accessEnabled ? { authorization: issueAccessAuthorization(invitation.invitedBy, binding) } : undefined;
+
           if (membership) {
-            for (const role of usable) await tx.memberships.assignRole(membership.id, role.id);
+            for (const role of grantable) {
+              await tx.memberships.assignRole(membership.id, role.id, proof({ operation: "member.role.assign", target: membership.id, detail: role.id }));
+            }
             membership = (await tx.memberships.findById(membership.id)) ?? membership;
           } else {
+            const membershipId = generateId();
+            const roleIds = grantable.map((role) => role.id);
             membership = await tx.memberships.create({
-              id: generateId(),
+              id: membershipId,
               organizationId: invitation.organizationId,
               identity: input.identity,
-              roleIds: usable.map((role) => role.id),
+              roleIds,
               invitedBy: invitation.invitedBy,
+              ...(proof({ operation: "member.create", target: membershipId, detail: accessSet(roleIds), organizationId: invitation.organizationId }) ?? {}),
             });
           }
 
@@ -640,7 +798,7 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
             alreadyMember,
             ...(invitation.teamIds.length > 0 ? { teamsJoined: joined.map((row) => row.teamId), teamsSkipped } : {}),
           });
-          return { invitation: claimed, membership, alreadyMember, teams: joined, teamsSkipped };
+          return { invitation: claimed, membership, rolesSkipped, alreadyMember, teams: joined, teamsSkipped };
         });
       } catch (error) {
         if (error instanceof MembershipError) throw fail("roles_unavailable");

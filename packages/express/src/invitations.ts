@@ -51,7 +51,7 @@ export interface InvitationAcceptOptions<Req> {
 
 /**
  * `POST /invite/:token/accept` — the signed-in caller joins the organization. Answers
- * `200 { organizationId, membershipId, alreadyMember, teamIds, teamsSkipped }`. Failures follow `invitationErrorToHttp`
+ * `200 { organizationId, membershipId, alreadyMember, teamIds, teamsSkipped, rolesSkipped }`. Failures follow `invitationErrorToHttp`
  * (one generic 400 for every way an accept can fail); anything unexpected goes to `next(err)`.
  */
 export function acceptInvitation<Req = unknown>(service: InvitationService, options: InvitationAcceptOptions<Req>) {
@@ -73,6 +73,7 @@ export function acceptInvitation<Req = unknown>(service: InvitationService, opti
         alreadyMember: result.alreadyMember,
         teamIds: result.teams.map((row) => row.teamId),
         teamsSkipped: result.teamsSkipped,
+        rolesSkipped: result.rolesSkipped,
       });
     } catch (error) {
       const mapped = invitationErrorToHttp(error);

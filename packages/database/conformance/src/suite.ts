@@ -20,6 +20,7 @@ import {
   leaveOrganization,
   transferOwnership,
 } from "@uniora/core";
+import { defineAccessScenarios } from "./access-suite.js";
 import type { StorageHarness } from "./harness.js";
 import { definePolicyConformance } from "./policy-suite.js";
 
@@ -47,6 +48,8 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
     // second `describe`, which would race the shared one for the same tables.
     adapterSpecificTests?.();
 
+    // Who may give which power to whom (guard, rules and invitations), over this very database.
+    defineAccessScenarios(harness);
     definePolicyConformance(harness);
 
     it("persists organizations, deriving a slug from the name", async () => {

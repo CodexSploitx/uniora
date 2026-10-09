@@ -1,3 +1,4 @@
+import { AccessError } from "../access/errors.js";
 import { InvitationError } from "./repository.js";
 
 /** An HTTP answer for a failed invitation operation, safe to send to whoever holds the link. */
@@ -15,6 +16,11 @@ export interface InvitationHttpError {
  * links or addresses exist. Only throttling and malformed input are told apart.
  */
 export function invitationErrorToHttp(error: unknown): InvitationHttpError | null {
+  // The access rules of `createInvitationService({ access })`: the caller (an administrator) may not invite with that role.
+  if (error instanceof AccessError && error.code !== "access_authorization_required" && error.code !== "access_storage_not_guarded") {
+    if (error.code === "access_forbidden") return { status: 403, body: { error: "forbidden", message: "You are not allowed to do that." } };
+    return { status: 403, body: { error: "forbidden", message: error.message } };
+  }
   if (!(error instanceof InvitationError)) return null;
   switch (error.reason) {
     case "rate_limited":

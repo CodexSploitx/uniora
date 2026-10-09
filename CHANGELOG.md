@@ -2,6 +2,25 @@
 
 All notable changes to UNIORA. Packages are released in lockstep, so one version number covers all of them. The format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased
+
+No migration. Opt-in: nothing changes for code that does not enable it, except the two small additions marked below.
+
+### Added
+
+- **Access administration: anti-escalation when giving roles in an organization.** `createAccessAdminService` is the organization-level sibling of `TeamService` and the only door for changing who has what: `assignRole`, `unassignRole`, `blockMember`, `suspendMember`, `unblockMember`, `removeMember`, `createRole`, `updateRole`, `setRolePermissions`, `grantRolePermission`, `revokeRolePermission`, `cloneRole` and `deleteRole`. It checks the actor with the engine inside the same transaction (and under a per-organization lock) and enforces four rules: (1) you can give a role, or invite with it, only if you hold every permission it carries; (2) nobody changes their own roles, status or membership (also through another linked identity); (3) you cannot touch someone who holds permissions you do not (an Owner, for example); (4) the Owner role moves only through `assignOwnerRole` / `unassignOwnerRole`. Powers are compared as implication-closed permission sets. Refusals throw `AccessError` (`access_forbidden`, `access_self_change`, `access_escalation`, `access_target_stronger`, `access_owner_protected`) and the rule refusals are audited as `access.change_refused`. Needs `members.roles.manage`, `members.invite`, `members.block`, `members.remove` and `roles.manage` (`ACCESS_PERMISSIONS`).
+- **`createGuardedStorage(storage)`** wraps any backend (memory, SQLite, Postgres, your own) so that the writes covered by the rules (memberships with roles, roles and their permissions, invitations) are refused without a single-use `AccessAuthorization` (one operation, one target, 60 s) that only the access service, the invitation service and `createTrustedAccessStorage` (for your own back office, seeds and jobs) can issue (`access_authorization_required`). `createAccessAdminService` refuses an unguarded storage unless `allowUnguardedStorage` is set. The repositories accept an optional trailing `authorization` that a plain storage ignores.
+- **Invitations**: `createInvitationService({ access })` applies rule 1 when inviting, re-resolves the inviter's power when the invitation is accepted (the roles the inviter can no longer give are skipped and listed in the new `rolesSkipped` of the result), serializes with the same lock and refuses self-invitations through a linked identity.
+- **HTTP**: `runAccessCommand` / `accessErrorToHttp` in core, `accessCommand` (Express) and `accessCommandRoute` (Next), with strict field shapes. The invitation `acceptUrl` is hidden from the response unless `includeAcceptUrl` is set.
+- **Conformance**: `defineAccessScenarios` (also called by `defineStorageConformance`) runs the rules, the token binding, concurrency and the invitation flows on memory, SQLite and PostgreSQL.
+- **Studio**: the activity feed labels `access.change_refused` in English and Spanish.
+- Guide: `guides/access-admin.md`.
+
+### Changed
+
+- `AcceptInvitationResult` has a new `rolesSkipped` field (empty unless the inviter lost power before acceptance); the Express and Next accept routes return it.
+- New audit action `access.change_refused`.
+
 ## 0.7.0 - 2026-10-09
 
 Includes new migrations: Postgres `0040`–`0041`, SQLite `0025`–`0026` (run `uniora migrate`; the new tables are small and the migrations are quick). **Breaking for custom storage implementations only (0.x):** `UnioraStorage` and `UnioraTransaction` now require a `policies` repository; the memory, SQLite and PostgreSQL storages, `createAuditedStorage` and the conformance suite already provide it. Code that only calls the repositories is unaffected.

@@ -142,6 +142,9 @@ export function describeActivity(
     case "team_member.role_assigned":
     case "team_member.role_unassigned":
       return { title: t("activity.teamMemberRoleChanged"), detail: who ?? item.target?.id, tone: "info" };
+    case "access.change_refused":
+      // The rule that stopped it, in words an operator can read (`access_escalation` -> "escalation").
+      return { title: t("activity.accessRefused"), detail: (meta(item, "code") ?? "").replace(/^access_/, "").replaceAll("_", " ") || undefined, tone: "warning" };
     case "policy.created":
       return { title: t("activity.policyCreated"), detail: meta(item, "key") ?? item.target?.id, tone: "success" };
     case "policy.updated":

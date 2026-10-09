@@ -162,6 +162,7 @@ export type {
   AcceptInvitationResult,
   DeliveryOutcome,
   InvitationPreview,
+  InvitationAccessOptions,
   InvitationRateLimits,
   InvitationRef,
   InvitationService,
@@ -172,6 +173,18 @@ export type {
 } from "./invitation/service.js";
 export { createInvitationService, normalizeInvitationEmail } from "./invitation/service.js";
 export type { InvitationHttpError } from "./invitation/http.js";
+export { AccessError } from "./access/errors.js";
+export type { AccessErrorCode } from "./access/errors.js";
+export { ACCESS_OPERATIONS } from "./access/authorization.js";
+export type { AccessAuthorization, AccessOperation, AccessWriteOptions } from "./access/authorization.js";
+export { GUARDED_WRITES, createGuardedStorage, createTrustedAccessStorage, isGuardedStorage } from "./access/guard.js";
+export type { TrustedAccessStorageOptions } from "./access/guard.js";
+export { ACCESS_PERMISSIONS } from "./access/permissions.js";
+export type { AccessPermissionKeys } from "./access/permissions.js";
+export { createAccessAdminService } from "./access/service.js";
+export type { AccessActor, AccessAdminService, AccessAdminServiceOptions, CreateRoleCommand, MemberRef, RoleRef } from "./access/service.js";
+export type { AccessCommand, AccessCommandContext, AccessHttpError, AccessServices } from "./access/commands.js";
+export { ACCESS_COMMANDS, accessErrorToHttp, isAccessCommand, runAccessCommand } from "./access/commands.js";
 export { invitationErrorToHttp } from "./invitation/http.js";
 export { generateInvitationToken, hashInvitationToken, INVITATION_TOKEN_PREFIX } from "./invitation/token.js";
 

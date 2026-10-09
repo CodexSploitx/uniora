@@ -6,5 +6,7 @@ export type { TeamCommandOptions } from "./teams.js";
 export { teamCommand } from "./teams.js";
 export type { PlatformCommandOptions, RequirePlatformPermissionOptions } from "./platform.js";
 export { platformCommand, requirePlatformPermission } from "./platform.js";
+export type { AccessCommandOptions } from "./access.js";
+export { accessCommand } from "./access.js";
 export type { AuthorizeResourceOptions, PolicyCommandOptions, ResourceAuthorizationContext } from "./policies.js";
 export { authorizeResource, policyCommand } from "./policies.js";

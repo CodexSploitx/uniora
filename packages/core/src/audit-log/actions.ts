@@ -89,6 +89,7 @@ export const AUDIT_ACTIONS = [
   "platform.support_access_granted",
   "platform.support_access_revoked",
   "platform.change_refused",
+  "access.change_refused",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

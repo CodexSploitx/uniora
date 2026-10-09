@@ -21,6 +21,7 @@ Topic guides that go deeper:
 - [Performance at scale](performance.md): paging, indexes, capped counts, measured numbers on 5 million rows, and what to know before migrating a large database.
 - [Row-level security](rls.md): SQL functions for your own policies.
 - [Events after commit (outbox)](outbox.md), [quotas (entitlements)](entitlements.md), [support grants](support-grants.md), [teams](teams.md), [policies](policies.md), [platform administrators](platform.md).
+- [Delegated administration](access-admin.md): let someone other than the Owner give roles and invite, without privilege escalation.
 - [SQL migrations as plain files](sql-migrations.md) and [writing your own storage backend](custom-backend.md).
 - [Roadmap](roadmap.md): what UNIORA does not do yet.
 

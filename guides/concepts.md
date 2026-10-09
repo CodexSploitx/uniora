@@ -106,6 +106,8 @@ still authorize the real operation. See [Frameworks](frameworks.md#react).
 You do. `engine.can` answers questions; the repositories and helpers (`roles.update`, `memberships.assignRole`,
 `transferOwnership`, `invitations.invite`, …) perform the change without asking who is calling. Put an engine check in front of
 each, with a permission you register for the purpose (we suggest `members.invite`, `roles.assign`, `organization.transfer_ownership`).
+If anyone other than the Owner may administer members, do not write the escalation rules yourself: use the access service and a guarded
+storage, see [Delegated administration](access-admin.md).
 
 ## Audit log
 

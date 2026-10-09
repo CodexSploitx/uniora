@@ -1,6 +1,7 @@
 import { UnioraError, inferErrorCode } from "../shared/errors.js";
 import type { MembershipErrorCode } from "../shared/errors.js";
 import type { Identity } from "../identity/types.js";
+import type { AccessAuthorization, AccessWriteOptions } from "../access/authorization.js";
 import type { RoleSummary } from "../role/repository.js";
 import type { Membership, MembershipStatus } from "./types.js";
 
@@ -26,6 +27,8 @@ export interface CreateMembershipInput {
   invitedBy?: Identity;
   /** Overrides "now" for `createdAt` — only for importing existing members. */
   createdAt?: Date;
+  /** Needed by a guarded storage when `roleIds` is not empty (see `createGuardedStorage`); ignored otherwise. */
+  authorization?: AccessAuthorization;
 }
 
 export interface SearchMembershipsOptions {
@@ -49,6 +52,8 @@ export interface BlockMembershipInput {
   reason?: string;
   /** Apply only if the membership is still at this `version`; otherwise `membership_version_conflict` and nothing changes. */
   expectedVersion?: number;
+  /** Needed by a guarded storage (see `createGuardedStorage`); ignored otherwise. */
+  authorization?: AccessAuthorization;
 }
 
 export interface SuspendMembershipInput extends BlockMembershipInput {
@@ -60,9 +65,11 @@ export interface UnblockMembershipInput {
   actor: Identity;
   /** Apply only if the membership is still at this `version`; otherwise `membership_version_conflict` and nothing changes. */
   expectedVersion?: number;
+  /** Needed by a guarded storage (see `createGuardedStorage`); ignored otherwise. */
+  authorization?: AccessAuthorization;
 }
 
-export interface MembershipVersionOptions {
+export interface MembershipVersionOptions extends AccessWriteOptions {
   /** Apply only if the membership is still at this `version` (see `Membership.version`); otherwise `membership_version_conflict`. */
   expectedVersion?: number;
 }
@@ -157,7 +164,7 @@ export interface MembershipRepository {
    * `organization.transfer_ownership`) than whatever gates ordinary role
    * assignment.
    */
-  assignOwnerRole(membershipId: string, roleId: string): Promise<void>;
+  assignOwnerRole(membershipId: string, roleId: string, options?: AccessWriteOptions): Promise<void>;
   /**
    * Unassigns a REGULAR (non-Owner) role. Idempotent (no-op if not
    * assigned). Rejects (`MembershipError`) if `roleId` is the organization's
@@ -175,7 +182,7 @@ export interface MembershipRepository {
    * role to more than one membership is valid and unassigning any of the
    * extra ones is fine; only the last one is protected.
    */
-  unassignOwnerRole(membershipId: string, roleId: string): Promise<void>;
+  unassignOwnerRole(membershipId: string, roleId: string, options?: AccessWriteOptions): Promise<void>;
   /**
    * Blocks a member without removing them: the engine denies a blocked member everything (`can`,
    * `access.check`, snapshots) while roles, history and audit trail stay. Idempotent — blocking an
@@ -208,7 +215,7 @@ export interface MembershipRepository {
    * Rejects if the membership is not found, or if it holds the
    * organization's Owner role and is the only membership holding it.
    */
-  delete(membershipId: string): Promise<void>;
+  delete(membershipId: string, options?: AccessWriteOptions): Promise<void>;
 }
 
 /** The latest representable end of a suspension: the last instant of year 9999 (SQLite compares ISO-8601 text, which only sorts right for four-digit years). */

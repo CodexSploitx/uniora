@@ -47,6 +47,7 @@ export async function acceptInvitationRoute(service: InvitationService, input: A
       alreadyMember: result.alreadyMember,
       teamIds: result.teams.map((row) => row.teamId),
       teamsSkipped: result.teamsSkipped,
+      rolesSkipped: result.rolesSkipped,
     });
   } catch (error) {
     const mapped = invitationErrorToHttp(error);
