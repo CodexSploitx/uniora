@@ -2,7 +2,7 @@
 
 All notable changes to UNIORA. Packages are released in lockstep, so one version number covers all of them. The format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## Unreleased
+## 0.6.1 - 2026-10-09
 
 Includes new migrations: Postgres `0039`, SQLite `0024` (run `uniora migrate`; on a table with millions of rows read `guides/performance.md` first: the SQLite migration builds the search tables in about a minute per five million memberships, and the Postgres one builds its indexes while blocking writes). No breaking change for code that only calls the repositories.
 
@@ -21,10 +21,6 @@ Includes new migrations: Postgres `0039`, SQLite `0024` (run `uniora migrate`; o
 - **New indexes** on memberships by `(provider, subject)` (everything that starts from an identity) and by `(status, id)` (the cross-organization "blocked members" view). Filters on the effective status (`suspended`, `blocked`) use the stored status as a prefilter so the index answers them.
 - **SQLite optional filters use their indexes.** The executor resolves `(?N is null or column = ?N)` groups before preparing the statement; before, those queries could not use an index at all.
 - **Per-organization counts are bounded**: `countByOrganization` computes each organization's count with a limit instead of a grouped scan of every row.
-
-## 0.6.1 - 2026-10-08
-
-No migrations. Nothing breaks existing code.
 
 ### Fixed
 
