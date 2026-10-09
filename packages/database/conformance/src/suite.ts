@@ -907,8 +907,9 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         await storage.memberships.unblock(a.id, { actor: admin });
 
         // Una suspensión que vence casi al instante es válida: nunca debe salir como `last_owner` ni dejar un estado a medias.
-        for (let i = 0; i < 15; i++) {
-          const result = await storage.memberships.suspend(a.id, { actor: admin, until: new Date(Date.now() + 2) }).catch((error) => error);
+        // Con 1 a 3 ms de margen el reloj de la base de datos ya puede haber pasado la fecha cuando se escribe la fila.
+        for (let i = 0; i < 60; i++) {
+          const result = await storage.memberships.suspend(a.id, { actor: admin, until: new Date(Date.now() + 1 + (i % 3)) }).catch((error) => error);
           expect(result.code).toBeUndefined();
           expect(["suspended", "active"]).toContain(result.status);
           await storage.memberships.unblock(a.id, { actor: admin });
