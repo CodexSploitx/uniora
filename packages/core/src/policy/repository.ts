@@ -104,7 +104,11 @@ export interface PolicyRepository {
   findRevision(organizationId: string, id: string, revision: number): Promise<PolicyRevision | null>;
   /** The active policies of an organization together with its policy-set revision (see `ActivePolicySet`). */
   activeSet(organizationId: string): Promise<ActivePolicySet>;
-  /** The policy-set revision of an organization: a counter that goes up on every change to any of its policies; 0 when it has none. */
+  /**
+   * The policy-set revision of an organization: a number that changes on every change to any of its policies; 0 when it has none.
+   * It comes from one counter shared by all organizations, so it is never handed out twice, not even to an organization that was
+   * deleted and created again under the same id. It goes up, but it is NOT consecutive: compare it with `===`, never count with it.
+   */
   setRevision(organizationId: string): Promise<number>;
 }
 

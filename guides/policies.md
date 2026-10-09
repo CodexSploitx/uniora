@@ -145,8 +145,10 @@ recorded in the audit log with the actor, in the same transaction as the change.
 
 ## Cache
 
-Policy definitions are cached per organization against the **policy-set revision**, a counter the database bumps in the same
-transaction as any policy change. The engine reads the counter on every decision, so a change, a disable or a retirement is seen by
+Policy definitions are cached per organization against the **policy-set revision**, a number the database changes in the same
+transaction as any policy change. It comes from one counter shared by all organizations, so it is never handed out twice (not even
+to an organization deleted and created again under the same id): it goes up, but it is not consecutive, so compare it with `===`
+and never count with it. The engine reads the number on every decision, so a change, a disable or a retirement is seen by
 every process on the next decision; a stale cache can never revive a disabled or retired policy. Decisions themselves are not
 cached by UNIORA; if you cache them, key them on `policyRevision` plus whatever else your answer depends on, and keep the lifetime short.
 
@@ -238,4 +240,6 @@ Phase 1 is built as a stack of changes. This section is updated by each.
 - Storage (memory, SQLite migration 0025, PostgreSQL migration 0040), authorization tokens, service, engine integration
   (`engine.authorize`), audit (`policy.*` entries and the decision auditor): **done**.
 - Commands, Express and Next routes and guards, Studio read-only tab: **done**.
-- Internal red team and release: in progress.
+- Internal red team: **done**, four findings fixed (policy writes pinned to the version that was checked, never-reused revision
+  numbers, own-property attribute lookups, server-generated policy ids in the command door). Report:
+  `uniora-policies/auditoria-policies.md` in the project files. Released in 0.7.0 (migrations PostgreSQL 0040–0041, SQLite 0025–0026).

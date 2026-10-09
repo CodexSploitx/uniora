@@ -216,7 +216,9 @@ function refType(ref: string, state: ParseState, path: string): AttributeType {
     if (!state.hasResourceType) bad(`${path}: reading ${ref} needs the policy to declare a resourceType.`);
     state.resourceRefs.add(ref);
     if (isBuiltinResourceAttribute(ref)) return RESOURCE_ATTRIBUTES[ref as keyof typeof RESOURCE_ATTRIBUTES];
-    const declared = state.attributes[ref.slice("resource.".length)];
+    const attributeName = ref.slice("resource.".length);
+    // Own properties only: "constructor" or "toString" are not declared just because every object inherits them.
+    const declared = Object.hasOwn(state.attributes, attributeName) ? state.attributes[attributeName] : undefined;
     if (declared === undefined) bad(`${path}: ${ref} is not declared in "attributes".`);
     return declared!;
   }

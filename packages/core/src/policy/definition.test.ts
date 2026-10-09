@@ -258,3 +258,18 @@ describe("policy keys", () => {
     for (const key of ["", "A", "a b", ".a", "a.", "a..b", "-a", "a".repeat(101), 1, null]) expect(() => assertValidPolicyKey(key)).toThrow(PolicyError);
   });
 });
+
+describe("attribute names are looked up as own properties only", () => {
+  it("does not treat names every object inherits as declared attributes", () => {
+    for (const name of ["constructor", "toString", "hasOwnProperty", "valueOf"]) {
+      // Declared elsewhere, so the policy has a resourceType and one real attribute.
+      const refs = { ...locked, condition: { all: [locked.condition, { exists: `resource.${name}` }] } };
+      expect(code(refs), name).toBe("policy_definition_invalid");
+    }
+  });
+
+  it("still lets a policy declare and read an attribute that shares such a name", () => {
+    const own = { ...locked, attributes: { toString: "string" }, condition: { eq: [{ ref: "resource.toString" }, { value: "x" }] } };
+    expect(code(own)).toBe("ok");
+  });
+});

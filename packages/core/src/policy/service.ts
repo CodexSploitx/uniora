@@ -129,6 +129,18 @@ export function createPolicyService(options: PolicyServiceOptions): PolicyServic
     return (await ctx.tx.policies.findRevision(policy.organizationId, policy.id, policy.revision))?.createdBy;
   }
 
+  /**
+   * What was checked (status, author of the current revision) is only valid for the version that was read. Pinning the write to
+   * that version means a concurrent change between the check and the write is a conflict, never a write that skipped a check.
+   * A version the caller named has to be the one just read.
+   */
+  function pinVersion(policy: Policy, expectedVersion: number | undefined): number {
+    if (expectedVersion !== undefined && expectedVersion !== policy.version) {
+      throw new PolicyError(`The policy changed (version ${policy.version}, expected ${expectedVersion}).`, "policy_version_conflict");
+    }
+    return policy.version;
+  }
+
   const same = (a: Identity, b: Identity) => a.provider === b.provider && a.subject === b.subject;
 
   async function assertSeparateActivator(ctx: Context, policy: Policy): Promise<void> {
@@ -157,7 +169,12 @@ export function createPolicyService(options: PolicyServiceOptions): PolicyServic
             throw new PolicyError("With separation of duties on, an active policy cannot be edited in place; disable it, edit it, and have someone else activate it.", "policy_separation_of_duties");
           }
         }
-        return ctx.tx.policies.update(organizationId, policyId, { ...change, actor, authorization: grant(ctx, organizationId, "policy.update") });
+        return ctx.tx.policies.update(organizationId, policyId, {
+          ...change,
+          actor,
+          expectedVersion: pinVersion(current, change.expectedVersion),
+          authorization: grant(ctx, organizationId, "policy.update"),
+        });
       }),
 
     activatePolicy: ({ actor, organizationId, policyId, ...rest }) =>
@@ -165,7 +182,12 @@ export function createPolicyService(options: PolicyServiceOptions): PolicyServic
         await require(ctx, organizationId, keys.activate, "activate policies");
         const current = await load(ctx, organizationId, policyId);
         if (current.status !== "active") await assertSeparateActivator(ctx, current);
-        return ctx.tx.policies.activate(organizationId, policyId, { ...rest, actor, authorization: grant(ctx, organizationId, "policy.activate") });
+        return ctx.tx.policies.activate(organizationId, policyId, {
+          ...rest,
+          actor,
+          expectedVersion: pinVersion(current, rest.expectedVersion),
+          authorization: grant(ctx, organizationId, "policy.activate"),
+        });
       }),
 
     disablePolicy: ({ actor, organizationId, policyId, ...rest }) =>

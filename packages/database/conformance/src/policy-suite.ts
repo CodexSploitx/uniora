@@ -221,19 +221,37 @@ export function definePolicyConformance(harness: { storage(): UnioraStorage; pol
       await create(w, "p2", "two", accessRule);
       await create(w, "p-other", "other", accessRule, "org-2");
       const afterCreate = await w.trusted.policies.setRevision("org-1");
-      expect(afterCreate).toBe(2);
+      expect(afterCreate).toBeGreaterThan(0);
       await w.trusted.policies.activate("org-1", "p2", { actor: ana });
       await w.trusted.policies.activate("org-2", "p-other", { actor: ana });
       const set = await w.trusted.policies.activeSet("org-1");
-      expect(set.revision).toBe(afterCreate + 1);
+      expect(set.revision).toBeGreaterThan(afterCreate);
       expect(set.policies.map((p) => p.id)).toEqual(["p2"]);
-      expect(await w.trusted.policies.setRevision("org-2")).toBe(2);
+      expect(await w.trusted.policies.setRevision("org-2")).toBeGreaterThan(0);
       // Un cambio sin efecto no mueve el contador.
       await w.trusted.policies.activate("org-1", "p2", { actor: ana });
-      expect(await w.trusted.policies.setRevision("org-1")).toBe(afterCreate + 1);
+      expect(await w.trusted.policies.setRevision("org-1")).toBe(set.revision);
       await w.trusted.policies.disable("org-1", "p2", { actor: ana });
       expect((await w.trusted.policies.activeSet("org-1")).policies).toEqual([]);
-      expect(await w.trusted.policies.setRevision("org-1")).toBe(afterCreate + 2);
+      expect(await w.trusted.policies.setRevision("org-1")).toBeGreaterThan(set.revision);
+    });
+
+    it("el número de revisión no se repite nunca: una organización borrada y creada otra vez con el mismo id no vuelve a un número ya usado", async () => {
+      const w = await seed();
+      const seen = new Set<number>();
+      await create(w, "p1", "one");
+      seen.add(await w.trusted.policies.setRevision("org-1"));
+      await w.trusted.policies.activate("org-1", "p1", { actor: ana });
+      const last = await w.trusted.policies.setRevision("org-1");
+      seen.add(last);
+      expect(seen.size).toBe(2);
+      expect(await harness.policyProbe.deleteOrganizationDirectly("org-1")).toBe("applied");
+      expect(await w.trusted.policies.setRevision("org-1")).toBe(0);
+      await createOrganizationWithOwner(w.storage, { organizationId: "org-1", organizationName: "Acme otra vez", ownerRoleId: "role-owner", membershipId: "m-owner", ownerIdentity: owner1 });
+      await create(w, "p1", "one");
+      const again = await w.trusted.policies.setRevision("org-1");
+      expect(seen.has(again)).toBe(false);
+      expect(again).toBeGreaterThan(last);
     });
 
     it("lista con filtros, búsqueda de texto, paginación por cursor y conteo acotado", async () => {
