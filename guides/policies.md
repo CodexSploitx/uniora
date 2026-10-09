@@ -161,6 +161,51 @@ cached by UNIORA; if you cache them, key them on `policyRevision` plus whatever 
   authentication through `environment.*`; they complement, never replace, the host's own step-up flow.
 - **Platform baseline policies** that apply to every organization, administered from the platform scope.
 
+## Using it in your application
+
+**1. Decide with roles and policies together.**
+
+```ts
+const engine = createAuthorizationEngine(storage);
+
+const vehicle = await db.vehicles.find(id);                     // load it on the server, from your own database
+const result = await engine.authorize({
+  identity,                                                     // who is asking (from your session)
+  organizationId,
+  permission: "vehicles.update",
+  resource: { type: "vehicle", id: vehicle.id, organizationId: vehicle.organizationId, teamIds: vehicle.teamIds, attributes: { status: vehicle.status } },
+});
+if (!result.allowed) return forbidden();                        // deny AND indeterminate both end here
+```
+
+`authorize` never throws. Keep using `engine.can()` where no policy is involved; nothing changes for existing code.
+
+**2. Guard routes.** `@uniora/express`: `authorizeResource(engine, { permission, resolve })`. `@uniora/next`: `assertAuthorized(engine, input)`
+(throws `PolicyDeniedError`) or `authorizeResourceRoute(engine, input)` (returns a 403 `Response` or `null`). Neither sends the policies
+or the reason to the client; log `result` on the server instead.
+
+**3. Administer policies.** `createPolicyService({ storage })` checks `policies.read`, `policies.manage` and `policies.activate`
+(register them and give them to the right roles; names are configurable) and writes the audit trail. Mount it with
+`policyCommand(service, { command, resolve })` (Express) or `policyCommandRoute(service, { command, caller, params })` (Next), one route
+per command: `createPolicy`, `updatePolicy`, `activatePolicy`, `disablePolicy`, `retirePolicy`, `deletePolicy`, `getPolicy`,
+`listPolicies`, `listRevisions`, `validatePolicy`, `simulate`. The caller and the organization come from your session, never from the
+body, and unknown fields are rejected. Authoring and publishing can be given to different people (`policies.manage` versus
+`policies.activate`), and `requireSeparateActivator: true` makes the author unable to activate their own revision.
+
+**4. Try before you publish.** `simulate` answers "what would be decided for this person on this resource?", optionally with a candidate
+definition that replaces a policy (or is added as one more) without saving anything. `validatePolicy` checks a definition and reports
+what it reads.
+
+**5. Keep a trail of decisions** (optional). `createPolicyDecisionAuditor(storage, { record: "denied" })` writes
+`policy.decision_denied` / `policy.decision_indeterminate` entries (with the policy keys, revisions and hashes, never attribute values)
+from `onDecision`.
+
+## Studio
+
+The organization page has a **Policies** tab, read only: the list (search and status filter, keyset paging), and for each policy its
+definition, status, hash and the revision history. Studio is an operator tool without your application's roles, so it shows what is
+enforced; changes go through the policy service of your application.
+
 ## Storage
 
 Policies live in `storage.policies` (memory, SQLite, PostgreSQL), all held to the same conformance suite.
@@ -192,4 +237,5 @@ Phase 1 is built as a stack of changes. This section is updated by each.
 - Definition language, validation and the pure evaluator (`parsePolicyDefinition`, `evaluatePolicy`, `evaluatePolicySet`): **done**.
 - Storage (memory, SQLite migration 0025, PostgreSQL migration 0040), authorization tokens, service, engine integration
   (`engine.authorize`), audit (`policy.*` entries and the decision auditor): **done**.
-- Express and Next routes, Studio read-only view, internal red team and release: in progress.
+- Commands, Express and Next routes and guards, Studio read-only tab: **done**.
+- Internal red team and release: in progress.

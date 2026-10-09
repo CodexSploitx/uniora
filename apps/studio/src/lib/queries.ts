@@ -1,5 +1,5 @@
 import "server-only";
-import type { AuditLogEntry, Organization } from "@uniora/core";
+import type { AuditLogEntry, Organization, Policy } from "@uniora/core";
 import { databaseSchemaExists, getPlatformStorage, getStorage } from "@/lib/db";
 import { countLimit } from "@/lib/limits";
 import { requireSession } from "@/lib/session";
@@ -16,6 +16,8 @@ import type {
   OrgSummary,
   OverviewData,
   PlatformMemberRow,
+  PolicyRevisionRow,
+  PolicyRow,
   PlatformRoleRow,
   PermissionView,
   RolePermissionRow,
@@ -958,6 +960,102 @@ export async function getTeamDetail(organizationId: string, teamId: string, opti
     members,
     membersTotal,
     membersNextCursor: hasMore ? page[page.length - 1]!.id : null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Policies (read only). A policy is authored through the policy service of the host application (Studio is an operator
+// tool without that application's roles); here an operator can see what is enforced in an organization and why.
+// ---------------------------------------------------------------------------
+
+const POLICIES_PAGE_SIZE = 20;
+const POLICY_REVISIONS_PAGE_SIZE = 10;
+
+const toPolicyRow = (policy: Policy): PolicyRow => ({
+  id: policy.id,
+  key: policy.key,
+  name: policy.name,
+  kind: policy.kind,
+  effect: policy.effect,
+  status: policy.status,
+  revision: policy.revision,
+  updatedAt: policy.updatedAt.toISOString(),
+});
+
+export interface OrgPoliciesPage {
+  items: PolicyRow[];
+  nextCursor: string | null;
+  /** An organization has at most 1000 policies, so this is exact. */
+  total: number;
+}
+
+export async function getOrgPoliciesPage(
+  organizationId: string,
+  options?: { query?: string; cursor?: string; status?: PolicyRow["status"] },
+): Promise<OrgPoliciesPage> {
+  await requireSession();
+  const storage = getStorage();
+  const query = cleanQuery(options?.query);
+  const filter = { organizationId, query, ...(options?.status ? { status: options.status } : {}) };
+  const [rows, total] = await Promise.all([
+    storage.policies.search({ ...filter, limit: POLICIES_PAGE_SIZE + 1, after: cleanCursor(options?.cursor) }),
+    storage.policies.count(filter),
+  ]);
+  const { page, hasMore } = splitPage(rows, POLICIES_PAGE_SIZE);
+  return { items: page.map(toPolicyRow), nextCursor: hasMore ? page[page.length - 1]!.id : null, total };
+}
+
+export interface PolicyDetailPage {
+  policy: PolicyRow & {
+    description?: string;
+    version: number;
+    hash: string;
+    createdAt: string;
+    createdBy: { provider: string; subject: string };
+    activatedAt?: string;
+    statusChange?: { at: string; by: { provider: string; subject: string }; reason?: string };
+    definition: unknown;
+  };
+  revisions: PolicyRevisionRow[];
+  revisionsNextBefore: number | null;
+}
+
+export async function getPolicyDetail(organizationId: string, policyId: string, options?: { before?: number }): Promise<PolicyDetailPage | null> {
+  await requireSession();
+  const storage = getStorage();
+  const policy = await storage.policies.findById(organizationId, policyId);
+  if (!policy) return null;
+  const before = options?.before !== undefined && Number.isInteger(options.before) && options.before > 0 ? options.before : undefined;
+  const rows = await storage.policies.revisions(organizationId, policyId, { limit: POLICY_REVISIONS_PAGE_SIZE + 1, ...(before !== undefined ? { before } : {}) });
+  const { page, hasMore } = splitPage(rows, POLICY_REVISIONS_PAGE_SIZE);
+  return {
+    policy: {
+      ...toPolicyRow(policy),
+      ...(policy.description !== undefined ? { description: policy.description } : {}),
+      version: policy.version,
+      hash: policy.definitionHash,
+      createdAt: policy.createdAt.toISOString(),
+      createdBy: { provider: policy.createdBy.provider, subject: policy.createdBy.subject },
+      ...(policy.activatedAt ? { activatedAt: policy.activatedAt.toISOString() } : {}),
+      ...(policy.statusChange
+        ? {
+            statusChange: {
+              at: policy.statusChange.at.toISOString(),
+              by: { provider: policy.statusChange.by.provider, subject: policy.statusChange.by.subject },
+              ...(policy.statusChange.reason ? { reason: policy.statusChange.reason } : {}),
+            },
+          }
+        : {}),
+      definition: policy.definition,
+    },
+    revisions: page.map((row) => ({
+      revision: row.revision,
+      createdAt: row.createdAt.toISOString(),
+      createdBy: { provider: row.createdBy.provider, subject: row.createdBy.subject },
+      ...(row.note ? { note: row.note } : {}),
+      hash: row.definitionHash.slice(0, 12),
+    })),
+    revisionsNextBefore: hasMore ? page[page.length - 1]!.revision : null,
   };
 }
 
