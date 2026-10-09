@@ -300,7 +300,7 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
          for update of mr, m
        )
        update uniora.memberships m
-       set status = 'blocked', blocked_at = date_trunc('milliseconds', now()), blocked_until = $5::timestamptz,
+       set status = 'blocked', blocked_at = least(date_trunc('milliseconds', now()), $5::timestamptz - interval '1 millisecond'), blocked_until = $5::timestamptz,
            blocked_by_provider = $2, blocked_by_subject = $3, block_reason = $4,
            updated_at = date_trunc('milliseconds', now()), version = m.version + 1
        where m.id = $1 and ${effectiveStatus("m")} = 'active' and ($6::integer is null or m.version = $6)
