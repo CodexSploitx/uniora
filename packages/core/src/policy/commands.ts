@@ -7,6 +7,8 @@ import type { PolicyService } from "./service.js";
  * `runPolicyCommand(service, command, { actor, organizationId }, params)`: the actor and the organization come from YOUR
  * authentication and session, never from the request body, and `params` is untrusted input that is checked field by field.
  * Nothing in `params` can name another actor, smuggle an `authorization`, or reach the repositories: unknown fields are rejected.
+ * The id of a new policy is always generated here: policy ids are unique across organizations, so a client-chosen id would let
+ * a caller find out whether an id exists in somebody else's organization.
  * The definition itself is validated by the policy language (`parsePolicyDefinition`), which is strict.
  */
 export const POLICY_COMMANDS = [
@@ -39,7 +41,7 @@ type Kind = "string" | "string?" | "string|null?" | "number?" | "object" | "obje
 type Shape = Record<string, Kind>;
 
 const SHAPES: Record<PolicyCommand, Shape> = {
-  createPolicy: { id: "string?", key: "string", name: "string", description: "string?", definition: "object", note: "string?" },
+  createPolicy: { key: "string", name: "string", description: "string?", definition: "object", note: "string?" },
   updatePolicy: { policyId: "string", name: "string?", description: "string|null?", definition: "object?", note: "string?", expectedVersion: "number?" },
   activatePolicy: { policyId: "string", reason: "string?", expectedVersion: "number?" },
   disablePolicy: { policyId: "string", reason: "string?", expectedVersion: "number?" },
@@ -123,11 +125,10 @@ export async function runPolicyCommand(service: PolicyService, command: string, 
   if (!isPolicyCommand(command)) throw bad(`Unknown policy command "${String(command)}".`);
   const input = clean(command, params);
   const who = { actor: context.actor, organizationId: context.organizationId };
-  const id = () => (typeof input.id === "string" ? input.id : crypto.randomUUID());
   let result: unknown;
   switch (command) {
     case "createPolicy":
-      result = await service.createPolicy({ ...who, ...(input as object), id: id() } as Parameters<PolicyService["createPolicy"]>[0]);
+      result = await service.createPolicy({ ...who, ...(input as object), id: crypto.randomUUID() } as Parameters<PolicyService["createPolicy"]>[0]);
       break;
     case "updatePolicy":
       result = await service.updatePolicy({ ...who, ...(input as object) } as Parameters<PolicyService["updatePolicy"]>[0]);

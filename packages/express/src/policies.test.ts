@@ -84,13 +84,16 @@ describe("policyCommand", () => {
   it("creates, activates and lists policies; the path wins over the body; the query feeds list", async () => {
     const { base } = await serve();
     const rule = { kind: "access", effect: "deny", actions: ["vehicles.update"], condition: { not: { exists: "subject.teamIds" } } };
-    const created = await send("POST", `${base}/policies`, "admin", { id: "p2", key: "extra", name: "Extra", definition: rule });
+    const created = await send("POST", `${base}/policies`, "admin", { key: "extra", name: "Extra", definition: rule });
     expect(created.status).toBe(200);
-    expect(await created.json()).toMatchObject({ id: "p2", status: "draft" });
-    const activated = await send("POST", `${base}/policies/p2/activate`, "admin", { policyId: "somewhere-else" });
-    expect(await activated.json()).toMatchObject({ id: "p2", status: "active" });
+    const { id } = (await created.json()) as { id: string };
+    expect(id).not.toBe("p1");
+    const activated = await send("POST", `${base}/policies/${id}/activate`, "admin", { policyId: "somewhere-else" });
+    expect(await activated.json()).toMatchObject({ id, status: "active" });
     const drafts = await send("GET", `${base}/policies?status=active`, "admin");
-    expect(((await drafts.json()) as { id: string }[]).map((p) => p.id)).toEqual(["p1", "p2"]);
+    expect(((await drafts.json()) as { id: string }[]).map((p) => p.id).sort()).toEqual(["p1", id].sort());
+    // The id of a new policy is never the client's to pick.
+    expect((await send("POST", `${base}/policies`, "admin", { id: "mine", key: "other", name: "Other", definition: rule })).status).toBe(400);
   });
 
   it("refuses a caller without the right with a generic 403, and rejects fields the client must not set", async () => {

@@ -396,6 +396,58 @@ describe("the service", () => {
     await expect(service.activatePolicy({ actor: publisher, organizationId: "org-1", policyId: "p1" })).resolves.toMatchObject({ status: "active", revision: 2 });
   });
 
+  /** A storage where `afterRead` runs once, right after the service read the policy: another transaction committing in between. */
+  function racing(world: World, afterRead: () => Promise<unknown>): UnioraStorage {
+    let armed = true;
+    const wrap = <T extends UnioraStorage["policies"]>(policies: T): T => ({
+      ...policies,
+      async findById(organizationId: string, id: string) {
+        const found = await policies.findById(organizationId, id);
+        if (armed) {
+          armed = false;
+          await afterRead();
+        }
+        return found;
+      },
+    });
+    return {
+      ...world.storage,
+      policies: wrap(world.storage.policies),
+      transaction: (callback) => world.storage.transaction((tx) => callback({ ...tx, policies: wrap(tx.policies) })),
+    };
+  }
+
+  it("what was checked is what gets written: a change that lands between the check and the write is a conflict", async () => {
+    const world = await seed();
+    await world.service.createPolicy({ actor: admin, organizationId: "org-1", id: "p1", key: "locked", name: "Locked", definition: lockedDefinition });
+    // The author (no right to publish) edits a policy that was a draft when it was read; the publisher activates it in between.
+    const service = createPolicyService({ storage: racing(world, () => world.service.activatePolicy({ actor: publisher, organizationId: "org-1", policyId: "p1" })) });
+    await expect(service.updatePolicy({ actor: author, organizationId: "org-1", policyId: "p1", definition: { ...lockedDefinition, denyReason: "sneaky" } })).rejects.toMatchObject({
+      code: "policy_version_conflict",
+    });
+    const stored = await world.storage.policies.findById("org-1", "p1");
+    expect(stored).toMatchObject({ status: "active", revision: 1 });
+    expect(stored?.definition).toMatchObject({ denyReason: "vehicle_locked" });
+  });
+
+  it("an activation covers the revision that was read, never one written meanwhile", async () => {
+    const world = await seed();
+    await world.service.createPolicy({ actor: author, organizationId: "org-1", id: "p1", key: "locked", name: "Locked", definition: lockedDefinition });
+    const service = createPolicyService({
+      storage: racing(world, () => world.service.updatePolicy({ actor: author, organizationId: "org-1", policyId: "p1", definition: { ...lockedDefinition, denyReason: "changed" } })),
+    });
+    await expect(service.activatePolicy({ actor: publisher, organizationId: "org-1", policyId: "p1" })).rejects.toMatchObject({ code: "policy_version_conflict" });
+    expect(await world.storage.policies.findById("org-1", "p1")).toMatchObject({ status: "draft", revision: 2 });
+  });
+
+  it("a version the caller names must be the one the checks ran against", async () => {
+    const world = await seed();
+    await world.service.createPolicy({ actor: admin, organizationId: "org-1", id: "p1", key: "locked", name: "Locked", definition: lockedDefinition });
+    await expect(world.service.updatePolicy({ actor: admin, organizationId: "org-1", policyId: "p1", name: "New", expectedVersion: 7 })).rejects.toMatchObject({ code: "policy_version_conflict" });
+    await expect(world.service.activatePolicy({ actor: admin, organizationId: "org-1", policyId: "p1", expectedVersion: 7 })).rejects.toMatchObject({ code: "policy_version_conflict" });
+    await expect(world.service.updatePolicy({ actor: admin, organizationId: "org-1", policyId: "p1", name: "New", expectedVersion: 1 })).resolves.toMatchObject({ name: "New", version: 2 });
+  });
+
   it("every change is audited with the actor, and only the real changes", async () => {
     const world = await seed();
     await world.service.createPolicy({ actor: admin, organizationId: "org-1", id: "p1", key: "locked", name: "Locked", definition: lockedDefinition });

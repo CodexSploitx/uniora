@@ -41,9 +41,10 @@ describe("runPolicyCommand", () => {
     expect(revisions.map((r) => r.revision)).toEqual([2, 1]);
     expect(await run(service, "disablePolicy", admin, { policyId: created.id })).toMatchObject({ status: "disabled" });
     expect(await run(service, "retirePolicy", admin, { policyId: created.id })).toMatchObject({ status: "retired" });
-    const draft = (await run(service, "createPolicy", admin, { id: "chosen", key: "other", name: "Other", definition: rule })) as { id: string };
-    expect(draft.id).toBe("chosen");
-    expect(await run(service, "deletePolicy", admin, { policyId: "chosen" })).toEqual({ deleted: true });
+    expect(await outcome(run(service, "createPolicy", admin, { id: "chosen", key: "other", name: "Other", definition: rule }))).toBe("policy_invalid");
+    const draft = (await run(service, "createPolicy", admin, { key: "other", name: "Other", definition: rule })) as { id: string };
+    expect(draft.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(await run(service, "deletePolicy", admin, { policyId: draft.id })).toEqual({ deleted: true });
   });
 
   it("validates without saving and simulates a decision, including a candidate definition", async () => {

@@ -135,7 +135,8 @@ class Run {
       return hasType(value, type) ? { ok: true, value: value as AttributeValue } : { ok: false, reason: "attribute_type_mismatch" };
     }
     const name = ref.slice("resource.".length);
-    const declared = this.definition.attributes?.[name];
+    const attributes = this.definition.attributes;
+    const declared = attributes !== undefined && Object.hasOwn(attributes, name) ? attributes[name] : undefined;
     if (declared === undefined) return { ok: false, reason: "attribute_missing" };
     const raw = resource.attributes !== undefined && Object.hasOwn(resource.attributes, name) ? resource.attributes[name] : undefined;
     if (raw === undefined || raw === null) return { ok: true, absent: true, value: undefined };

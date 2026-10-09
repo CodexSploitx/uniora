@@ -28,8 +28,10 @@ export function createMemoryPolicyRepository(organizationExists: (organizationId
   const revisions = new Map<string, PolicyRevision[]>();
   const setRevisions = new Map<string, number>();
 
+  // One counter for every organization, like the databases: a revision is never handed out twice.
+  let lastRevision = 0;
   const bump = (organizationId: string): void => {
-    setRevisions.set(organizationId, (setRevisions.get(organizationId) ?? 0) + 1);
+    setRevisions.set(organizationId, ++lastRevision);
   };
   const inOrganization = (organizationId: string): Policy[] => [...policies.values()].filter((policy) => policy.organizationId === organizationId);
   const find = (organizationId: string, id: string): Policy | undefined => {

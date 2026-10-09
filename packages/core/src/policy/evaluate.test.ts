@@ -8,7 +8,7 @@ import {
   parsePolicyDefinition,
   requiredFacts,
 } from "../index.js";
-import type { Condition, EvaluablePolicy, EvaluationFacts, Verdict } from "../index.js";
+import type { Condition, EvaluablePolicy, EvaluationFacts, PolicyDefinition, Verdict } from "../index.js";
 
 function policy(key: string, definition: unknown, revision = 1): EvaluablePolicy & { analysis: ReturnType<typeof parsePolicyDefinition>["analysis"] } {
   const parsed = parsePolicyDefinition(definition);
@@ -381,3 +381,19 @@ describe("what a request needs", () => {
   });
 });
 
+
+describe("resource attributes are read as own properties only", () => {
+  it("an inherited name is never a declared attribute, even for a definition that skipped the parser", () => {
+    const definition = {
+      kind: "resource",
+      effect: "deny",
+      actions: ["vehicles.update"],
+      resourceType: "vehicle",
+      attributes: { status: "string" },
+      condition: { exists: "resource.constructor" },
+    } as unknown as PolicyDefinition;
+    const facts: EvaluationFacts = { subject: {}, resource: { id: "v1", attributes: { constructor: "x" } }, features: new Map(), permissions: new Map() };
+    const outcome = evaluatePolicy({ id: "p", key: "p", revision: 1, definitionHash: "h", definition }, { permission: "vehicles.update", resourceType: "vehicle" }, facts);
+    expect(outcome).toMatchObject({ result: "indeterminate", reason: "attribute_missing" });
+  });
+});
