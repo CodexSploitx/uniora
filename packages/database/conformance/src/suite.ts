@@ -22,6 +22,7 @@ import {
 } from "@uniora/core";
 import { defineAccessScenarios } from "./access-suite.js";
 import type { StorageHarness } from "./harness.js";
+import { definePolicyConformance } from "./policy-suite.js";
 
 const identity = { provider: "supabase", subject: "user-1" };
 
@@ -49,6 +50,7 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
 
     // Who may give which power to whom (guard, rules and invitations), over this very database.
     defineAccessScenarios(harness);
+    definePolicyConformance(harness);
 
     it("persists organizations, deriving a slug from the name", async () => {
       const storage = harness.storage();

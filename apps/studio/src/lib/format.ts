@@ -145,6 +145,22 @@ export function describeActivity(
     case "access.change_refused":
       // The rule that stopped it, in words an operator can read (`access_escalation` -> "escalation").
       return { title: t("activity.accessRefused"), detail: (meta(item, "code") ?? "").replace(/^access_/, "").replaceAll("_", " ") || undefined, tone: "warning" };
+    case "policy.created":
+      return { title: t("activity.policyCreated"), detail: meta(item, "key") ?? item.target?.id, tone: "success" };
+    case "policy.updated":
+    case "policy.revised":
+      return { title: t("activity.policyChanged"), detail: meta(item, "key") ?? item.target?.id, tone: "info" };
+    case "policy.activated":
+      return { title: t("activity.policyActivated"), detail: meta(item, "key") ?? item.target?.id, tone: "success" };
+    case "policy.disabled":
+      return { title: t("activity.policyDisabled"), detail: meta(item, "key") ?? item.target?.id, tone: "warning" };
+    case "policy.retired":
+    case "policy.deleted":
+      return { title: t("activity.policyRetired"), detail: meta(item, "key") ?? item.target?.id, tone: "destructive" };
+    case "policy.decision_denied":
+    case "policy.decision_indeterminate":
+    case "policy.decision_allowed":
+      return { title: t(item.action === "policy.decision_allowed" ? "activity.policyDecisionAllowed" : "activity.policyDecisionRefused"), detail: meta(item, "permission") ?? item.target?.id, tone: item.action === "policy.decision_allowed" ? "info" : "warning" };
     case "support_grant.created":
     case "support_grant.revoked":
     case "platform.support_access_granted":

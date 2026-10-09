@@ -199,6 +199,13 @@ export type {
   AuthorizationEngineOptions,
   CanInput,
 } from "./authorization/engine.js";
+export type {
+  AuthorizationReason,
+  AuthorizationResult,
+  AuthorizeInput,
+  AuthorizeResource,
+  PolicyDeciderOptions,
+} from "./policy/decider.js";
 export { createAuthorizationEngine } from "./authorization/engine.js";
 export type { AuthorizationSnapshot, ComputeAuthorizationSnapshotInput } from "./authorization/snapshot.js";
 export { computeAuthorizationSnapshot } from "./authorization/snapshot.js";
@@ -288,6 +295,7 @@ export {
   MAX_TEAM_DEPTH,
   MAX_TEAM_EXTERNAL_ID_LENGTH,
   MAX_TEAM_MEMBER_ROLES,
+  MAX_SUBJECT_TEAMS,
   MAX_TEAM_NAME_LENGTH,
   MAX_TEAM_REASON_LENGTH,
   TeamError,
@@ -370,3 +378,106 @@ export type { MemoryPlatformStorageOptions } from "./platform/memory.js";
 export { createMemoryPlatformStorage } from "./platform/memory.js";
 export type { PlatformCommand, PlatformCommandContext, PlatformHttpError } from "./platform/commands.js";
 export { PLATFORM_COMMANDS, isPlatformCommand, platformErrorToHttp, runPlatformCommand } from "./platform/commands.js";
+
+export type { PolicyErrorCode } from "./policy/errors.js";
+export { PolicyError } from "./policy/errors.js";
+export type {
+  AttributeType,
+  AttributeValue,
+  Comparison,
+  Condition,
+  Operand,
+  Policy,
+  PolicyDefinition,
+  PolicyEffect,
+  PolicyKind,
+  PolicyRevision,
+  PolicyStatus,
+  PolicyStatusChange,
+  Scalar,
+} from "./policy/types.js";
+export { ATTRIBUTE_TYPES, COMPARISONS, POLICY_EFFECTS, POLICY_KINDS, POLICY_STATUSES, RESERVED_POLICY_KINDS } from "./policy/types.js";
+export { PROTECTED_PERMISSION_PREFIX, RESOURCE_ATTRIBUTES, SUBJECT_ATTRIBUTES, isProtectedPermission } from "./policy/attributes.js";
+export type { SubjectAttributeName } from "./policy/attributes.js";
+export type { ParsedPolicyDefinition, PolicyAnalysis } from "./policy/definition.js";
+export {
+  MAX_CONDITION_CHILDREN,
+  MAX_CONDITION_DEPTH,
+  MAX_CONDITION_NODES,
+  MAX_LITERAL_ITEMS,
+  MAX_LITERAL_LENGTH,
+  MAX_POLICY_ACTIONS,
+  MAX_POLICY_ATTRIBUTES,
+  MAX_POLICY_DEFINITION_BYTES,
+  MAX_POLICY_DESCRIPTION_LENGTH,
+  MAX_POLICY_FACT_LOOKUPS,
+  MAX_POLICY_KEY_LENGTH,
+  MAX_POLICY_NAME_LENGTH,
+  MAX_POLICY_NOTE_LENGTH,
+  actionCandidates,
+  actionMatches,
+  assertValidPolicyKey,
+  hashPolicyDefinition,
+  parsePolicyDefinition,
+  sanitizePolicyDescription,
+  sanitizePolicyName,
+  sanitizePolicyNote,
+} from "./policy/definition.js";
+export type {
+  Applicability,
+  EvaluablePolicy,
+  EvaluatePolicySetOptions,
+  EvaluationFacts,
+  PolicyOutcome,
+  PolicyRequest,
+  PolicySetEvaluation,
+  RequiredFacts,
+  ResourceFacts,
+  UnknownReason,
+  Verdict,
+} from "./policy/evaluate.js";
+export {
+  MAX_ACTIVE_POLICIES,
+  MAX_EVALUATION_STEPS,
+  MAX_RESOURCE_ATTRIBUTES,
+  MAX_RESOURCE_LIST_ITEMS,
+  MAX_RESOURCE_VALUE_LENGTH,
+  applicability,
+  combineVerdicts,
+  evaluatePolicy,
+  evaluatePolicySet,
+  requiredFacts,
+} from "./policy/evaluate.js";
+export type { PolicyAuthorization, PolicyOperation } from "./policy/authorization.js";
+export { POLICY_OPERATIONS, assertPolicyAuthorization } from "./policy/authorization.js";
+export type {
+  ActivePolicySet,
+  ChangePolicyStatusInput,
+  CreatePolicyInput,
+  PolicyRepository,
+  SearchPoliciesOptions,
+  UpdatePolicyInput,
+} from "./policy/repository.js";
+export {
+  DEFAULT_POLICY_PAGE,
+  MAX_POLICIES_PER_ORGANIZATION,
+  MAX_POLICY_PAGE,
+  MAX_POLICY_REVISIONS,
+  assertPolicyFilters,
+  assertPolicyId,
+  assertPolicyStatus,
+  assertPolicyTransition,
+  assertValidCreatePolicy,
+  assertValidUpdatePolicy,
+  isPolicyTransitionAllowed,
+  normalizePolicyPage,
+} from "./policy/repository.js";
+export type { TrustedPolicyStorage, TrustedPolicyStorageOptions, TrustedPolicyTransaction } from "./policy/trusted.js";
+export { createTrustedPolicyStorage } from "./policy/trusted.js";
+export { createMemoryPolicyRepository } from "./policy/memory.js";
+export type { PolicyActor, PolicyPermissionKeys, PolicyService, PolicyServiceOptions, SimulatePolicyInput } from "./policy/service.js";
+export { POLICY_PERMISSIONS, createPolicyService } from "./policy/service.js";
+export type { PolicyDecisionAuditorOptions } from "./policy/auditor.js";
+export { createPolicyDecisionAuditor } from "./policy/auditor.js";
+export type { PolicyCommand, PolicyCommandContext, PolicyHttpError } from "./policy/commands.js";
+export { POLICY_COMMANDS, isPolicyCommand, policyErrorToHttp, runPolicyCommand } from "./policy/commands.js";

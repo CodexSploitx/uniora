@@ -62,7 +62,7 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
   }
 
   function wrap(scope: Scope, run: <T>(work: (tx: UnioraTransaction) => Promise<T>) => Promise<T>): UnioraTransaction {
-    const { organizations, memberships, roles, permissions, features, entitlements, supportGrants, teams, teamMemberships } = scope;
+    const { organizations, memberships, roles, permissions, features, entitlements, supportGrants, teams, teamMemberships, policies } = scope;
     return {
       ...scope,
       organizations: {
@@ -453,6 +453,96 @@ export function createAuditedStorage(storage: UnioraStorage, options: AuditedSto
               await record(tx, "team_member.role_unassigned", organizationId, { type: "team_member", id }, { teamId: row.teamId, membershipId: row.membershipId, roleId });
             }
             return row;
+          }),
+      },
+      policies: {
+        ...policies,
+        create: (input) =>
+          run(async (tx) => {
+            const policy = await tx.policies.create(input);
+            await record(tx, "policy.created", policy.organizationId, { type: "policy", id: policy.id }, {
+              key: policy.key,
+              name: policy.name,
+              kind: policy.kind,
+              effect: policy.effect,
+              revision: policy.revision,
+              definitionHash: policy.definitionHash,
+            });
+            return policy;
+          }),
+        update: (organizationId, id, input) =>
+          run(async (tx) => {
+            const before = await tx.policies.findById(organizationId, id);
+            const updated = await tx.policies.update(organizationId, id, input);
+            if (before && before.version !== updated.version) {
+              const metadata: Record<string, unknown> = { key: updated.key };
+              if (before.name !== updated.name) metadata.name = { from: before.name, to: updated.name };
+              if (before.description !== updated.description) metadata.description = "changed";
+              if (before.revision !== updated.revision) {
+                // The definition itself stays in `policy_revisions`; the entry says which revision and which hash went live.
+                await record(tx, "policy.revised", organizationId, { type: "policy", id }, {
+                  key: updated.key,
+                  from: before.revision,
+                  revision: updated.revision,
+                  definitionHash: updated.definitionHash,
+                  status: updated.status,
+                  ...(input.note !== undefined ? { note: input.note } : {}),
+                });
+              }
+              if (metadata.name !== undefined || metadata.description !== undefined) await record(tx, "policy.updated", organizationId, { type: "policy", id }, metadata);
+            }
+            return updated;
+          }),
+        activate: (organizationId, id, input) =>
+          run(async (tx) => {
+            const before = await tx.policies.findById(organizationId, id);
+            const policy = await tx.policies.activate(organizationId, id, input);
+            if (before && before.status !== policy.status) {
+              await record(tx, "policy.activated", organizationId, { type: "policy", id }, {
+                key: policy.key,
+                revision: policy.revision,
+                definitionHash: policy.definitionHash,
+                from: before.status,
+                requestedBy: `${input.actor.provider}:${input.actor.subject}`,
+                ...(policy.statusChange?.reason !== undefined ? { reason: policy.statusChange.reason } : {}),
+              });
+            }
+            return policy;
+          }),
+        disable: (organizationId, id, input) =>
+          run(async (tx) => {
+            const before = await tx.policies.findById(organizationId, id);
+            const policy = await tx.policies.disable(organizationId, id, input);
+            if (before && before.status !== policy.status) {
+              await record(tx, "policy.disabled", organizationId, { type: "policy", id }, {
+                key: policy.key,
+                revision: policy.revision,
+                requestedBy: `${input.actor.provider}:${input.actor.subject}`,
+                ...(policy.statusChange?.reason !== undefined ? { reason: policy.statusChange.reason } : {}),
+              });
+            }
+            return policy;
+          }),
+        retire: (organizationId, id, input) =>
+          run(async (tx) => {
+            const before = await tx.policies.findById(organizationId, id);
+            const policy = await tx.policies.retire(organizationId, id, input);
+            if (before && before.status !== policy.status) {
+              await record(tx, "policy.retired", organizationId, { type: "policy", id }, {
+                key: policy.key,
+                revision: policy.revision,
+                from: before.status,
+                requestedBy: `${input.actor.provider}:${input.actor.subject}`,
+                ...(policy.statusChange?.reason !== undefined ? { reason: policy.statusChange.reason } : {}),
+              });
+            }
+            return policy;
+          }),
+        delete: (organizationId, id, input) =>
+          run(async (tx) => {
+            const before = await tx.policies.findById(organizationId, id);
+            await tx.policies.delete(organizationId, id, input);
+            await record(tx, "policy.deleted", organizationId, { type: "policy", id }, before ? { key: before.key, name: before.name } : undefined);
           }),
       },
       features: {
