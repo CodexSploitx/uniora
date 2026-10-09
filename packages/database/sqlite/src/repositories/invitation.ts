@@ -1,3 +1,4 @@
+import { searchCandidates } from "../search.js";
 import type {
   CreateInvitationInput,
   Identity,
@@ -162,6 +163,7 @@ export function createInvitationRepository(db: SqliteExecutor): InvitationReposi
     },
 
     async search(organizationId: string, options?: SearchInvitationsOptions) {
+      const candidates = await searchCandidates(db, "uniora_invitations_search", options?.query?.trim());
       const result = await db.query<InvitationRow>(
         `select ${SELECT_COLUMNS}
          from uniora_invitations i
@@ -169,21 +171,28 @@ export function createInvitationRepository(db: SqliteExecutor): InvitationReposi
            and (?2 is null or i.status = ?2)
            and (?3 is null or (i.created_at, i.id) < (select created_at, id from uniora_invitations where id = ?3))
            and (?5 is null or uniora_ilike(i.email, ?5))
+           and (?6 is null or i.rowid in (select value from json_each(?6)))
          order by i.created_at desc, i.id desc
          limit coalesce(?4, -1)`,
-        [organizationId, options?.status ?? null, options?.after ?? null, options?.limit ?? null, likeOrNull(options?.query)],
+        [organizationId, options?.status ?? null, options?.after ?? null, options?.limit ?? null, likeOrNull(options?.query), candidates],
       );
       return result.rows.map(toInvitation);
     },
 
-    async count(organizationId: string, options?: Pick<SearchInvitationsOptions, "status" | "query">) {
+    async count(organizationId: string, options?: Pick<SearchInvitationsOptions, "status" | "query"> & { limit?: number }) {
+      const candidates = await searchCandidates(db, "uniora_invitations_search", options?.query?.trim());
       const result = await db.query<{ count: number }>(
         `select count(*) as count
-         from uniora_invitations i
-         where i.organization_id = ?1
-           and (?2 is null or i.status = ?2)
-           and (?3 is null or uniora_ilike(i.email, ?3))`,
-        [organizationId, options?.status ?? null, likeOrNull(options?.query)],
+         from (
+           select 1
+           from uniora_invitations i
+           where i.organization_id = ?1
+             and (?2 is null or i.status = ?2)
+             and (?3 is null or uniora_ilike(i.email, ?3))
+             and (?4 is null or i.rowid in (select value from json_each(?4)))
+           limit coalesce(?5, -1)
+         )`,
+        [organizationId, options?.status ?? null, likeOrNull(options?.query), candidates, options?.limit ?? null],
       );
       return Number(result.rows[0]!.count);
     },

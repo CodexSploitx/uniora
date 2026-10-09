@@ -49,3 +49,13 @@ describe("describeActivity", () => {
     });
   });
 });
+
+describe("describeActivity covers every audit action Core records", () => {
+  it("never falls back to the raw action name", async () => {
+    const { AUDIT_ACTIONS } = await import("@uniora/core");
+    const raw = AUDIT_ACTIONS.filter((action) => describeActivity({ ...base, action }, tEn).title === action);
+    expect(raw).toEqual([]);
+    const rawEs = AUDIT_ACTIONS.filter((action) => describeActivity({ ...base, action }, tEs).title === action);
+    expect(rawEs).toEqual([]);
+  });
+});

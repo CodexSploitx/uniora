@@ -102,8 +102,11 @@ export interface MembershipRepository {
    * of its roles plus the total role count (never every role id).
    */
   searchListing(options: SearchMembershipsOptions & { rolesPerMember: number }): Promise<MembershipListing[]>;
-  /** Count of memberships (optionally within one organization / matching `query`) — never loads rows. */
-  count(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus }): Promise<number>;
+  /**
+   * Count of memberships (optionally within one organization / matching `query`) — never loads rows.
+   * With `limit`, the answer is at most that many — it stops counting there, so a filter matching millions of rows costs a page of work.
+   */
+  count(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus; limit?: number }): Promise<number>;
   /**
    * How many members currently hold each of the given roles, in one call.
    * Every requested id is present (`0` when none).
@@ -111,9 +114,10 @@ export interface MembershipRepository {
   countByRole(roleIds: string[]): Promise<Record<string, number>>;
   /**
    * Members per organization for a batch of organization ids, in one call.
-   * Every requested id is present (`0` when it has none).
+   * Every requested id is present (`0` when it has none). With `limit`, each count stops there ("at least this
+   * many"), so an organization with millions of rows costs `limit` index entries.
    */
-  countByOrganization(organizationIds: string[]): Promise<Record<string, number>>;
+  countByOrganization(organizationIds: string[], options?: { limit?: number }): Promise<Record<string, number>>;
   /**
    * Assigns a REGULAR (non-Owner) role. Idempotent (no-op if already
    * assigned). Rejects (`MembershipError`) if `membershipId`/`roleId` don't

@@ -1,5 +1,6 @@
 "use client";
 
+import { capParams } from "@/lib/limits";
 import { IconArrowRight, IconDots, IconPlus, IconTrash, IconUsersGroup } from "@tabler/icons-react";
 import Link from "next/link";
 import { useState } from "react";
@@ -90,7 +91,7 @@ export function TeamsTab(props: TeamsTabProps) {
 
   return (
     <div className="grid gap-4 lg:grid-cols-5">
-      <section className="flex flex-col gap-3 lg:col-span-2" aria-label={t("teams.listAria")}>
+      <section className="flex min-w-0 flex-col gap-3 lg:col-span-2" aria-label={t("teams.listAria")}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <ListSearch
             basePath={teamsHref(orgPath, { team: selectedTeamId })}
@@ -101,7 +102,7 @@ export function TeamsTab(props: TeamsTabProps) {
           />
           {!readOnly && <CreateTeamDialog organizationId={organizationId} teams={teams.filter((team) => team.status === "active")} />}
         </div>
-        <span className="text-xs text-muted-foreground">{t("teams.resultsCount", { count: total })}</span>
+        <span className="text-xs text-muted-foreground">{t("teams.resultsCount", capParams(total))}</span>
 
         {teams.length === 0 ? (
           <Empty className="border">
@@ -153,7 +154,7 @@ export function TeamsTab(props: TeamsTabProps) {
         )}
       </section>
 
-      <section className="lg:sticky lg:top-20 lg:col-span-3 lg:self-start" aria-label={t("teams.detailAria")}>
+      <section className="min-w-0 lg:sticky lg:top-20 lg:col-span-3 lg:self-start" aria-label={t("teams.detailAria")}>
         {detail ? (
           <TeamDetail organizationId={organizationId} orgPath={orgPath} readOnly={readOnly} detail={detail} defaultProvider={defaultProvider} />
         ) : (
@@ -184,11 +185,11 @@ function TeamDetail({
 }) {
   const { t } = useI18n();
   const { pending, run } = useAction();
-  const { team, ancestors, members, membersTotal, membersNextCursor } = detail;
+  const { team, ancestors, children, members, membersTotal, membersNextCursor } = detail;
   const archived = team.status === "archived";
 
   return (
-    <div className="flex flex-col gap-3 rounded-xl border bg-card p-4">
+    <div className="flex min-w-0 flex-col gap-3 rounded-xl border bg-card p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
           {ancestors.length > 0 && (
@@ -256,6 +257,21 @@ function TeamDetail({
           </div>
         )}
       </div>
+
+      {children.length > 0 && (
+        <nav aria-label={t("teams.childrenAria")} className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-muted-foreground">{t("teams.subTeamsLabel")}</span>
+          {children.map((child) => (
+            <Link key={child.id} href={teamsHref(orgPath, { team: child.id })} className="rounded-full border px-2.5 py-0.5 text-xs hover:border-primary/40 hover:text-primary">
+              {child.name}
+              {child.status === "archived" ? ` · ${t("teams.status.archived")}` : ""}
+            </Link>
+          ))}
+          {team.childCount > children.length && (
+            <span className="text-xs text-muted-foreground">{t("teams.moreSubTeams", { count: team.childCount - children.length })}</span>
+          )}
+        </nav>
+      )}
 
       <p className="text-xs text-muted-foreground">{t("teams.hierarchyNote")}</p>
 

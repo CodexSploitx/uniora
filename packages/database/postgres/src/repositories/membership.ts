@@ -16,6 +16,7 @@ import { MembershipError, assertBlockUntil, assertExpectedVersion, sanitizeBlock
 import type { Queryable } from "../queryable.js";
 import { countByOrganization } from "../pg-counts.js";
 import { toLikePattern } from "../pg-like.js";
+import { searchCandidates, walkCount } from "../pg-search.js";
 import { isUniqueViolation, violatedConstraint } from "../pg-errors.js";
 
 /** Postgres error code for a serializable-transaction conflict (SSI) — same constant as `identity-link.ts`. */
@@ -53,6 +54,21 @@ interface MembershipRow {
 function effectiveStatus(alias?: string): string {
   const prefix = alias ? `${alias}.` : "";
   return `(case when ${prefix}status = 'blocked' and ${prefix}blocked_until is not null then (case when ${prefix}blocked_until <= now() then 'active' else 'suspended' end) else ${prefix}status end)`;
+}
+
+/**
+ * The stored `status` is only ever `active` or `blocked` (a suspension is a block with an end date), so a filter for an
+ * effective `blocked`/`suspended` member can also say `status = 'blocked'`, which the `(status, id)` index answers without
+ * touching the other rows. An `active` filter can't narrow anything (nearly everyone is), so it adds nothing.
+ */
+function storedStatusPrefilter(status: MembershipStatus | undefined): string {
+  return status === "blocked" || status === "suspended" ? "and status = 'blocked'" : "";
+}
+
+/** A page can be found by walking the table in id order only when nothing but the text and the organization filters it. */
+function pageHint(options?: SearchMembershipsOptions): { after?: string; limit: number } | undefined {
+  if (!options?.limit || options.identity || options.status) return undefined;
+  return { after: options.after, limit: options.limit };
 }
 
 /** Columns of `uniora.memberships` a `Membership` needs, qualified with the alias `m`. */
@@ -397,6 +413,7 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
 
     async search(options?: SearchMembershipsOptions) {
       const query = options?.query?.trim();
+      const candidates = await searchCandidates(db, "memberships", query, options?.organizationId, pageHint(options));
       // Page the memberships FIRST (index-ordered by id, limited), and only
       // then join/aggregate their roles — so the cost is one page of rows,
       // not "every matching member joined to its roles".
@@ -411,6 +428,8 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
              and ($3::text is null or id > $3)
              and ($5::text is null or (provider = $5 and subject = $6))
              and ($7::text is null or ${effectiveStatus()} = $7)
+             ${storedStatusPrefilter(options?.status)}
+             and ($8::text[] is null or id = any($8))
            order by id asc
            limit $4
          ) m
@@ -419,13 +438,14 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
                   m.invited_by_provider, m.invited_by_subject, m.last_active_at,
                   m.blocked_at, m.blocked_until, m.blocked_by_provider, m.blocked_by_subject, m.block_reason, m.version
          order by m.id asc`,
-        [options?.organizationId ?? null, query ? toLikePattern(query) : null, options?.after ?? null, options?.limit ?? null, options?.identity?.provider ?? null, options?.identity?.subject ?? null, options?.status ?? null],
+        [options?.organizationId ?? null, query ? toLikePattern(query) : null, options?.after ?? null, options?.limit ?? null, options?.identity?.provider ?? null, options?.identity?.subject ?? null, options?.status ?? null, candidates],
       );
       return result.rows.map(toMembership);
     },
 
     async searchListing(options: SearchMembershipsOptions & { rolesPerMember: number }) {
       const query = options.query?.trim();
+      const candidates = await searchCandidates(db, "memberships", query, options.organizationId, pageHint(options));
       interface ListingRow {
         id: string;
         organization_id: string;
@@ -467,11 +487,13 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
              and ($3::text is null or id > $3)
              and ($6::text is null or (provider = $6 and subject = $7))
              and ($8::text is null or ${effectiveStatus()} = $8)
+             ${storedStatusPrefilter(options?.status)}
+             and ($9::text[] is null or id = any($9))
            order by id asc
            limit $4
          ) m
          order by m.id asc`,
-        [options.organizationId ?? null, query ? toLikePattern(query) : null, options.after ?? null, options.limit ?? null, options.rolesPerMember, options.identity?.provider ?? null, options.identity?.subject ?? null, options.status ?? null],
+        [options.organizationId ?? null, query ? toLikePattern(query) : null, options.after ?? null, options.limit ?? null, options.rolesPerMember, options.identity?.provider ?? null, options.identity?.subject ?? null, options.status ?? null, candidates],
       );
       return result.rows.map(
         (row): MembershipListing => ({
@@ -495,16 +517,28 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
       );
     },
 
-    async count(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus }) {
+    async count(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus; limit?: number }) {
       const query = options?.query?.trim();
+      // A common term reaches the cap within the first rows of the table: no need to ask the index at all.
+      if (query && options?.limit && !options.identity && !options.status) {
+        if ((await walkCount(db, query, options.organizationId, options.limit)) >= options.limit) return options.limit;
+      }
+      const candidates = await searchCandidates(db, "memberships", query, options?.organizationId);
+      // With `limit`, counting stops there, so a filter matching millions of rows costs a page of work.
       const result = await db.query<{ count: string }>(
         `select count(*)::text as count
-         from uniora.memberships
-         where ($1::text is null or organization_id = $1)
-           and ($2::text is null or provider ilike $2 or subject ilike $2)
-           and ($3::text is null or (provider = $3 and subject = $4))
-           and ($5::text is null or ${effectiveStatus()} = $5)`,
-        [options?.organizationId ?? null, query ? toLikePattern(query) : null, options?.identity?.provider ?? null, options?.identity?.subject ?? null, options?.status ?? null],
+         from (
+           select 1
+           from uniora.memberships
+           where ($1::text is null or organization_id = $1)
+             and ($2::text is null or provider ilike $2 or subject ilike $2)
+             and ($3::text is null or (provider = $3 and subject = $4))
+             and ($5::text is null or ${effectiveStatus()} = $5)
+             ${storedStatusPrefilter(options?.status)}
+             and ($7::text[] is null or id = any($7))
+           limit $6::integer
+         ) matching`,
+        [options?.organizationId ?? null, query ? toLikePattern(query) : null, options?.identity?.provider ?? null, options?.identity?.subject ?? null, options?.status ?? null, options?.limit ?? null, candidates],
       );
       return Number(result.rows[0]!.count);
     },
@@ -520,8 +554,8 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
       return counts;
     },
 
-    async countByOrganization(organizationIds: string[]) {
-      return countByOrganization(db, "memberships", organizationIds);
+    async countByOrganization(organizationIds: string[], options?: { limit?: number }) {
+      return countByOrganization(db, "memberships", organizationIds, options?.limit);
     },
 
     async assignRole(membershipId: string, roleId: string, options?: MembershipVersionOptions) {

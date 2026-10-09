@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import type { Identity, UnioraTransaction } from "@uniora/core";
 import { getStorage } from "@/lib/db";
+import { clearCachedTotals } from "@/lib/totals-cache";
 import { getStudioEnv } from "@/lib/env";
 import { StudioAuthError, StudioReadOnlyError, requireWrite } from "@/lib/session";
 import { getT } from "@/i18n/server";
@@ -64,6 +65,7 @@ export async function mutate<T = undefined>(
   try {
     await requireWrite();
     const data = await getStorage().transaction(work);
+    clearCachedTotals();
     for (const path of paths) revalidatePath(path);
     return (data === undefined ? { ok: true } : { ok: true, data }) as ActionResult<T>;
   } catch (error) {

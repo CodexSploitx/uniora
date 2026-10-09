@@ -96,6 +96,57 @@ export function describeActivity(
     case "team.owner_changed":
     case "team.manager_changed":
       return { title: t("activity.teamResponsibilityChanged"), detail: `${meta(item, "from") ?? ""} → ${meta(item, "to") ?? ""}`, tone: "info" };
+    case "membership.blocked":
+      return { title: t("activity.memberBlocked"), detail: who, tone: "destructive" };
+    case "membership.unblocked":
+      return { title: t("activity.memberUnblocked"), detail: who, tone: "success" };
+    case "membership.suspended":
+      return { title: t("activity.memberSuspended"), detail: who, tone: "warning" };
+    case "organization.status_changed":
+      return { title: t("activity.organizationStatusChanged"), detail: meta(item, "status") ?? meta(item, "to"), tone: "warning" };
+    case "organization.renamed":
+    case "organization.updated":
+      return { title: t("activity.organizationUpdated"), detail: meta(item, "name") ?? meta(item, "to"), tone: "info" };
+    case "membership.owner_role_assigned":
+      return { title: t("activity.ownerRoleAssigned"), detail: who, tone: "info" };
+    case "membership.owner_role_unassigned":
+      return { title: t("activity.ownerRoleUnassigned"), detail: who, tone: "warning" };
+    case "role.cloned":
+    case "role.owner_created":
+      return { title: t("activity.roleCreated"), detail: role, tone: "success" };
+    case "role.updated":
+      return { title: t("activity.roleUpdated"), detail: role, tone: "info" };
+    case "role.permissions_replaced":
+      return { title: t("activity.rolePermissionsReplaced"), detail: role, tone: "info" };
+    case "feature.bulk_changed":
+      return { title: t("activity.featureBulkChanged"), tone: "info" };
+    case "feature.disabled_everywhere":
+      return { title: t("activity.featureDisabledEverywhere"), detail: item.target?.id, tone: "warning" };
+    case "feature.registered":
+      return { title: t("activity.featureRegistered"), detail: item.target?.id, tone: "success" };
+    case "feature.unregistered":
+      return { title: t("activity.featureUnregistered"), detail: item.target?.id, tone: "warning" };
+    case "permission.registered":
+      return { title: t("activity.permissionRegistered"), detail: item.target?.id, tone: "success" };
+    case "permission.unregistered":
+      return { title: t("activity.permissionUnregistered"), detail: item.target?.id, tone: "warning" };
+    case "identity_link.removed":
+      return { title: t("activity.identityLinkRemoved"), tone: "warning" };
+    case "audit_log.pruned":
+      return { title: t("activity.auditPruned"), tone: "info" };
+    case "entitlement.defined":
+    case "entitlement.removed":
+    case "entitlement.limit_changed":
+    case "entitlement.limit_cleared":
+      return { title: t("activity.entitlementChanged"), detail: item.target?.id, tone: "info" };
+    case "team_member.role_assigned":
+    case "team_member.role_unassigned":
+      return { title: t("activity.teamMemberRoleChanged"), detail: who ?? item.target?.id, tone: "info" };
+    case "support_grant.created":
+    case "support_grant.revoked":
+    case "platform.support_access_granted":
+    case "platform.support_access_revoked":
+      return { title: t("activity.supportAccess"), tone: "warning" };
     case "identity_link.created": {
       // Global entry (docs/security-pentest-2026-09-24.md Hallazgo 5) — no
       // `role`/`identity` string metadata like the others, just the two
@@ -106,6 +157,9 @@ export function describeActivity(
       return { title: t("activity.identityLinkCreated"), detail, tone: "info" };
     }
     default:
+      if (item.action.startsWith("platform.")) {
+        return { title: t("activity.platformChange"), detail: item.action.slice("platform.".length).replaceAll("_", " "), tone: "info" };
+      }
       return { title: item.action, detail: item.target ? `${item.target.type}:${item.target.id}` : undefined, tone: "info" };
   }
 }

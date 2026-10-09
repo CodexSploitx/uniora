@@ -20,6 +20,7 @@ export interface OrgSummary {
   slug: string;
   name: string;
   createdAt: string;
+  status: "active" | "suspended" | "archived";
   memberCount: number;
   roleCount: number;
   enabledFeatureCount: number;
@@ -39,6 +40,11 @@ export interface MemberRow {
   roles: RoleRef[];
   /** How many roles the member holds in total (`roles.length` may be smaller). */
   roleCount: number;
+  /** `suspended` is a block with an end date; once it passes the member reads `active` again by itself. */
+  status: "active" | "suspended" | "blocked";
+  createdAt: string;
+  /** Last time the application reported the member as active, when it does. */
+  lastActiveAt?: string;
   /** Set on the global members page, where rows come from many organizations. */
   organization?: { id: string; name: string };
 }
@@ -85,7 +91,7 @@ export interface RolePermissionRow {
 }
 
 export interface OrgHeader {
-  organization: { id: string; slug: string; name: string; createdAt: string };
+  organization: { id: string; slug: string; name: string; createdAt: string; status: "active" | "suspended" | "archived"; statusReason?: string };
   memberCount: number;
   roleCount: number;
   featuresEnabled: number;
@@ -103,6 +109,8 @@ export interface FeatureView {
   key: string;
   name: string;
   description?: string;
+  /** On for every organization that has no override of its own. */
+  defaultEnabled: boolean;
   /** How many organizations have it enabled. */
   enabledCount: number;
   /** A few of those organizations, for a "used by…" preview (never the full list). */
@@ -136,6 +144,8 @@ export interface InvitationRow {
   /** `pending` past its expiry is shown as `expired`. */
   status: InvitationViewStatus;
   roles: RoleRef[];
+  /** Teams offered with the invitation (the invitee joins them as a plain member on accepting). */
+  teams: { id: string; name: string }[];
   invitedBy: IdentityView;
   createdAt: string;
   expiresAt: string;
@@ -163,4 +173,22 @@ export interface TeamMemberRow {
   status: "pending" | "active" | "suspended" | "removed";
   responsibility: "owner" | "manager" | "member";
   roles: RoleRef[];
+}
+
+export interface PlatformMemberRow {
+  id: string;
+  identity: IdentityView;
+  status: "active" | "suspended";
+  roles: { id: string; name: string; isSystem: boolean }[];
+  createdAt: string;
+  statusReason?: string;
+}
+
+export interface PlatformRoleRow {
+  id: string;
+  key: string;
+  name: string;
+  description?: string;
+  isSystem: boolean;
+  permissions: string[];
 }

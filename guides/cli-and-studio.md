@@ -49,7 +49,7 @@ Never hard-code the URL. With SQLite, read-only commands (`check`, `doctor`, `mi
 
 ## Studio
 
-A local admin UI over your own database: organizations (with their members, teams, roles, features and invitations), members, the global permission and feature catalogs and the activity log.
+A local admin UI over your own database: organizations (with their members, teams, roles, features and invitations), members, the global permission and feature catalogs, the activity log and a read-only view of the platform administrators. Members and organizations show their state (active, suspended, blocked or archived) and can be filtered and changed by state, with a reason.
 
 ```bash
 npx uniora studio            # first free port from 4321
@@ -60,6 +60,7 @@ npx uniora studio --read-only
 - Every change goes through the audited storage with the operator (the OS user that launched it, or `UNIORA_STUDIO_OPERATOR`) as the actor.
 - `--read-only` makes Studio refuse every change, and with SQLite the connection itself is read-only.
 - It works on PostgreSQL and SQLite and shows which engine it is using. If the tables don't exist it tells you to run `uniora migrate`.
+- It is built for large databases: every list is paged, counts next to a list stop at 10,000 ("10,000+"), and the whole-table totals are cached. See [Performance at scale](performance.md).
 - It is an operator tool: run it on your machine or behind your own access control, never exposed to the internet.
 
 Studio is launched by the CLI; it isn't meant to be started directly.

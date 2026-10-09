@@ -288,8 +288,8 @@ export function createRoleRepository(db: Queryable): RoleRepository {
       return result.rows.map((row) => row.permission_key);
     },
 
-    async countByOrganization(organizationIds: string[]) {
-      return countByOrganization(db, "roles", organizationIds);
+    async countByOrganization(organizationIds: string[], options?: { limit?: number }) {
+      return countByOrganization(db, "roles", organizationIds, options?.limit);
     },
 
     async grantPermission(roleId: string, permissionKey: string) {

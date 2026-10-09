@@ -16,6 +16,7 @@ import type { SqliteExecutor } from "../executor.js";
 import { countByOrganization } from "../counts.js";
 import { jsonList, parseList } from "../json.js";
 import { toLikePattern } from "../like.js";
+import { searchCandidates } from "../search.js";
 import { isUniqueViolation, violatedExactly } from "../sqlite-errors.js";
 
 interface MembershipRow {
@@ -45,6 +46,15 @@ interface MembershipRow {
 function effectiveStatus(alias?: string): string {
   const prefix = alias ? `${alias}.` : "";
   return `(case when ${prefix}status = 'blocked' and ${prefix}blocked_until is not null then (case when ${prefix}blocked_until <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now') then 'active' else 'suspended' end) else ${prefix}status end)`;
+}
+
+/**
+ * The stored `status` is only ever `active` or `blocked` (a suspension is a block with an end date), so a filter for an
+ * effective `blocked`/`suspended` member can also say `status = 'blocked'`, which the `(status, id)` index answers without
+ * touching the other rows. An `active` filter can't narrow anything (nearly everyone is), so it adds nothing.
+ */
+function storedStatusPrefilter(status: MembershipStatus | undefined): string {
+  return status === "blocked" || status === "suspended" ? "and status = 'blocked'" : "";
 }
 
 /** Columns of `uniora_memberships` a `Membership` needs, qualified with the alias `m`. */
@@ -301,6 +311,7 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
 
     async search(options?: SearchMembershipsOptions) {
       const query = options?.query?.trim();
+      const candidates = await searchCandidates(db, "uniora_memberships_search", query);
       // Page the memberships FIRST (index-ordered by id, limited), and only
       // then join/aggregate their roles — so the cost is one page of rows,
       // not "every matching member joined to its roles".
@@ -315,19 +326,22 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
              and (?3 is null or id > ?3)
              and (?5 is null or (provider = ?5 and subject = ?6))
              and (?7 is null or ${effectiveStatus()} = ?7)
+             ${storedStatusPrefilter(options?.status)}
+             and (?8 is null or rowid in (select value from json_each(?8)))
            order by id asc
            limit coalesce(?4, -1)
          ) m
          left join uniora_membership_roles mr on mr.membership_id = m.id
          group by m.id
          order by m.id asc`,
-        [options?.organizationId ?? null, query ? toLikePattern(query) : null, options?.after ?? null, options?.limit ?? null, options?.identity?.provider ?? null, options?.identity?.subject ?? null, options?.status ?? null],
+        [options?.organizationId ?? null, query ? toLikePattern(query) : null, options?.after ?? null, options?.limit ?? null, options?.identity?.provider ?? null, options?.identity?.subject ?? null, options?.status ?? null, candidates],
       );
       return result.rows.map(toMembership);
     },
 
     async searchListing(options: SearchMembershipsOptions & { rolesPerMember: number }) {
       const query = options.query?.trim();
+      const candidates = await searchCandidates(db, "uniora_memberships_search", query);
       interface ListingRow {
         id: string;
         organization_id: string;
@@ -377,11 +391,13 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
              and (?3 is null or id > ?3)
              and (?6 is null or (provider = ?6 and subject = ?7))
              and (?8 is null or ${effectiveStatus()} = ?8)
+             ${storedStatusPrefilter(options?.status)}
+             and (?9 is null or rowid in (select value from json_each(?9)))
            order by id asc
            limit coalesce(?4, -1)
          ) m
          order by m.id asc`,
-        [options.organizationId ?? null, query ? toLikePattern(query) : null, options.after ?? null, options.limit ?? null, options.rolesPerMember, options.identity?.provider ?? null, options.identity?.subject ?? null, options.status ?? null],
+        [options.organizationId ?? null, query ? toLikePattern(query) : null, options.after ?? null, options.limit ?? null, options.rolesPerMember, options.identity?.provider ?? null, options.identity?.subject ?? null, options.status ?? null, candidates],
       );
       return result.rows.map(
         (row): MembershipListing => ({
@@ -405,16 +421,25 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
       );
     },
 
-    async count(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus }) {
+    async count(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus; limit?: number }) {
       const query = options?.query?.trim();
+      const candidates = await searchCandidates(db, "uniora_memberships_search", query);
+      // With `limit`, counting stops there (`count` is then "at least this many, up to limit"), so a filter that
+      // matches millions of rows costs a page of work, not a full pass.
       const result = await db.query<{ count: number }>(
         `select count(*) as count
-         from uniora_memberships
-         where (?1 is null or organization_id = ?1)
-           and (?2 is null or uniora_ilike(provider, ?2) or uniora_ilike(subject, ?2))
-           and (?3 is null or (provider = ?3 and subject = ?4))
-           and (?5 is null or ${effectiveStatus()} = ?5)`,
-        [options?.organizationId ?? null, query ? toLikePattern(query) : null, options?.identity?.provider ?? null, options?.identity?.subject ?? null, options?.status ?? null],
+         from (
+           select 1
+           from uniora_memberships
+           where (?1 is null or organization_id = ?1)
+             and (?2 is null or uniora_ilike(provider, ?2) or uniora_ilike(subject, ?2))
+             and (?3 is null or (provider = ?3 and subject = ?4))
+             and (?5 is null or ${effectiveStatus()} = ?5)
+             ${storedStatusPrefilter(options?.status)}
+             and (?6 is null or rowid in (select value from json_each(?6)))
+           limit coalesce(?7, -1)
+         )`,
+        [options?.organizationId ?? null, query ? toLikePattern(query) : null, options?.identity?.provider ?? null, options?.identity?.subject ?? null, options?.status ?? null, candidates, options?.limit ?? null],
       );
       return Number(result.rows[0]!.count);
     },
@@ -430,8 +455,8 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
       return counts;
     },
 
-    async countByOrganization(organizationIds: string[]) {
-      return countByOrganization(db, "memberships", organizationIds);
+    async countByOrganization(organizationIds: string[], options?: { limit?: number }) {
+      return countByOrganization(db, "memberships", organizationIds, options?.limit);
     },
 
     async assignRole(membershipId: string, roleId: string, options?: MembershipVersionOptions) {

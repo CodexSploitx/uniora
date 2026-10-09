@@ -1,3 +1,4 @@
+import { capLabel } from "@/lib/limits";
 import {
   IconBuildingSkyscraper,
   IconHistory,
@@ -25,7 +26,7 @@ const OVERVIEW_ORG_LIMIT = 10;
 
 export default async function OverviewPage() {
   const overview = await getOverview(OVERVIEW_ORG_LIMIT);
-  const { t } = await getT();
+  const { t, locale } = await getT();
   const readOnly = isReadOnly();
   const defaultProvider = getDefaultAuthProvider();
 
@@ -56,7 +57,7 @@ export default async function OverviewPage() {
               <stat.icon />
             </IconTile>
             <div>
-              <div className="font-heading text-3xl font-semibold tabular-nums">{stat.value}</div>
+              <div className="font-heading text-3xl font-semibold tabular-nums">{capLabel(stat.value, locale)}</div>
               <div className="text-xs text-muted-foreground">{stat.label}</div>
             </div>
           </Link>

@@ -1,11 +1,13 @@
 "use client";
 
+import { capLabel } from "@/lib/limits";
 import {
   IconBuildingSkyscraper,
   IconChevronRight,
   IconHistory,
   IconKey,
   IconLayoutDashboard,
+  IconShieldLock,
   IconToggleRight,
   IconUsers,
 } from "@tabler/icons-react";
@@ -44,12 +46,13 @@ const NAV: { href: string; label: MessageKey; icon: typeof IconKey }[] = [
   { href: "/members", label: "nav.members", icon: IconUsers },
   { href: "/permissions", label: "nav.permissions", icon: IconKey },
   { href: "/features", label: "nav.features", icon: IconToggleRight },
+  { href: "/platform", label: "nav.platform", icon: IconShieldLock },
   { href: "/activity", label: "nav.activity", icon: IconHistory },
 ];
 
 export function AppSidebar({ organizations, organizationsTotal, readOnly }: AppSidebarProps) {
   const pathname = usePathname();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
 
   return (
     <Sidebar collapsible="icon">
@@ -83,7 +86,7 @@ export function AppSidebar({ organizations, organizationsTotal, readOnly }: AppS
                       <span>{t(item.label)}</span>
                     </SidebarMenuButton>
                     {item.href === "/organizations" && organizationsTotal > 0 && (
-                      <SidebarMenuBadge>{organizationsTotal}</SidebarMenuBadge>
+                      <SidebarMenuBadge>{capLabel(organizationsTotal, locale)}</SidebarMenuBadge>
                     )}
                   </SidebarMenuItem>
                 );

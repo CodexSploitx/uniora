@@ -4048,5 +4048,81 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         expect(await harness.probe.countAuditEntries("membership.left")).toBe(1);
       });
     });
+
+    describe("text search and capped counts", () => {
+      const person = (subject: string) => ({ provider: "auth0", subject });
+
+      it("finds a substring anywhere, ignoring case, and reads literally what looks like a wildcard", async () => {
+        const storage = harness.storage();
+        await storage.organizations.create({ id: "org-1", name: "Search Org" });
+        await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity: person("ana.perez@example.com") });
+        await storage.memberships.create({ id: "m-2", organizationId: "org-1", identity: person("bob@Example.com") });
+        await storage.memberships.create({ id: "m-3", organizationId: "org-1", identity: person("carlos_100%@other.io") });
+
+        const ids = async (query: string) => (await storage.memberships.searchListing({ organizationId: "org-1", query, rolesPerMember: 1 })).map((m) => m.id);
+        expect(await ids("EXAMPLE.com")).toEqual(["m-1", "m-2"]);
+        expect(await ids("a.pe")).toEqual(["m-1"]);
+        expect(await ids("ob@")).toEqual(["m-2"]);
+        expect(await ids("bo")).toEqual(["m-2"]); // shorter than a trigram: the exact predicate alone
+        expect(await ids("_100%")).toEqual(["m-3"]);
+        expect(await ids("%")).toEqual(["m-3"]);
+        expect(await ids("zzz")).toEqual([]);
+        expect(await storage.memberships.count({ organizationId: "org-1", query: "example.com" })).toBe(2);
+        expect((await storage.memberships.search({ query: "other.io" })).map((m) => m.id)).toEqual(["m-3"]);
+      });
+
+      it("keeps the search current when rows change or disappear", async () => {
+        const storage = harness.storage();
+        await storage.organizations.create({ id: "org-1", name: "Initial Name" });
+        await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity: person("temp.user@example.com") });
+        await storage.invitations.create({
+          id: "inv-1", organizationId: "org-1", email: "invitee@example.com", roleIds: [], tokenHash: "hash-1",
+          invitedBy: person("temp.user@example.com"), createdAt: new Date(), expiresAt: new Date(Date.now() + 86_400_000),
+        }).catch(() => undefined);
+
+        expect(await storage.organizations.count({ query: "initial name" })).toBe(1);
+        await storage.organizations.rename("org-1", "Renamed Corp");
+        expect(await storage.organizations.count({ query: "initial name" })).toBe(0);
+        expect(await storage.organizations.count({ query: "renamed" })).toBe(1);
+
+        await storage.memberships.delete("m-1");
+        expect(await storage.memberships.count({ query: "temp.user" })).toBe(0);
+        expect(await storage.memberships.search({ query: "temp.user" })).toEqual([]);
+      });
+
+      it("count({ limit }) stops at the limit and is exact below it", async () => {
+        const storage = harness.storage();
+        await storage.organizations.create({ id: "org-1", name: "Count Org" });
+        for (let i = 0; i < 5; i++) await storage.memberships.create({ id: `m-${i}`, organizationId: "org-1", identity: person(`u${i}@count.io`) });
+
+        expect(await storage.memberships.count({ organizationId: "org-1" })).toBe(5);
+        expect(await storage.memberships.count({ organizationId: "org-1", limit: 3 })).toBe(3);
+        expect(await storage.memberships.count({ organizationId: "org-1", limit: 50 })).toBe(5);
+        expect(await storage.memberships.count({ query: "count.io", limit: 2 })).toBe(2);
+        expect(await storage.organizations.count({ limit: 1 })).toBe(1);
+        expect(await storage.memberships.countByOrganization(["org-1", "nope"], { limit: 3 })).toEqual({ "org-1": 3, nope: 0 });
+        expect(await storage.memberships.countByOrganization(["org-1", "nope"])).toEqual({ "org-1": 5, nope: 0 });
+        expect(await storage.roles.countByOrganization(["org-1"], { limit: 1 })).toEqual({ "org-1": 0 });
+      });
+
+      it("pages a term that matches thousands of rows, in order and without gaps", async () => {
+        const storage = harness.storage();
+        await storage.organizations.create({ id: "org-1", name: "Big Org" });
+        const total = 10_040; // more matches than any index prefilter keeps: the ordinary ordered scan must serve it
+        await storage.transaction(async (tx) => {
+          for (let i = 0; i < total; i++) {
+            await tx.memberships.create({ id: `m-${String(i).padStart(6, "0")}`, organizationId: "org-1", identity: person(`user${i}@common-domain.io`) });
+          }
+        });
+
+        const first = await storage.memberships.searchListing({ query: "common-domain", limit: 25, rolesPerMember: 1 });
+        expect(first.map((m) => m.id)).toEqual(Array.from({ length: 25 }, (_, i) => `m-${String(i).padStart(6, "0")}`));
+        const next = await storage.memberships.searchListing({ query: "common-domain", limit: 25, after: first[24]!.id, rolesPerMember: 1 });
+        expect(next[0]!.id).toBe("m-000025");
+        expect(await storage.memberships.count({ query: "common-domain", limit: 10_001 })).toBe(10_001);
+        expect(await storage.memberships.count({ query: "user10039@" })).toBe(1);
+        expect((await storage.memberships.search({ query: "user10039@" })).map((m) => m.id)).toEqual(["m-010039"]);
+      }, 120_000);
+    });
   });
 }

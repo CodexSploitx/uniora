@@ -88,8 +88,11 @@ export interface InvitationRepository {
   findByTokenHash(tokenHash: string): Promise<Invitation | null>;
   /** Newest first, keyset-paged on `id`. */
   search(organizationId: string, options?: SearchInvitationsOptions): Promise<Invitation[]>;
-  /** How many invitations of the organization match — same `status` / `query` filters as `search` (`after` and `limit` don't apply). */
-  count(organizationId: string, options?: Pick<SearchInvitationsOptions, "status" | "query">): Promise<number>;
+  /**
+   * How many invitations of the organization match — same `status` / `query` filters as `search` (`after` doesn't apply).
+   * With `limit`, the answer is at most that many — it stops counting there, so a filter matching millions of rows costs a page of work.
+   */
+  count(organizationId: string, options?: Pick<SearchInvitationsOptions, "status" | "query"> & { limit?: number }): Promise<number>;
   /**
    * Marks as `expired` the organization's pending invitations for `email`
    * whose `expiresAt <= now`, so a fresh invitation can take their place.

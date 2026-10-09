@@ -2,15 +2,16 @@ import "server-only";
 import { existsSync } from "node:fs";
 import { Pool } from "pg";
 import type { Database as SqliteDatabase } from "better-sqlite3";
-import type { UnioraStorage } from "@uniora/core";
-import { createPostgresStorage } from "@uniora/postgres";
-import { createSqliteStorage, hasUnioraSchema, openSqliteDatabase, sqlitePathFromUrl } from "@uniora/sqlite";
+import type { PlatformStorage, UnioraStorage } from "@uniora/core";
+import { createPostgresPlatformStorage, createPostgresStorage } from "@uniora/postgres";
+import { createSqlitePlatformStorage, createSqliteStorage, hasUnioraSchema, openSqliteDatabase, sqlitePathFromUrl } from "@uniora/sqlite";
 import { getStudioEnv } from "@/lib/env";
 
 const globalForStudio = globalThis as unknown as {
   __unioraStudioPool?: Pool;
   __unioraStudioSqlite?: SqliteDatabase;
   __unioraStudioStorage?: UnioraStorage;
+  __unioraStudioPlatform?: PlatformStorage;
 };
 
 function getPool(): Pool {
@@ -43,6 +44,15 @@ export function getStorage(): UnioraStorage {
       getStudioEnv().databaseProvider === "sqlite" ? createSqliteStorage(getSqlite()) : createPostgresStorage(getPool());
   }
   return globalForStudio.__unioraStudioStorage;
+}
+
+/** The platform scope's own storage (separate tables). Studio only reads it: platform changes need platform actors. */
+export function getPlatformStorage(): PlatformStorage {
+  if (!globalForStudio.__unioraStudioPlatform) {
+    globalForStudio.__unioraStudioPlatform =
+      getStudioEnv().databaseProvider === "sqlite" ? createSqlitePlatformStorage(getSqlite()) : createPostgresPlatformStorage(getPool());
+  }
+  return globalForStudio.__unioraStudioPlatform;
 }
 
 /**

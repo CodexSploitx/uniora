@@ -156,9 +156,10 @@ export interface RoleRepository {
   grantedPermissionKeys(roleId: string, keys: string[]): Promise<string[]>;
   /**
    * Roles per organization for a batch of organization ids, in one call.
-   * Every requested id is present (`0` when it has none).
+   * Every requested id is present (`0` when it has none). With `limit`, each count stops there ("at least this
+   * many"), so an organization with millions of rows costs `limit` index entries.
    */
-  countByOrganization(organizationIds: string[]): Promise<Record<string, number>>;
+  countByOrganization(organizationIds: string[], options?: { limit?: number }): Promise<Record<string, number>>;
   /**
    * `permissionKey` must already be registered via `PermissionRepository.register`.
    * Rejects if the role is not found or is the protected Owner role.

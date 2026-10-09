@@ -1,7 +1,8 @@
 "use server";
 
 import { createOrganizationWithOwner, OrganizationError, type UnioraStorage } from "@uniora/core";
-import { audit, mutate, mutateInOrg, newId, text, type ActionResult } from "@/actions/mutate";
+import { audit, mutate, mutateInOrg, newId, studioActor, text, type ActionResult } from "@/actions/mutate";
+import { StudioError } from "@/lib/validate";
 
 export interface CreateOrganizationArgs {
   name: string;
@@ -53,4 +54,17 @@ export async function renameOrganization(args: { organizationId: string; name: s
       });
     },
   );
+}
+
+export async function setOrganizationStatus(args: {
+  organizationId: string;
+  status: "active" | "suspended" | "archived";
+  reason?: string;
+}): Promise<ActionResult> {
+  return mutateInOrg(args?.organizationId, (id) => [`/organizations/${id}`, "/organizations", "/"], async (tx, organizationId) => {
+    if (args.status !== "active" && args.status !== "suspended" && args.status !== "archived") throw new StudioError("errors.unexpected");
+    const reason = text(args.reason, "field.reason", { max: 500, optional: true });
+    const updated = await tx.organizations.setStatus(organizationId, { status: args.status, actor: studioActor(), reason });
+    if (!updated) throw new StudioError("errors.memberGone");
+  });
 }
