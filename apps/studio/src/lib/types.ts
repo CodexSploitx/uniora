@@ -213,3 +213,32 @@ export interface PlatformRoleRow {
   isSystem: boolean;
   permissions: string[];
 }
+
+export interface ApiKeyRow {
+  id: string;
+  /** The last characters of the key, so an operator can tell keys apart. Never the secret, never its hash. */
+  hint: string;
+  status: "active" | "revoked" | "expired";
+  createdAt: string;
+  expiresAt?: string;
+  lastUsedAt?: string;
+}
+
+export interface ApiClientRow {
+  id: string;
+  name: string;
+  status: "active" | "disabled";
+  scopes: string[];
+  /** `"*"` = every organization. */
+  organizations: "*" | string[];
+  keys: ApiKeyRow[];
+  createdAt: string;
+  version: number;
+}
+
+export interface ApiClientsPage {
+  /** False when the credential tables do not exist yet (`uniora migrate` has not run since the upgrade). */
+  available: boolean;
+  clients: ApiClientRow[];
+  nextCursor: string | null;
+}

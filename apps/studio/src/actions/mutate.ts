@@ -38,7 +38,7 @@ export async function audit(
 
 // Matched by `name`, not `instanceof`: Next bundles Server Actions and page renders in separate module layers, so
 // the same Core class can exist twice and an error thrown by a service built in one layer would fail `instanceof` in the other.
-const DOMAIN_ERROR_NAMES = new Set(["FeatureError", "IdentityLinkError", "InvitationError", "MembershipError", "OrganizationError", "PermissionError", "RoleError", "TeamError"]);
+const DOMAIN_ERROR_NAMES = new Set(["ApiCredentialError", "FeatureError", "IdentityLinkError", "InvitationError", "MembershipError", "OrganizationError", "PermissionError", "RoleError", "TeamError"]);
 
 /** Studio's own failures are translated to the viewer's language; Core's domain errors are shown verbatim (Core has no i18n). */
 async function describeError(error: unknown): Promise<string> {

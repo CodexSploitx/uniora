@@ -2,9 +2,9 @@ import "server-only";
 import { existsSync } from "node:fs";
 import { Pool } from "pg";
 import type { Database as SqliteDatabase } from "better-sqlite3";
-import type { PlatformStorage, UnioraStorage } from "@uniora/core";
-import { createPostgresPlatformStorage, createPostgresStorage } from "@uniora/postgres";
-import { createSqlitePlatformStorage, createSqliteStorage, hasUnioraSchema, openSqliteDatabase, sqlitePathFromUrl } from "@uniora/sqlite";
+import type { ApiCredentialStorage, PlatformStorage, UnioraStorage } from "@uniora/core";
+import { createPostgresApiCredentialStorage, createPostgresPlatformStorage, createPostgresStorage } from "@uniora/postgres";
+import { createSqliteApiCredentialStorage, createSqlitePlatformStorage, createSqliteStorage, hasUnioraSchema, openSqliteDatabase, sqlitePathFromUrl } from "@uniora/sqlite";
 import { getStudioEnv } from "@/lib/env";
 
 const globalForStudio = globalThis as unknown as {
@@ -12,6 +12,7 @@ const globalForStudio = globalThis as unknown as {
   __unioraStudioSqlite?: SqliteDatabase;
   __unioraStudioStorage?: UnioraStorage;
   __unioraStudioPlatform?: PlatformStorage;
+  __unioraStudioApiCredentials?: ApiCredentialStorage;
 };
 
 function getPool(): Pool {
@@ -53,6 +54,15 @@ export function getPlatformStorage(): PlatformStorage {
       getStudioEnv().databaseProvider === "sqlite" ? createSqlitePlatformStorage(getSqlite()) : createPostgresPlatformStorage(getPool());
   }
   return globalForStudio.__unioraStudioPlatform;
+}
+
+/** The API credentials (clients and keys of the standalone API server): own tables, own storage, never mixed with the organization data. */
+export function getApiCredentialStorage(): ApiCredentialStorage {
+  if (!globalForStudio.__unioraStudioApiCredentials) {
+    globalForStudio.__unioraStudioApiCredentials =
+      getStudioEnv().databaseProvider === "sqlite" ? createSqliteApiCredentialStorage(getSqlite()) : createPostgresApiCredentialStorage(getPool());
+  }
+  return globalForStudio.__unioraStudioApiCredentials;
 }
 
 /**

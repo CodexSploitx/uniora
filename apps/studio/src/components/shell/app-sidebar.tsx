@@ -7,6 +7,7 @@ import {
   IconHistory,
   IconKey,
   IconLayoutDashboard,
+  IconPlugConnected,
   IconShieldLock,
   IconToggleRight,
   IconUsers,
@@ -47,6 +48,7 @@ const NAV: { href: string; label: MessageKey; icon: typeof IconKey }[] = [
   { href: "/permissions", label: "nav.permissions", icon: IconKey },
   { href: "/features", label: "nav.features", icon: IconToggleRight },
   { href: "/platform", label: "nav.platform", icon: IconShieldLock },
+  { href: "/api-clients", label: "nav.apiClients", icon: IconPlugConnected },
   { href: "/activity", label: "nav.activity", icon: IconHistory },
 ];
 

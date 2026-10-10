@@ -1,11 +1,13 @@
 import "server-only";
 import type { AuditLogEntry, Organization, Policy } from "@uniora/core";
-import { databaseSchemaExists, getPlatformStorage, getStorage } from "@/lib/db";
+import { createApiCredentialService } from "@uniora/core";
+import { databaseSchemaExists, getApiCredentialStorage, getPlatformStorage, getStorage } from "@/lib/db";
 import { countLimit } from "@/lib/limits";
 import { requireSession } from "@/lib/session";
 import { cachedTotal } from "@/lib/totals-cache";
 import type {
   ActivityItem,
+  ApiClientsPage,
   FeatureView,
   InvitationRow,
   MemberHeader,
@@ -1121,5 +1123,43 @@ export async function getPlatformPage(options?: { cursor?: string; status?: Plat
     // A database that predates the platform scope has no such tables: say so instead of failing the page. Anything else is a real error.
     if (!(error instanceof Error) || !/no such table|does not exist|no such schema/i.test(error.message)) throw error;
     return { available: false, members: [], membersNextCursor: null, membersTotal: 0, roles: [], rolesTruncated: false };
+  }
+}
+
+const API_CLIENTS_PAGE_SIZE = 25;
+
+export async function getApiClientsPage(options?: { cursor?: string }): Promise<ApiClientsPage> {
+  await requireSession();
+  try {
+    const service = createApiCredentialService({ storage: getApiCredentialStorage() });
+    const rows = await service.listClients({ limit: API_CLIENTS_PAGE_SIZE + 1, after: cleanCursor(options?.cursor) });
+    const { page, hasMore } = splitPage(rows, API_CLIENTS_PAGE_SIZE);
+    const now = Date.now();
+    return {
+      available: true,
+      clients: page.map((client) => ({
+        id: client.id,
+        name: client.name,
+        status: client.status,
+        scopes: client.scopes,
+        organizations: client.organizations,
+        createdAt: client.createdAt.toISOString(),
+        version: client.version,
+        // Only what an operator needs to tell keys apart: never the digest, which the listing does not even load.
+        keys: client.keys.map((key) => ({
+          id: key.id,
+          hint: key.hint,
+          status: key.revokedAt ? "revoked" : key.expiresAt && key.expiresAt.getTime() <= now ? "expired" : "active",
+          createdAt: key.createdAt.toISOString(),
+          ...(key.expiresAt ? { expiresAt: key.expiresAt.toISOString() } : {}),
+          ...(key.lastUsedAt ? { lastUsedAt: key.lastUsedAt.toISOString() } : {}),
+        })),
+      })),
+      nextCursor: hasMore ? page[page.length - 1]!.id : null,
+    };
+  } catch (error) {
+    // A database that predates the API server has no such tables: say so instead of failing the page. Anything else is a real error.
+    if (!(error instanceof Error) || !/no such table|does not exist|no such schema/i.test(error.message)) throw error;
+    return { available: false, clients: [], nextCursor: null };
   }
 }

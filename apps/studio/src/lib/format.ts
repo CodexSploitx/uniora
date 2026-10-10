@@ -166,6 +166,16 @@ export function describeActivity(
     case "platform.support_access_granted":
     case "platform.support_access_revoked":
       return { title: t("activity.supportAccess"), tone: "warning" };
+    case "api_client.created":
+    case "api_client.updated":
+    case "api_client.enabled":
+    case "api_client.disabled":
+    case "api_key.created":
+    case "api_key.revoked": {
+      // Never the key: the entry only names the client and the key's id.
+      const tone = item.action === "api_client.disabled" || item.action === "api_key.revoked" ? "warning" : "info";
+      return { title: t(`activity.${item.action.replace(".", "_")}` as never), detail: meta(item, "name") ?? item.target?.id, tone };
+    }
     case "identity_link.created": {
       // Global entry (docs/security-pentest-2026-09-24.md Hallazgo 5) — no
       // `role`/`identity` string metadata like the others, just the two
