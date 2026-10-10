@@ -387,6 +387,25 @@ export function definePolicyConformance(harness: { storage(): UnioraStorage; pol
       expect(await run({ ipCountry: "ES" })).toMatchObject({ allowed: false, reason: "policy_denied", policies: [{ reason: "outside_hours_or_country" }] });
     });
 
+    it("política sensible: se guarda y el motor la aplica con la sesión que el servidor declara, pidiendo step-up cuando solo ella rechaza", async () => {
+      const w = await seed();
+      const definition = {
+        kind: "sensitive",
+        effect: "require",
+        actions: ["reports.run"],
+        condition: { all: [{ lte: [{ ref: "session.authAgeSeconds" }, { value: 300 }] }, { eq: [{ ref: "session.mfa" }, { value: true }] }] },
+      };
+      const created = await create(w, "p-sens", "recent-mfa", definition);
+      expect(created).toMatchObject({ kind: "sensitive", revision: 1 });
+      await w.trusted.policies.activate("org-1", "p-sens", { actor: ana });
+      const now = new Date("2026-10-09T12:00:00Z");
+      const engine = createAuthorizationEngine(w.storage, { policies: { now: () => now } });
+      const run = (session?: { authenticatedAt?: Date; mfa?: boolean }) => engine.authorize({ identity: ana, organizationId: "org-1", permission: "reports.run", ...(session ? { session } : {}) });
+      expect(await run({ authenticatedAt: new Date(now.getTime() - 60_000), mfa: true })).toMatchObject({ allowed: true });
+      expect(await run({ authenticatedAt: new Date(now.getTime() - 3_600_000), mfa: true })).toMatchObject({ allowed: false, reason: "policy_denied", stepUp: { policyKeys: ["recent-mfa"] } });
+      expect(await run()).toMatchObject({ allowed: false, decision: "indeterminate", stepUp: { policyKeys: ["recent-mfa"] } });
+    });
+
     it("la base rechaza SQL directo sobre revisiones: ni se editan ni se borran sueltas", async () => {
       const w = await seed();
       await create(w, "p1", "one");

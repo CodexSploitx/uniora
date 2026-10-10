@@ -1,9 +1,10 @@
-import { RESOURCE_ATTRIBUTES, SUBJECT_ATTRIBUTES, isBuiltinResourceAttribute, isEnvironmentAttribute, isProtectedPermission, isSubjectAttribute } from "./attributes.js";
+import { RESOURCE_ATTRIBUTES, SESSION_ATTRIBUTES, SUBJECT_ATTRIBUTES, isBuiltinResourceAttribute, isEnvironmentAttribute, isProtectedPermission, isSessionAttribute, isSubjectAttribute } from "./attributes.js";
 import type { EnvironmentAttributeName, SubjectAttributeName } from "./attributes.js";
+import type { SessionFacts } from "./session.js";
 import { actionMatches } from "./definition.js";
 import { DEFAULT_POLICY_TIMEZONE, environmentAt } from "./environment.js";
 import type { PolicyAnalysis } from "./definition.js";
-import type { AttributeType, AttributeValue, Comparison, Condition, Operand, PolicyDefinition, PolicyEffect } from "./types.js";
+import type { AttributeType, AttributeValue, Comparison, Condition, Operand, PolicyDefinition, PolicyEffect, PolicyKind } from "./types.js";
 
 /** How much work one decision may do. A rule that needs more is "indeterminate", never silently skipped. */
 export const MAX_EVALUATION_STEPS = 20_000;
@@ -28,6 +29,7 @@ export type UnknownReason =
   | "subject_unavailable"
   | "team_tree_unavailable"
   | "environment_unavailable"
+  | "session_unavailable"
   | "feature_unavailable"
   | "permission_unavailable"
   | "budget_exceeded";
@@ -55,6 +57,8 @@ export interface EvaluationFacts {
   now?: number;
   /** The values of the `context` signals the host supplied. Anything not declared by an applicable policy is ignored. */
   context?: Readonly<Record<string, unknown>>;
+  /** How the person authenticated, as the host's server stated it (ages already computed by the engine). Absent when it said nothing. */
+  session?: SessionFacts;
 }
 
 export interface PolicyRequest {
@@ -75,6 +79,8 @@ export interface EvaluablePolicy {
 export interface PolicyOutcome {
   policyId: string;
   key: string;
+  /** The kind of the policy; absent for a stored policy that no longer validates (nobody can tell what it was meant to do). */
+  kind?: PolicyKind;
   revision: number;
   definitionHash: string;
   effect: PolicyEffect;
@@ -151,6 +157,15 @@ class Run {
     if (isEnvironmentAttribute(ref)) {
       const clock = this.clock();
       return clock === null ? { ok: false, reason: "environment_unavailable" } : { ok: true, value: clock[ref] };
+    }
+    if (isSessionAttribute(ref)) {
+      const value = this.facts.session?.[ref];
+      if (value === undefined) {
+        // An age that cannot be computed because the engine's clock failed is not something re-authenticating would fix.
+        const isAge = ref === "session.authAgeSeconds" || ref === "session.ageSeconds";
+        return { ok: false, reason: isAge && this.facts.now === undefined && this.facts.session !== undefined ? "environment_unavailable" : "session_unavailable" };
+      }
+      return hasType(value, SESSION_ATTRIBUTES[ref]) ? { ok: true, value } : { ok: false, reason: "attribute_type_mismatch" };
     }
     if (ref.startsWith("context.")) {
       const name = ref.slice("context.".length);
@@ -293,7 +308,7 @@ class Run {
  */
 export function evaluatePolicy(policy: EvaluablePolicy, request: PolicyRequest, facts: EvaluationFacts, budget: { steps: number } = { steps: MAX_EVALUATION_STEPS }): PolicyOutcome | null {
   const { definition } = policy;
-  const base = { policyId: policy.id, key: policy.key, revision: policy.revision, definitionHash: policy.definitionHash, effect: definition.effect };
+  const base = { policyId: policy.id, key: policy.key, kind: definition.kind, revision: policy.revision, definitionHash: policy.definitionHash, effect: definition.effect };
   const applies = applicability(definition, request);
   if (applies === "no") return null;
   if (applies === "unknown") return { ...base, result: "indeterminate", reason: "resource_missing" };
@@ -343,6 +358,7 @@ export function evaluatePolicySet(
       ? ({
           policyId: policy.id,
           key: policy.key,
+          kind: policy.definition.kind,
           revision: policy.revision,
           definitionHash: policy.definitionHash,
           effect: policy.definition.effect,
@@ -374,6 +390,8 @@ export interface RequiredFacts {
   environment: boolean;
   /** The `context.*` signals any of them reads, by name; the engine passes on only these. */
   context: string[];
+  /** Whether any of them reads `session.*`. */
+  session: boolean;
 }
 
 export function requiredFacts(policies: ReadonlyArray<{ definition: PolicyDefinition; analysis: PolicyAnalysis }>, request: PolicyRequest): RequiredFacts {
@@ -383,6 +401,7 @@ export function requiredFacts(policies: ReadonlyArray<{ definition: PolicyDefini
   let resource = false;
   let resourceTeamPath = false;
   let environment = false;
+  let session = false;
   const context = new Set<string>();
   for (const { definition, analysis } of policies) {
     if (applicability(definition, request) !== "yes") continue;
@@ -392,7 +411,8 @@ export function requiredFacts(policies: ReadonlyArray<{ definition: PolicyDefini
     if (analysis.resourceRefs.length > 0) resource = true;
     if (analysis.resourceRefs.includes("resource.teamPathIds")) resourceTeamPath = true;
     if (analysis.environmentRefs.length > 0) environment = true;
+    if (analysis.sessionRefs.length > 0) session = true;
     for (const ref of analysis.contextRefs) context.add(ref.slice("context.".length));
   }
-  return { features: [...features].sort(), permissions: [...permissions].sort(), subject: [...subject].sort(), resource, resourceTeamPath, environment, context: [...context].sort() };
+  return { features: [...features].sort(), permissions: [...permissions].sort(), subject: [...subject].sort(), resource, resourceTeamPath, environment, context: [...context].sort(), session };
 }

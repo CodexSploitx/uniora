@@ -21,11 +21,13 @@ export type PolicyEffect = (typeof POLICY_EFFECTS)[number];
  * - `feature`: the action needs a Feature enabled for the organization.
  * - `contextual`: depends on WHEN or in WHAT CIRCUMSTANCES the request happens (`environment.*`: the engine's clock in the policy's
  *   timezone; `context.*`: signals your server verified and declares). It may also read the person and the resource.
+ * - `sensitive`: protects an action by HOW STRONGLY the person authenticated (`session.*`: recent re-authentication, a second factor,
+ *   an assurance level). A refusal that only sensitive policies cause is reported as `stepUp`, so your own sign-in flow can ask for more.
  */
-export const POLICY_KINDS = ["access", "resource", "scope", "feature", "contextual"] as const;
+export const POLICY_KINDS = ["access", "resource", "scope", "feature", "contextual", "sensitive"] as const;
 export type PolicyKind = (typeof POLICY_KINDS)[number];
-/** Designed, not implemented yet: a definition using one is refused with a clear message instead of being half-supported. */
-export const RESERVED_POLICY_KINDS = ["sensitive"] as const;
+/** Kinds that are designed but not available yet: a definition using one is refused with a clear message. None today. */
+export const RESERVED_POLICY_KINDS: readonly string[] = [];
 
 /**
  * - `draft`: being written; never evaluated; can be deleted.
