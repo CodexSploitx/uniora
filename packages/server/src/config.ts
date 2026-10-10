@@ -53,6 +53,14 @@ export const DEFAULT_LIMITS: Readonly<ServerLimits> = Object.freeze({
   maxHeaderBytes: 8 * 1024,
 });
 
+export type InvitationConfig = Omit<InvitationServiceOptions, "storage" | "engine"> & {
+  /**
+   * Return the secret accept link in the response of `invite` and `resend` (default `false`). Turn it on only if YOUR backend sends
+   * the e-mail itself; otherwise the link is for `sender` alone and never travels back to the caller.
+   */
+  includeAcceptUrl?: boolean;
+};
+
 export interface UnioraServerOptions {
   /** The organization data. Reads and decisions go through it. */
   storage: UnioraStorage;
@@ -72,7 +80,7 @@ export interface UnioraServerOptions {
    * Turns on the invitation routes. The accept link and the way an e-mail is sent are YOURS: UNIORA only builds the link from the
    * secret token (`acceptUrl`) and hands it to `sender`. Without it the invitation routes answer 501 `invitations_not_configured`.
    */
-  invitations?: Omit<InvitationServiceOptions, "storage" | "engine">;
+  invitations?: InvitationConfig;
   /** Passed to the policy service the delegated policy routes use (`requireSeparateActivator`). */
   policies?: Omit<PolicyServiceOptions, "storage" | "engine">;
   engine?: AuthorizationEngineOptions;
@@ -94,7 +102,7 @@ export interface ResolvedConfig {
   readonly defaultProvider: string | undefined;
   readonly limits: Readonly<ServerLimits>;
   readonly engine: AuthorizationEngineOptions | undefined;
-  readonly invitations: Omit<InvitationServiceOptions, "storage" | "engine"> | undefined;
+  readonly invitations: InvitationConfig | undefined;
   readonly policies: Omit<PolicyServiceOptions, "storage" | "engine"> | undefined;
   readonly readOnly: boolean;
   readonly trustedProxyHops: number;

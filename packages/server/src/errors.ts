@@ -85,6 +85,8 @@ export function toApiError(error: unknown): ApiError {
     if (SERVER_FAULT.test(code)) return errors.internal(error);
     // The plain "no" never says whether it was the permission, the role or the target: one code for all of them. The four
     // anti-escalation rules (`access_escalation`, ...) keep theirs: they describe the rule, not the target, and a screen needs them.
+    // An unknown invitation, one of another organization and an unusable one are the same thing to whoever manages them.
+    if (code === "invitation_invalid") return new ApiError(404, "invitation_not_found", { cause: error, detail: error.message });
     if (/_forbidden$/.test(code)) return new ApiError(403, "forbidden", { cause: error, detail: error.message });
     return new ApiError(statusForCode(code), code, { cause: error, detail: error.message });
   }

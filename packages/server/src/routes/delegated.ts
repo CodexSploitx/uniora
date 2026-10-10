@@ -17,7 +17,7 @@ export const etag = (version: number): string => `"${version}"`;
  */
 export function runAccess(ctx: RouteContext, command: string, organizationId: string, params: object = {}): Promise<unknown> {
   const { actor, access, invitations } = ctx.delegated();
-  return runAccessCommand({ access, ...(invitations ? { invitations } : {}) }, command, { actor, organizationId }, toJson(params));
+  return runAccessCommand({ access, ...(invitations ? { invitations } : {}) }, command, { actor, organizationId, includeAcceptUrl: ctx.config.invitations?.includeAcceptUrl === true }, toJson(params));
 }
 
 export function runTeam(ctx: RouteContext, command: string, organizationId: string, params: object = {}): Promise<unknown> {

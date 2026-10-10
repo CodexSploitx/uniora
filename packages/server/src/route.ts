@@ -1,4 +1,4 @@
-import type { AccessAdminService, ApiPrincipal, ApiScope, AuthorizationEngine, Identity, InvitationService, PolicyService, TeamService } from "@uniora/core";
+import type { UnioraStorage, AccessAdminService, ApiPrincipal, ApiScope, AuthorizationEngine, Identity, InvitationService, PolicyService, TeamService } from "@uniora/core";
 import type { ResolvedConfig } from "./config.js";
 import type { Infer, Issue, ObjectSchema, Schema } from "./schema.js";
 
@@ -8,13 +8,20 @@ export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
  * What a delegated handler works with: the services, built for THIS request over a storage that refuses unauthorized changes
  * of power and stamps every audit entry with `via` (the API client, the key and the request id). They act as `actor`.
  */
-export interface DelegatedContext {
+export interface ApplicationContext {
+  /** The API client as an actor in the audit log: `{ provider: "uniora-api", subject: <clientId> }`. */
+  readonly principal: Identity;
+  /** The operator's storage under the access guard and the audit context. Founding flows (`createOrganizationWithOwner`) are the only writes that may use it directly. */
+  readonly storage: UnioraStorage;
+  /** `undefined` until the operator configures `invitations`. */
+  readonly invitations: InvitationService | undefined;
+}
+
+export interface DelegatedContext extends ApplicationContext {
   readonly actor: Identity;
   readonly access: AccessAdminService;
   readonly teams: TeamService;
   readonly policies: PolicyService;
-  /** `undefined` until the operator configures `invitations` (the accept link and the sender are theirs). */
-  readonly invitations: InvitationService | undefined;
 }
 
 /** What a handler may use. Note what is NOT here: no credential storage, no way to create or change an API client or key. */
@@ -26,8 +33,12 @@ export interface RouteContext {
   readonly now: () => Date;
   /** `{ provider?, subject }` as a caller sent it, completed with the configured default provider. Throws 400 when it cannot. */
   resolveIdentity(input: { provider?: string | undefined; subject: string }, path: string): Identity;
+  /** Services for an application call (no end user): the API client acts as itself. */
+  application(): ApplicationContext;
   /** Only on a `delegated` route: the end user the call speaks for and the services that act as them. Anywhere else it is a bug (500). */
   delegated(): DelegatedContext;
+  /** The `Idempotency-Key` header (1 to 128 letters, digits and `._:-`), or `undefined`. A malformed one is a 400 before the handler runs. */
+  readonly idempotencyKey: string | undefined;
   /** The `If-Match` header as a version number, or `undefined` when it was not sent. A malformed one is a 400 before the handler runs. */
   readonly ifMatch: number | undefined;
   /** Adds a response header (`ETag`, `Location`). Nothing else may be set. */
@@ -72,6 +83,11 @@ export interface RouteSpec<Pa extends ObjectSchema | undefined = undefined, Q ex
    * speaks for.
    */
   readonly delegated?: boolean;
+  /**
+   * The call is about something the route cannot name an organization for (the token of an invitation, the creation of a new
+   * organization), so a client restricted to some organizations cannot be allowed to make it: only a client with `"*"` can.
+   */
+  readonly allOrganizations?: boolean;
   /** Every error `code` this route can answer besides the ones every route can (`unauthenticated`, `forbidden`, `rate_limited`, ...). */
   readonly errors: readonly string[];
   readonly handler: (ctx: RouteContext, input: NoInfer<RouteInput<Pa, Q, B>>) => Promise<Out<NoInfer<R>>>;
@@ -92,6 +108,7 @@ export interface Route {
   readonly status: 200 | 201 | 204;
   readonly write: boolean;
   readonly delegated: boolean;
+  readonly allOrganizations: boolean;
   readonly errors: readonly string[];
   readonly organization: ((input: never) => string | undefined) | undefined;
   readonly refine: ((input: never) => Issue[]) | undefined;
@@ -138,6 +155,7 @@ export function defineRoute<Pa extends ObjectSchema | undefined = undefined, Q e
     status: spec.status ?? 200,
     write: spec.write ?? spec.method !== "GET",
     delegated: spec.delegated ?? false,
+    allOrganizations: spec.allOrganizations ?? false,
     errors: spec.errors,
     organization: spec.organization as Route["organization"],
     refine: spec.refine as Route["refine"],

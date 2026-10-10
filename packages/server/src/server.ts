@@ -10,11 +10,11 @@ import { ServerConfigError, isLoopbackHost, resolveConfig } from "./config.js";
 import type { ResolvedConfig, UnioraServerOptions } from "./config.js";
 import { ApiError, errors, problemOf, toApiError } from "./errors.js";
 import { assertJsonContentType, hasBody, parseJsonBody, queryToObject, readBody, send } from "./http.js";
-import { createDelegatedContext } from "./delegation.js";
+import { createApplicationContext, createDelegatedContext } from "./delegation.js";
 import { actorFromHeaders, completeIdentity } from "./identity.js";
 import { ConcurrencyGate, FailureThrottle, RateLimiter } from "./limits.js";
 import { matchRoute } from "./route.js";
-import type { DelegatedContext, Route, RouteContext } from "./route.js";
+import type { ApplicationContext, DelegatedContext, Route, RouteContext } from "./route.js";
 import { allRoutes } from "./routes/index.js";
 import { ResponseShapeError, parseInput, project, s } from "./schema.js";
 import type { Issue } from "./schema.js";
@@ -54,6 +54,7 @@ const MAX_URL_LENGTH = 2048;
 const READY_PROBE_ID = "uniora_ready_probe";
 const READY_DEADLINE_MS = 2_000;
 
+const IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{1,128}$/;
 const IF_MATCH = /^(?:W\/)?"(\d{1,15})"$/;
 
 /** Every value of a header as the client wrote it: Node folds repeats into one string, which would hide a duplicated header. */
@@ -129,6 +130,7 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
     let releaseSlot: (() => void) | undefined;
     let handlerRunning: Promise<unknown> | undefined;
     let delegatedContext: DelegatedContext | undefined;
+    let applicationContext: ApplicationContext | undefined;
     const source = sourceOf(req, config.trustedProxyHops);
 
     const respond = (body: unknown, code: number, headers?: Record<string, string>, contentType?: string) => {
@@ -195,6 +197,11 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
       }
       if (route.write && config.readOnly) throw errors.readOnly();
 
+      if (route.allOrganizations && principal.client.organizations !== "*") {
+        log({ level: "warn", msg: "organization list refused", requestId, route: route.id, clientId: principal.client.id });
+        throw errors.forbidden();
+      }
+
       // A delegated call speaks for an end user: it needs the separate `actor:assert` scope, and says who in its own headers.
       let actor: Identity | undefined;
       if (route.delegated) {
@@ -205,6 +212,8 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
         if (req.headers["uniora-actor-token"] !== undefined) throw errors.notImplemented("actor_token_unsupported");
         actor = actorFromHeaders({ subject: headerValues(req, "uniora-actor-subject"), provider: headerValues(req, "uniora-actor-provider") }, config.defaultProvider);
       }
+      const keyHeader = req.headers["idempotency-key"];
+      if (keyHeader !== undefined && (typeof keyHeader !== "string" || !IDEMPOTENCY_KEY.test(keyHeader))) throw errors.invalidRequest([{ path: "Idempotency-Key", code: "pattern" }]);
       const ifMatchHeader = req.headers["if-match"];
       let ifMatch: number | undefined;
       if (ifMatchHeader !== undefined) {
@@ -257,12 +266,18 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
         engine,
         now: config.now,
         resolveIdentity: (identity, path) => completeIdentity(identity, config.defaultProvider, path),
+        application: () => {
+          if (!principal) throw new Error("No principal.");
+          applicationContext ??= delegatedContext ?? createApplicationContext(config, principal, requestId);
+          return applicationContext;
+        },
         delegated: () => {
           if (!actor || !principal) throw new Error(`Route ${route!.id} asked for a delegated context but is not marked delegated.`);
           delegatedContext ??= createDelegatedContext(config, principal, requestId, actor);
           return delegatedContext;
         },
         ifMatch,
+        idempotencyKey: keyHeader as string | undefined,
         setHeader: (name, value) => {
           if (name === "ETag" || name === "Location") extra[name] = value;
         },

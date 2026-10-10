@@ -94,6 +94,7 @@ export async function startFixture(
   const server = createUnioraServer({
     ...(wrap ? wrap(backend) : { storage: backend.storage, credentials: backend.credentials }),
     defaultProvider: "main",
+    invitations: { acceptUrl: (token: string) => `https://app.test/invite/${token}`, includeAcceptUrl: true },
     logger: createJsonLogger({ minLevel: "debug", write: (line) => void logs.push(JSON.parse(line) as LogEntry) }),
     ...options,
   });
