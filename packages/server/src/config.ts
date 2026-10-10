@@ -1,4 +1,4 @@
-import type { ApiCredentialStorage, AuthorizationEngineOptions, UnioraStorage } from "@uniora/core";
+import type { ApiCredentialStorage, AuthorizationEngineOptions, InvitationServiceOptions, PolicyServiceOptions, UnioraStorage } from "@uniora/core";
 import { isReservedIdentityProvider } from "@uniora/core";
 import { createJsonLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
@@ -68,6 +68,13 @@ export interface UnioraServerOptions {
    */
   defaultProvider?: string;
   limits?: Partial<ServerLimits>;
+  /**
+   * Turns on the invitation routes. The accept link and the way an e-mail is sent are YOURS: UNIORA only builds the link from the
+   * secret token (`acceptUrl`) and hands it to `sender`. Without it the invitation routes answer 501 `invitations_not_configured`.
+   */
+  invitations?: Omit<InvitationServiceOptions, "storage" | "engine">;
+  /** Passed to the policy service the delegated policy routes use (`requireSeparateActivator`). */
+  policies?: Omit<PolicyServiceOptions, "storage" | "engine">;
   engine?: AuthorizationEngineOptions;
   /** Refuse every write with 503 `read_only` (during a migration or an incident). */
   readOnly?: boolean;
@@ -87,6 +94,8 @@ export interface ResolvedConfig {
   readonly defaultProvider: string | undefined;
   readonly limits: Readonly<ServerLimits>;
   readonly engine: AuthorizationEngineOptions | undefined;
+  readonly invitations: Omit<InvitationServiceOptions, "storage" | "engine"> | undefined;
+  readonly policies: Omit<PolicyServiceOptions, "storage" | "engine"> | undefined;
   readonly readOnly: boolean;
   readonly trustedProxyHops: number;
   readonly logger: Logger;
@@ -141,6 +150,8 @@ export function resolveConfig(options: UnioraServerOptions): ResolvedConfig {
     defaultProvider: provider,
     limits: Object.freeze(limits),
     engine: options.engine,
+    invitations: options.invitations,
+    policies: options.policies,
     readOnly: options.readOnly === true,
     trustedProxyHops: hops,
     logger: options.logger ?? createJsonLogger(),

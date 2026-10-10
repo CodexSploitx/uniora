@@ -11,7 +11,18 @@ import { createJsonLogger, createUnioraServer, silentLogger } from "../index.js"
 import type { LogEntry, RunningServer, UnioraServerOptions } from "../index.js";
 
 export const OPERATOR = { provider: "uniora-studio", subject: "tests" };
-export const ALL_SCOPES: ApiScope[] = ["check", "organizations:read", "audit:read"];
+export const ALL_SCOPES: ApiScope[] = [
+  "check",
+  "organizations:read",
+  "organizations:create",
+  "members:write",
+  "roles:write",
+  "teams:write",
+  "policies:write",
+  "invitations:write",
+  "audit:read",
+  "actor:assert",
+];
 
 export type BackendName = "memory" | "sqlite";
 
@@ -30,7 +41,9 @@ export function createBackend(name: BackendName): Backend {
 
 /** An organization "acme" with an owner, a viewer role with `reports.read` and two members, and one more organization "globex". */
 export async function seed(storage: UnioraStorage): Promise<void> {
-  for (const key of ["reports.read", "vehicles.delete"]) await storage.permissions.register({ key });
+  for (const key of ["reports.read", "vehicles.delete", "members.roles.manage", "members.invite", "members.block", "members.remove", "roles.manage", "teams.manage"]) {
+    await storage.permissions.register({ key });
+  }
   await createOrganizationWithOwner(storage, {
     organizationId: "org_acme",
     organizationName: "Acme",
@@ -39,6 +52,13 @@ export async function seed(storage: UnioraStorage): Promise<void> {
     ownerIdentity: { provider: "main", subject: "owner" },
   });
   await storage.roles.create({ id: "role_viewer", organizationId: "org_acme", name: "Viewer", permissionKeys: ["reports.read"] });
+  await storage.roles.create({
+    id: "role_manager",
+    organizationId: "org_acme",
+    name: "Manager",
+    permissionKeys: ["members.roles.manage", "members.invite", "members.block", "members.remove", "roles.manage", "reports.read"],
+  });
+  await storage.memberships.create({ id: "mem_mgr", organizationId: "org_acme", identity: { provider: "main", subject: "mgr" }, roleIds: ["role_manager"] });
   await storage.memberships.create({ id: "mem_ana", organizationId: "org_acme", identity: { provider: "main", subject: "ana" }, roleIds: ["role_viewer"] });
   await storage.memberships.create({ id: "mem_bob", organizationId: "org_acme", identity: { provider: "main", subject: "bob" } });
   await createOrganizationWithOwner(storage, {
@@ -56,7 +76,7 @@ export interface Fixture {
   readonly logs: LogEntry[];
   /** Creates a client and a key; returns the key to send as `Authorization: Bearer`. */
   issue(input?: { name?: string; scopes?: ApiScope[]; organizations?: "*" | string[] }): Promise<{ token: string; clientId: string; keyId: string }>;
-  call(method: string, path: string, init?: { token?: string | null; body?: unknown; raw?: string; headers?: Record<string, string> }): Promise<{ status: number; body: any; headers: Headers; text: string }>;
+  call(method: string, path: string, init?: { token?: string | null; body?: unknown; raw?: string; headers?: Record<string, string>; actor?: string }): Promise<{ status: number; body: any; headers: Headers; text: string }>;
   stop(): Promise<void>;
 }
 
@@ -93,6 +113,7 @@ export async function startFixture(
   const call: Fixture["call"] = async (method, path, init = {}) => {
     const headers: Record<string, string> = { ...init.headers };
     if (init.token !== null && init.token !== undefined) headers.authorization = `Bearer ${init.token}`;
+    if (init.actor !== undefined) headers["uniora-actor-subject"] = encodeURIComponent(init.actor);
     let body: string | undefined;
     if (init.raw !== undefined) body = init.raw;
     else if (init.body !== undefined) body = JSON.stringify(init.body);

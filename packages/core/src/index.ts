@@ -190,6 +190,7 @@ export { generateInvitationToken, hashInvitationToken, INVITATION_TOKEN_PREFIX }
 
 export type { UnioraStorage, UnioraTransaction } from "./storage/types.js";
 export { createMemoryStorage } from "./storage/memory.js";
+export { createAuditContextStorage } from "./storage/audit-context.js";
 export { createAuditedStorage, type AuditedStorageOptions } from "./storage/audited.js";
 
 export type {

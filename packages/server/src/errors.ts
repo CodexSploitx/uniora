@@ -63,12 +63,16 @@ export const errors = {
   internal: (cause?: unknown) => new ApiError(500, "internal_error", { cause }),
 };
 
+/** Codes that mean the SERVER is wired wrongly, never that the caller did something: a guarded write without its proof, an unguarded storage. */
+const SERVER_FAULT = /_authorization_required$|^access_storage_not_guarded$/;
+
 /** The HTTP status of a domain error, from the stable shape of its code. Unknown codes are the caller's fault (400), never a 5xx. */
 export function statusForCode(code: string): number {
-  if (/_not_found$/.test(code)) return 404;
+  if (/_not_found$|_unknown$/.test(code)) return 404;
   if (/_version_conflict$/.test(code)) return 412;
   if (/_forbidden$|_escalation$|_self_change$|_target_stronger$|_owner_protected$/.test(code)) return 403;
-  if (/_exists$|_taken$|_conflict$|^last_owner$|_in_use$|_busy$/.test(code)) return 409;
+  if (/_rate_limited$|_cooldown$/.test(code)) return 429;
+  if (/_exists$|_taken$|_conflict$|^last_owner$|_in_use$|_busy$|_already_member$|_duplicate_pending$/.test(code)) return 409;
   return 400;
 }
 
@@ -78,6 +82,10 @@ export function toApiError(error: unknown): ApiError {
   // Compared by name as well: a bundler can load @uniora/core twice, and `instanceof` would then miss (see guides/errors.md).
   if (error instanceof UnioraError || (error instanceof Error && typeof (error as { code?: unknown }).code === "string" && /Error$/.test(error.name) && error.name !== "Error")) {
     const code = (error as UnioraError).code;
+    if (SERVER_FAULT.test(code)) return errors.internal(error);
+    // The plain "no" never says whether it was the permission, the role or the target: one code for all of them. The four
+    // anti-escalation rules (`access_escalation`, ...) keep theirs: they describe the rule, not the target, and a screen needs them.
+    if (/_forbidden$/.test(code)) return new ApiError(403, "forbidden", { cause: error, detail: error.message });
     return new ApiError(statusForCode(code), code, { cause: error, detail: error.message });
   }
   return errors.internal(error);

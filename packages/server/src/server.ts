@@ -5,15 +5,16 @@ import { createServer as createHttpsServer } from "node:https";
 import type { ServerOptions as HttpsServerOptions } from "node:https";
 import type { AddressInfo } from "node:net";
 import { authenticateApiKey, clientMayAccessOrganization, createAuthorizationEngine } from "@uniora/core";
-import type { ApiPrincipal } from "@uniora/core";
+import type { ApiPrincipal, Identity } from "@uniora/core";
 import { ServerConfigError, isLoopbackHost, resolveConfig } from "./config.js";
 import type { ResolvedConfig, UnioraServerOptions } from "./config.js";
 import { ApiError, errors, problemOf, toApiError } from "./errors.js";
 import { assertJsonContentType, hasBody, parseJsonBody, queryToObject, readBody, send } from "./http.js";
-import { completeIdentity } from "./identity.js";
+import { createDelegatedContext } from "./delegation.js";
+import { actorFromHeaders, completeIdentity } from "./identity.js";
 import { ConcurrencyGate, FailureThrottle, RateLimiter } from "./limits.js";
 import { matchRoute } from "./route.js";
-import type { Route, RouteContext } from "./route.js";
+import type { DelegatedContext, Route, RouteContext } from "./route.js";
 import { allRoutes } from "./routes/index.js";
 import { ResponseShapeError, parseInput, project, s } from "./schema.js";
 import type { Issue } from "./schema.js";
@@ -52,6 +53,17 @@ const EMPTY_OBJECT = s.object({});
 const MAX_URL_LENGTH = 2048;
 const READY_PROBE_ID = "uniora_ready_probe";
 const READY_DEADLINE_MS = 2_000;
+
+const IF_MATCH = /^(?:W\/)?"(\d{1,15})"$/;
+
+/** Every value of a header as the client wrote it: Node folds repeats into one string, which would hide a duplicated header. */
+function headerValues(req: IncomingMessage, name: string): string[] {
+  const values: string[] = [];
+  for (let index = 0; index + 1 < req.rawHeaders.length; index += 2) {
+    if (req.rawHeaders[index]!.toLowerCase() === name) values.push(req.rawHeaders[index + 1]!);
+  }
+  return values;
+}
 
 const requestIdOf = (): string => `req_${randomBytes(12).toString("base64url")}`;
 
@@ -116,6 +128,7 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
     let bodyRead = false;
     let releaseSlot: (() => void) | undefined;
     let handlerRunning: Promise<unknown> | undefined;
+    let delegatedContext: DelegatedContext | undefined;
     const source = sourceOf(req, config.trustedProxyHops);
 
     const respond = (body: unknown, code: number, headers?: Record<string, string>, contentType?: string) => {
@@ -182,6 +195,24 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
       }
       if (route.write && config.readOnly) throw errors.readOnly();
 
+      // A delegated call speaks for an end user: it needs the separate `actor:assert` scope, and says who in its own headers.
+      let actor: Identity | undefined;
+      if (route.delegated) {
+        if (!principal.client.scopes.includes("actor:assert")) {
+          log({ level: "warn", msg: "scope refused", requestId, route: route.id, clientId: principal.client.id, scope: "actor:assert" });
+          throw errors.forbidden();
+        }
+        if (req.headers["uniora-actor-token"] !== undefined) throw errors.notImplemented("actor_token_unsupported");
+        actor = actorFromHeaders({ subject: headerValues(req, "uniora-actor-subject"), provider: headerValues(req, "uniora-actor-provider") }, config.defaultProvider);
+      }
+      const ifMatchHeader = req.headers["if-match"];
+      let ifMatch: number | undefined;
+      if (ifMatchHeader !== undefined) {
+        const parsed = typeof ifMatchHeader === "string" ? IF_MATCH.exec(ifMatchHeader.trim()) : null;
+        if (!parsed) throw errors.invalidRequest([{ path: "If-Match", code: "pattern" }]);
+        ifMatch = Number(parsed[1]);
+      }
+
       // 5. Whether what it sent is acceptable: strict, bounded, and fully checked before any handler runs.
       const issues: Issue[] = [];
       const rawParams: Record<string, unknown> = {};
@@ -226,6 +257,15 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
         engine,
         now: config.now,
         resolveIdentity: (identity, path) => completeIdentity(identity, config.defaultProvider, path),
+        delegated: () => {
+          if (!actor || !principal) throw new Error(`Route ${route!.id} asked for a delegated context but is not marked delegated.`);
+          delegatedContext ??= createDelegatedContext(config, principal, requestId, actor);
+          return delegatedContext;
+        },
+        ifMatch,
+        setHeader: (name, value) => {
+          if (name === "ETag" || name === "Location") extra[name] = value;
+        },
       };
       handlerRunning = route.handler(context, input as never);
       const result = await withDeadline(handlerRunning, limits.requestTimeoutMs);

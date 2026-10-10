@@ -301,7 +301,7 @@ describe.each(["memory", "sqlite"] as const)("@uniora/server over %s", (backend)
       const { token } = await f.issue();
       const members = await f.call("GET", "/v1/organizations/org_acme/members", { token });
       expect(members.status).toBe(200);
-      expect(members.body.items.map((m: { id: string }) => m.id).sort()).toEqual(["mem_ana", "mem_bob", "mem_owner"]);
+      expect(members.body.items.map((m: { id: string }) => m.id).sort()).toEqual(["mem_ana", "mem_bob", "mem_mgr", "mem_owner"]);
       const roles = await f.call("GET", "/v1/organizations/org_acme/roles", { token });
       expect(roles.body.items.map((r: { id: string }) => r.id)).toContain("role_viewer");
       const perms = await f.call("GET", "/v1/organizations/org_acme/roles/role_viewer/permissions", { token });

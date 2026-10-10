@@ -40,7 +40,7 @@ describe("route table", () => {
 
 describe.each(["memory", "sqlite"] as const)("every route over %s", (backend) => {
   it("needs a key", async () => {
-    const f = await startFixture(backend);
+    const f = await startFixture(backend, { limits: { authFailuresPerMinute: 100_000 } });
     open.push(f);
     for (const route of routes) {
       const response = await f.call(route.method, concrete(route.path), { body: withBody(route.method) });
@@ -60,13 +60,38 @@ describe.each(["memory", "sqlite"] as const)("every route over %s", (backend) =>
     }
   });
 
+  it("needs actor:assert on top of its scope when it is a delegated call", async () => {
+    const f = await startFixture(backend);
+    open.push(f);
+    for (const route of routes.filter((r) => r.delegated)) {
+      const { token } = await f.issue({ scopes: [route.scope] });
+      const response = await f.call(route.method, concrete(route.path), { token, actor: "mgr", body: withBody(route.method) });
+      expect(response.status, route.id).toBe(403);
+      expect(response.body.code, route.id).toBe("forbidden");
+    }
+  });
+
+  it("says who it speaks for: a delegated call without an actor, or with a token we cannot verify yet, is refused", async () => {
+    const f = await startFixture(backend);
+    open.push(f);
+    const { token } = await f.issue({ scopes: [...API_SCOPE_LIST] });
+    for (const route of routes.filter((r) => r.delegated)) {
+      const missing = await f.call(route.method, concrete(route.path), { token, body: withBody(route.method) });
+      expect(missing.status, route.id).toBe(400);
+      expect(missing.body.code, route.id).toBe("actor_required");
+      const unsupported = await f.call(route.method, concrete(route.path), { token, actor: "mgr", body: withBody(route.method), headers: { "uniora-actor-token": "eyJ" } });
+      expect(unsupported.status, route.id).toBe(501);
+      expect(unsupported.body.code, route.id).toBe("actor_token_unsupported");
+    }
+  });
+
   it("refuses unknown query parameters and unknown body fields", async () => {
     const f = await startFixture(backend);
     open.push(f);
     const { token } = await f.issue({ scopes: [...API_SCOPE_LIST] });
     for (const route of routes) {
       const path = `${concrete(route.path)}?zzz=1`;
-      const response = await f.call(route.method, path, { token, body: route.body ? { zzz: 1 } : undefined });
+      const response = await f.call(route.method, path, { token, body: route.body ? { zzz: 1 } : undefined, ...(route.delegated ? { actor: "mgr" } : {}) });
       expect(response.status, route.id).toBe(400);
     }
   });
@@ -76,7 +101,7 @@ describe.each(["memory", "sqlite"] as const)("every route over %s", (backend) =>
     open.push(f);
     const { token } = await f.issue({ scopes: [...API_SCOPE_LIST] });
     for (const route of routes) {
-      const response = await f.call(route.method, `${concrete(route.path)}?zzz=1`, { token, body: route.body ? {} : undefined });
+      const response = await f.call(route.method, `${concrete(route.path)}?zzz=1`, { token, body: route.body ? {} : undefined, ...(route.delegated ? { actor: "mgr" } : {}) });
       expect(Object.keys(response.body).sort(), route.id).toEqual(["code", "errors", "requestId", "status", "title", "type"]);
     }
   });

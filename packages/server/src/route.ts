@@ -1,8 +1,21 @@
-import type { ApiPrincipal, ApiScope, AuthorizationEngine, Identity } from "@uniora/core";
+import type { AccessAdminService, ApiPrincipal, ApiScope, AuthorizationEngine, Identity, InvitationService, PolicyService, TeamService } from "@uniora/core";
 import type { ResolvedConfig } from "./config.js";
 import type { Infer, Issue, ObjectSchema, Schema } from "./schema.js";
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+/**
+ * What a delegated handler works with: the services, built for THIS request over a storage that refuses unauthorized changes
+ * of power and stamps every audit entry with `via` (the API client, the key and the request id). They act as `actor`.
+ */
+export interface DelegatedContext {
+  readonly actor: Identity;
+  readonly access: AccessAdminService;
+  readonly teams: TeamService;
+  readonly policies: PolicyService;
+  /** `undefined` until the operator configures `invitations` (the accept link and the sender are theirs). */
+  readonly invitations: InvitationService | undefined;
+}
 
 /** What a handler may use. Note what is NOT here: no credential storage, no way to create or change an API client or key. */
 export interface RouteContext {
@@ -13,6 +26,12 @@ export interface RouteContext {
   readonly now: () => Date;
   /** `{ provider?, subject }` as a caller sent it, completed with the configured default provider. Throws 400 when it cannot. */
   resolveIdentity(input: { provider?: string | undefined; subject: string }, path: string): Identity;
+  /** Only on a `delegated` route: the end user the call speaks for and the services that act as them. Anywhere else it is a bug (500). */
+  delegated(): DelegatedContext;
+  /** The `If-Match` header as a version number, or `undefined` when it was not sent. A malformed one is a 400 before the handler runs. */
+  readonly ifMatch: number | undefined;
+  /** Adds a response header (`ETag`, `Location`). Nothing else may be set. */
+  setHeader(name: "ETag" | "Location", value: string): void;
 }
 
 type InputOf<S> = [S] extends [undefined] ? undefined : Infer<S>;
@@ -47,6 +66,12 @@ export interface RouteSpec<Pa extends ObjectSchema | undefined = undefined, Q ex
   readonly refine?: (input: NoInfer<RouteInput<Pa, Q, B>>) => Issue[];
   /** Changes data: refused with 503 `read_only` when the server is in read-only mode. */
   readonly write?: boolean;
+  /**
+   * A call on behalf of an end user, who travels in the `Uniora-Actor-*` headers (never in the body). It needs the `actor:assert`
+   * scope on top of the route's own, and the services then apply their rules to that user: a key cannot do more than the user it
+   * speaks for.
+   */
+  readonly delegated?: boolean;
   /** Every error `code` this route can answer besides the ones every route can (`unauthenticated`, `forbidden`, `rate_limited`, ...). */
   readonly errors: readonly string[];
   readonly handler: (ctx: RouteContext, input: NoInfer<RouteInput<Pa, Q, B>>) => Promise<Out<NoInfer<R>>>;
@@ -66,6 +91,7 @@ export interface Route {
   readonly response: Schema;
   readonly status: 200 | 201 | 204;
   readonly write: boolean;
+  readonly delegated: boolean;
   readonly errors: readonly string[];
   readonly organization: ((input: never) => string | undefined) | undefined;
   readonly refine: ((input: never) => Issue[]) | undefined;
@@ -84,6 +110,7 @@ export function defineRoute<Pa extends ObjectSchema | undefined = undefined, Q e
   if (!spec.path.startsWith("/v1/")) throw new Error(`Route ${spec.id}: paths live under /v1/.`);
   if (!spec.scope) throw new Error(`Route ${spec.id}: every route names exactly one scope.`);
   if (spec.method === "GET" && spec.body) throw new Error(`Route ${spec.id}: a GET has no body.`);
+  if (spec.delegated && spec.write === false) throw new Error(`Route ${spec.id}: a delegated route changes data.`);
   const names: string[] = [];
   const pattern = spec.path
     .split("/")
@@ -111,6 +138,7 @@ export function defineRoute<Pa extends ObjectSchema | undefined = undefined, Q e
     response: spec.response,
     status: spec.status ?? 200,
     write: spec.write ?? spec.method !== "GET",
+    delegated: spec.delegated ?? false,
     errors: spec.errors,
     organization: spec.organization as Route["organization"],
     refine: spec.refine as Route["refine"],

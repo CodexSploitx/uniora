@@ -337,7 +337,8 @@ export function project(schema: Schema, value: unknown, path = ""): unknown {
       if (typeof value !== "boolean") throw new ResponseShapeError(path, "expected a boolean");
       return value;
     case "date": {
-      const time = value instanceof Date ? value.getTime() : Number.NaN;
+      // A command layer already answers in JSON (dates as ISO text); a service answers with `Date`s. Both are shaped the same way.
+      const time = value instanceof Date ? value.getTime() : typeof value === "string" && RFC3339.test(value) ? Date.parse(value) : Number.NaN;
       if (!Number.isFinite(time)) throw new ResponseShapeError(path, "expected a valid date");
       return new Date(time).toISOString();
     }
