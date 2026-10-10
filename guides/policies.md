@@ -95,6 +95,8 @@ anybody out of fixing the rules.
 | --- | --- | --- |
 | `subject.membershipId`, `subject.membershipStatus`, `subject.identity`, `subject.roleKeys` | the storage, for the identity being asked about | UNIORA |
 | `subject.teamIds` | the storage: ACTIVE team memberships in ACTIVE teams only | UNIORA |
+| `subject.managedTeamIds` | the storage: the same, only where the person is `owner` or `manager` of the team | UNIORA |
+| `resource.teamPathIds` | the team tree: `resource.teamIds` plus every ancestor of those teams, read at decision time | UNIORA (from the teams your server states) |
 | `resource.id`, `resource.teamIds`, `resource.<declared>` | **your server code**, when it calls `authorize({ resource })` | your server |
 | `feature`, `permission` | the storage and the engine, per request | UNIORA |
 | `environment.*`, `context.*`, `request.*`, `session.*` | reserved for later phases; refused today | n/a |
@@ -114,7 +116,34 @@ Teams give context; they never give access. The rules are explicit, not assumed:
 - An archived team, or a team membership that is pending, suspended or removed, is not in `subject.teamIds`.
 - A suspended or blocked organization membership fails the mandatory checks.
 - Being in a team grants nothing: the permission still has to come from a role.
-- Hierarchy: phase 1 does not inherit anything. `subject.teamIds` is the teams the person belongs to, not their sub-teams or parents.
+- Hierarchy is opt-in, per policy (next section). Without it nothing is inherited: `subject.teamIds` is the teams the person belongs to,
+  not their sub-teams or parents.
+
+### Hierarchies and scope inheritance
+
+Teams can be nested (`parentId`, up to 8 levels, no cycles). A policy reaches the tree through two attributes and nothing else:
+
+- `subject.managedTeamIds`: the teams the person **leads** (an active `owner` or `manager` of an active team).
+- `resource.teamPathIds`: the teams the resource belongs to **plus all their ancestors**.
+
+"A leader reaches everything below their team" is then one line, and it is read from the tree at the moment of the decision, so
+moving a team, changing a responsibility or suspending a leader applies to the next decision with no cache to invalidate:
+
+```jsonc
+{
+  "kind": "scope", "effect": "require", "actions": ["vehicles.update"], "resourceType": "vehicle",
+  "condition": { "any": [
+    { "intersects": [{ "ref": "subject.teamIds" },        { "ref": "resource.teamIds" }] },       // my own team
+    { "intersects": [{ "ref": "subject.managedTeamIds" }, { "ref": "resource.teamPathIds" }] }    // a team I lead, above the resource
+  ] }
+}
+```
+
+Use `subject.teamIds` instead of `subject.managedTeamIds` for "anyone in a team above the resource". The attribute is walked **up** from
+the resource (a bounded recursive query by primary key), not down from the person, so a regional manager with ten thousand
+sub-teams costs the same as anybody else. Roles are never inherited: a team still gives context, not access. If the tree cannot be read,
+or the resource lists more than 50 teams, `resource.teamPathIds` is *unknown* and the policy is indeterminate (a refusal), never a guess.
+Team ids of another organization are ignored.
 
 ## Lifecycle and versions
 
@@ -154,9 +183,6 @@ cached by UNIORA; if you cache them, key them on `policyRevision` plus whatever 
 
 ## Designed, not implemented (later phases)
 
-- **Hierarchies with scope inheritance.** An explicit attribute such as `subject.teamTreeIds` (the sub-teams of the teams where the
-  person is owner or manager), opted into per policy. Teams already forbid cycles and cap depth at 8; decisions would additionally
-  record a team-structure revision so a reparenting invalidates them.
 - **Contextual and temporal conditions.** The `environment.*` namespace, fed only by a trusted server-side provider (the engine's
   clock, a risk signal your server verified), typed, with `indeterminate` when the provider fails.
 - **Sensitive-action policies.** The `sensitive` kind with requirements such as "recent re-authentication", fed by the host's

@@ -7,7 +7,7 @@ import { createTrustedPolicyStorage } from "../policy/trusted.js";
 const actor = { provider: "p", subject: "operator" };
 
 /** Methods that only read (or are deliberately not audited). Anything else a repository exposes must be audited. */
-const READ_ONLY = /^(find|list|search|count|is[A-Z]|enabledKeys$|summarizeUsage$|granting|granted|get|resolve|verify|impliedBy$|expand$|activePermissions$|ancestors$|descendants$|revisions$|activeSet$|setRevision$|activeTeamIds$)/;
+const READ_ONLY = /^(find|list|search|count|is[A-Z]|enabledKeys$|summarizeUsage$|granting|granted|get|resolve|verify|impliedBy$|expand$|activePermissions$|ancestors$|descendants$|revisions$|activeSet$|setRevision$|activeTeamIds$|pathIds$)/;
 /** Deliberately not audited: a heartbeat, not a change. */
 const NOT_AUDITED = new Set(["memberships.recordActivity", "entitlements.consume", "entitlements.release"]);
 /** Audited by their own service/repository rather than by the wrapper (they already record themselves). */

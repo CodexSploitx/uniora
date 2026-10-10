@@ -79,6 +79,8 @@ import type { SearchTeamMembersOptions, SearchTeamsOptions, TeamMembershipReposi
 import {
   MAX_TEAM_DEPTH,
   TeamError,
+  assertPathSourceTeams,
+  assertResponsibilityFilter,
   assertTeamPlacement,
   assertTeamMemberStatus,
   assertTeamResponsibility,
@@ -1751,6 +1753,16 @@ function tally(requestedIds: string[], occurrences: string[]): Record<string, nu
       requireTeam(organizationId, id);
       return descendantsOf(organizationId, id).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).map(cloneTeam);
     },
+    async pathIds(organizationId, teamIds, options = {}) {
+      const limit = Math.min(Math.max(Math.trunc(options.limit ?? 1000), 1), 5000);
+      const found = new Set<string>();
+      for (const id of assertPathSourceTeams(teamIds)) {
+        if (!teamOf(organizationId, id)) continue;
+        found.add(id);
+        for (const ancestor of ancestorsOf(organizationId, id)) found.add(ancestor.id);
+      }
+      return [...found].sort().slice(0, limit);
+    },
     async create(input) {
       assertTeamAuthorization(input.authorization, { organizationId: input.organizationId, operation: "team.create" });
       const valid = assertValidCreateTeam(input);
@@ -1946,8 +1958,10 @@ function tally(requestedIds: string[], occurrences: string[]): Record<string, nu
     },
     async activeTeamIds(organizationId, membershipId, options = {}) {
       const limit = Math.min(Math.max(Math.trunc(options.limit ?? 1000), 1), 5000);
+      const responsibilities = assertResponsibilityFilter(options.responsibilities);
       return [...teamMemberships.values()]
         .filter((row) => row.organizationId === organizationId && row.membershipId === membershipId && row.status === "active" && teamOf(organizationId, row.teamId)?.status === "active")
+        .filter((row) => responsibilities === undefined || responsibilities.includes(row.responsibility))
         .map((row) => row.teamId)
         .sort()
         .slice(0, limit);
