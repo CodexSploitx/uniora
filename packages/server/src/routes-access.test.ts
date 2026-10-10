@@ -1,6 +1,6 @@
 import { request as httpRequest } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
-import { startFixture } from "./test-support/harness.js";
+import { BACKENDS, startFixture } from "./test-support/harness.js";
 import type { BackendName, Fixture } from "./test-support/harness.js";
 
 const open: Fixture[] = [];
@@ -22,7 +22,7 @@ async function start(name: BackendName, options?: Parameters<typeof startFixture
 
 const ORG = "/v1/organizations/org_acme";
 
-describe.each(["memory", "sqlite"] as const)("delegated access routes over %s", (backend) => {
+describe.each(BACKENDS)("delegated access routes over %s", (backend) => {
   it("assigns and takes away a role as the end user, and the audit entry says who and through which key", async () => {
     const { f, as } = await start(backend);
     const response = await as("mgr").put(`${ORG}/members/mem_bob/roles/role_viewer`);

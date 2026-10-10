@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { startFixture } from "./test-support/harness.js";
+import { BACKENDS, startFixture } from "./test-support/harness.js";
 import type { BackendName, Fixture } from "./test-support/harness.js";
 
 const open: Fixture[] = [];
@@ -16,7 +16,7 @@ async function start(name: BackendName, options?: Parameters<typeof startFixture
 const ORG = "/v1/organizations/org_acme";
 const tokenOf = (acceptUrl: string) => acceptUrl.split("/").at(-1)!;
 
-describe.each(["memory", "sqlite"] as const)("invitation routes over %s", (backend) => {
+describe.each(BACKENDS)("invitation routes over %s", (backend) => {
   it("invites, previews, accepts, and gives the roles the inviter could give", async () => {
     const { f, call } = await start(backend);
     const invited = await call("POST", `${ORG}/invitations`, { actor: "mgr", body: { email: "New.Person@Example.com", roleIds: ["role_viewer"] } });

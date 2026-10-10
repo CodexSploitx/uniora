@@ -2,7 +2,7 @@ import { request as httpRequest } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import { ServerConfigError, createUnioraServer, silentLogger } from "./index.js";
 import { createApiCredentialService, createMemoryApiCredentialStorage, createMemoryStorage } from "@uniora/core";
-import { OPERATOR, startFixture } from "./test-support/harness.js";
+import { BACKENDS, OPERATOR, startFixture } from "./test-support/harness.js";
 import type { BackendName, Fixture } from "./test-support/harness.js";
 
 const open: Fixture[] = [];
@@ -30,7 +30,7 @@ function rawGet(f: Fixture, path: string, token: string, body: string): Promise<
 }
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-describe.each(["memory", "sqlite"] as const)("@uniora/server over %s", (backend) => {
+describe.each(BACKENDS)("@uniora/server over %s", (backend) => {
   describe("operations", () => {
     it("answers liveness and readiness without credentials and without detail", async () => {
       const f = await start(backend);
@@ -382,7 +382,7 @@ describe.each(["memory", "sqlite"] as const)("@uniora/server over %s", (backend)
       expect((await f.call("GET", "/v1/nothing", { token })).status).toBe(404);
       const wrong = await f.call("DELETE", "/v1/organizations", { token });
       expect(wrong.status).toBe(405);
-      expect(wrong.headers.get("allow")).toBe("GET");
+      expect(wrong.headers.get("allow")).toBe("GET, POST");
       expect((await f.call("GET", "/v1/nothing")).status).toBe(401);
       expect((await f.call("GET", "/elsewhere")).status).toBe(404);
     });

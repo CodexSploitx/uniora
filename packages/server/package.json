@@ -47,11 +47,14 @@
     "@uniora/core": "workspace:^"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^26.6.4",
+    "@types/pg": "^8.11.10",
+    "@uniora/postgres": "workspace:^",
     "@uniora/sqlite": "workspace:^",
     "@uniora/storage-conformance": "workspace:^",
     "better-sqlite3": "^13.0.3",
-    "@types/better-sqlite3": "^9.6.0",
+    "pg": "^8.23.1",
     "typescript": "^5.6.3",
     "vitest": "^2.1.4"
   }

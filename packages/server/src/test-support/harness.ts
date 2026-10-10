@@ -6,6 +6,8 @@ import {
   createOrganizationWithOwner,
 } from "@uniora/core";
 import type { ApiCredentialStorage, ApiScope, UnioraStorage } from "@uniora/core";
+import { Pool } from "pg";
+import { applyMigrations as applyPostgresMigrations, createPostgresApiCredentialStorage, createPostgresStorage } from "@uniora/postgres";
 import { applyMigrations, createSqliteApiCredentialStorage, createSqliteStorage } from "@uniora/sqlite";
 import { createJsonLogger, createUnioraServer, silentLogger } from "../index.js";
 import type { LogEntry, RunningServer, UnioraServerOptions } from "../index.js";
@@ -24,7 +26,19 @@ export const ALL_SCOPES: ApiScope[] = [
   "actor:assert",
 ];
 
-export type BackendName = "memory" | "sqlite";
+export type BackendName = "memory" | "sqlite" | "postgres";
+
+/** The backends the suites run on: Postgres too when `TEST_DATABASE_URL` points at a database that may be truncated. */
+export const BACKENDS: readonly BackendName[] = process.env.TEST_DATABASE_URL ? ["memory", "sqlite", "postgres"] : ["memory", "sqlite"];
+
+let pool: Pool | undefined;
+let migrated = false;
+export async function closePools(): Promise<void> {
+  const current = pool;
+  pool = undefined;
+  migrated = false;
+  await current?.end();
+}
 
 export interface Backend {
   readonly storage: UnioraStorage;
@@ -32,7 +46,19 @@ export interface Backend {
   close(): void;
 }
 
-export function createBackend(name: BackendName): Backend {
+export async function createBackend(name: BackendName): Promise<Backend> {
+  if (name === "postgres") {
+    pool ??= new Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    if (!migrated) {
+      await applyPostgresMigrations(pool);
+      migrated = true;
+    }
+    const tables = await pool.query<{ name: string }>(
+      "select format('%I.%I', schemaname, tablename) as name from pg_tables where schemaname in ('uniora', 'uniora_api', 'uniora_platform') and tablename <> 'schema_migrations'",
+    );
+    if (tables.rows.length > 0) await pool.query(`truncate table ${tables.rows.map((row) => row.name).join(", ")} cascade`);
+    return { storage: createPostgresStorage(pool), credentials: createPostgresApiCredentialStorage(pool), close() {} };
+  }
   if (name === "memory") return { storage: createMemoryStorage(), credentials: createMemoryApiCredentialStorage(), close() {} };
   const db = new Database(":memory:");
   applyMigrations(db);
@@ -87,7 +113,7 @@ export async function startFixture(
   options: Partial<UnioraServerOptions> = {},
   wrap?: (backend: Backend) => Pick<UnioraServerOptions, "storage" | "credentials">,
 ): Promise<Fixture> {
-  const backend = createBackend(name);
+  const backend = await createBackend(name);
   await seed(backend.storage);
   const logs: LogEntry[] = [];
   const service = createApiCredentialService({ storage: backend.credentials });

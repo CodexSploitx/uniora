@@ -254,6 +254,9 @@ export function createMemoryStorage(): UnioraStorage {
       const name = sanitizeOrganizationName(input.name);
       const slug = resolveOrganizationSlug(name, input.slug);
 
+      // The databases reject a repeated id with their primary key; without this the memory backend would silently REPLACE the organization.
+      if (organizations.has(input.id)) throw new OrganizationError(`An organization with id "${input.id}" already exists.`);
+
       const slugTaken = [...organizations.values()].some((o) => o.slug === slug);
       if (slugTaken) {
         throw new OrganizationError(

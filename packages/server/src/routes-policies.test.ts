@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { startFixture } from "./test-support/harness.js";
+import { BACKENDS, startFixture } from "./test-support/harness.js";
 import type { BackendName, Fixture } from "./test-support/harness.js";
 
 const open: Fixture[] = [];
@@ -16,7 +16,7 @@ async function start(name: BackendName) {
 const ORG = "/v1/organizations/org_acme";
 const rule = { kind: "access", effect: "deny", actions: ["reports.read"], condition: { eq: [{ ref: "subject.membershipStatus" }, { value: "active" }] } };
 
-describe.each(["memory", "sqlite"] as const)("policy routes over %s", (backend) => {
+describe.each(BACKENDS)("policy routes over %s", (backend) => {
   it("runs the whole lifecycle, and an active policy changes what authorize answers", async () => {
     const { f, token, as } = await start(backend);
     const mgr = as("mgr");

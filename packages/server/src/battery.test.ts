@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { API_SCOPE_LIST } from "@uniora/core";
 import { toJsonSchema } from "./schema.js";
 import { allRoutes } from "./routes/index.js";
-import { startFixture } from "./test-support/harness.js";
+import { BACKENDS, startFixture } from "./test-support/harness.js";
 import type { Fixture } from "./test-support/harness.js";
 
 /**
@@ -38,7 +38,7 @@ describe("route table", () => {
   });
 });
 
-describe.each(["memory", "sqlite"] as const)("every route over %s", (backend) => {
+describe.each(BACKENDS)("every route over %s", (backend) => {
   it("needs a key", async () => {
     const f = await startFixture(backend, { limits: { authFailuresPerMinute: 100_000 } });
     open.push(f);

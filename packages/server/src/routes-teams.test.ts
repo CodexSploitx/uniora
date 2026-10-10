@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { startFixture } from "./test-support/harness.js";
+import { BACKENDS, startFixture } from "./test-support/harness.js";
 import type { BackendName, Fixture } from "./test-support/harness.js";
 
 const open: Fixture[] = [];
@@ -15,7 +15,7 @@ async function start(name: BackendName) {
 }
 const ORG = "/v1/organizations/org_acme";
 
-describe.each(["memory", "sqlite"] as const)("team routes over %s", (backend) => {
+describe.each(BACKENDS)("team routes over %s", (backend) => {
   it("creates, reads, edits, archives, restores and deletes a team", async () => {
     const { f, token, as } = await start(backend);
     const mgr = as("mgr");
