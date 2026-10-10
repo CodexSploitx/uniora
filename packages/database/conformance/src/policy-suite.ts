@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   PolicyError,
+  TeamError,
   createAuthorizationEngine,
   createOrganizationWithOwner,
   createTrustedPolicyStorage,
@@ -82,7 +83,11 @@ export function definePolicyConformance(harness: { storage(): UnioraStorage; pol
 
     const create = (w: World, id: string, key: string, definition: unknown = scopeRule, organizationId = "org-1") =>
       w.trusted.policies.create({ id, organizationId, key, name: key, definition, createdBy: admin });
-    const code = (promise: Promise<unknown>) => promise.then(() => "ok", (error: unknown) => (error instanceof PolicyError ? error.code : String(error)));
+    const code = (promise: Promise<unknown>) =>
+      promise.then(
+        () => "ok",
+        (error: unknown) => (error instanceof PolicyError || error instanceof TeamError ? error.code : String(error)),
+      );
 
     it("crea un borrador con revisión 1, kind y effect derivados, y lo encuentra por id y por clave", async () => {
       const w = await seed();
@@ -283,6 +288,55 @@ export function definePolicyConformance(harness: { storage(): UnioraStorage; pol
       await w.teams.teams.archive("org-1", "t-bcn", { actor: admin });
       expect(await w.storage.teamMemberships.activeTeamIds("org-1", "m-ana")).toEqual([]);
       expect(await w.storage.teamMemberships.activeTeamIds("org-2", "m-ana")).toEqual([]);
+    });
+
+    it("jerarquía de equipos: pathIds sube por el árbol sin salir de la organización y activeTeamIds filtra por responsabilidad", async () => {
+      const w = await seed();
+      const parent = (id: string, parentId: string, organizationId = "org-1") => w.teams.teams.create({ id, organizationId, name: id, parentId });
+      await w.teams.teams.create({ id: "region", organizationId: "org-1", name: "Region" });
+      await parent("branch", "region");
+      await parent("squad", "branch");
+      await parent("other-branch", "region");
+      await w.teams.teams.create({ id: "foreign", organizationId: "org-2", name: "Foreign" });
+      expect(await w.storage.teams.pathIds("org-1", ["squad"])).toEqual(["branch", "region", "squad"]);
+      expect(await w.storage.teams.pathIds("org-1", ["squad", "other-branch", "squad"])).toEqual(["branch", "other-branch", "region", "squad"]);
+      expect(await w.storage.teams.pathIds("org-1", ["region"])).toEqual(["region"]);
+      expect(await w.storage.teams.pathIds("org-1", ["squad"], { limit: 2 })).toEqual(["branch", "region"]);
+      expect(await w.storage.teams.pathIds("org-1", [])).toEqual([]);
+      // Nunca cruza organizaciones: un equipo ajeno o inexistente no aparece, y el árbol de otra organización tampoco.
+      expect(await w.storage.teams.pathIds("org-1", ["foreign", "nope"])).toEqual([]);
+      expect(await w.storage.teams.pathIds("org-2", ["squad"])).toEqual([]);
+      expect(await code(w.storage.teams.pathIds("org-1", Array.from({ length: 51 }, (_, i) => `t${i}`)))).toBe("team_invalid");
+      // Responsabilidad.
+      await w.teams.teamMemberships.add({ id: "tm-lead", organizationId: "org-1", teamId: "region", membershipId: "m-ana", responsibility: "manager" });
+      await w.teams.teamMemberships.add({ id: "tm-plain", organizationId: "org-1", teamId: "branch", membershipId: "m-ana" });
+      expect(await w.storage.teamMemberships.activeTeamIds("org-1", "m-ana")).toEqual(["branch", "region", "t-bcn"]);
+      expect(await w.storage.teamMemberships.activeTeamIds("org-1", "m-ana", { responsibilities: ["owner", "manager"] })).toEqual(["region"]);
+      expect(await w.storage.teamMemberships.activeTeamIds("org-1", "m-ana", { responsibilities: ["member"] })).toEqual(["branch", "t-bcn"]);
+      expect(await code(w.storage.teamMemberships.activeTeamIds("org-1", "m-ana", { responsibilities: [] }))).toBe("team_membership_invalid");
+      expect(await code(w.storage.teamMemberships.activeTeamIds("org-1", "m-ana", { responsibilities: ["boss" as never] }))).toBe("team_membership_invalid");
+      await w.teams.teamMemberships.setStatus("org-1", "tm-lead", "suspended", { actor: admin });
+      expect(await w.storage.teamMemberships.activeTeamIds("org-1", "m-ana", { responsibilities: ["owner", "manager"] })).toEqual([]);
+      // El motor: quien dirige un equipo alcanza lo que cuelga de él, a la siguiente decisión tras mover un equipo.
+      await w.teams.teamMemberships.setStatus("org-1", "tm-lead", "active", { actor: admin });
+      await create(w, "p-lead", "leaders", {
+        kind: "scope",
+        effect: "require",
+        actions: ["vehicles.update"],
+        resourceType: "vehicle",
+        condition: { intersects: [{ ref: "subject.managedTeamIds" }, { ref: "resource.teamPathIds" }] },
+      });
+      await w.trusted.policies.activate("org-1", "p-lead", { actor: ana });
+      const engine = createAuthorizationEngine(w.storage);
+      const ask = (teamIds: string[]) =>
+        engine.authorize({ identity: ana, organizationId: "org-1", permission: "vehicles.update", resource: { type: "vehicle", id: "v-1", organizationId: "org-1", teamIds } });
+      expect((await ask(["squad"])).decision).toBe("allow");
+      expect((await ask(["t-bcn"])).decision).toBe("deny");
+      expect((await ask(["foreign"])).decision).toBe("deny");
+      await w.teams.teams.update("org-1", "region", { parentId: null });
+      await w.teams.teams.create({ id: "elsewhere", organizationId: "org-1", name: "Elsewhere" });
+      await w.teams.teams.update("org-1", "squad", { parentId: "elsewhere" });
+      expect((await ask(["squad"])).decision).toBe("deny");
     });
 
     it("el motor decide con las políticas guardadas: restringe, nunca concede, y una política de otra organización no cuenta", async () => {

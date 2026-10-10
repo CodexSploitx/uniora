@@ -14,6 +14,11 @@ export const SUBJECT_ATTRIBUTES = {
   "subject.roleKeys": "string[]",
   /** The ids of the ACTIVE teams the membership is an ACTIVE member of. A suspended, pending or removed team membership, or an archived team, is not here. */
   "subject.teamIds": "string[]",
+  /**
+   * The ids of the ACTIVE teams where the member is an ACTIVE member and holds the responsibility `owner` or `manager` (the
+   * teams they lead). Combined with `resource.teamPathIds` it is how a manager reaches everything below their team.
+   */
+  "subject.managedTeamIds": "string[]",
 } as const satisfies Record<string, AttributeType>;
 
 /** What the host says about the resource, besides the attributes a policy declares. */
@@ -21,6 +26,14 @@ export const RESOURCE_ATTRIBUTES = {
   "resource.id": "string",
   /** The ids of the teams the resource belongs to. An empty list means "no team", which is a fact; an absent value is unknown. */
   "resource.teamIds": "string[]",
+  /**
+   * `resource.teamIds` together with ALL the ancestors of those teams, read from the team tree at decision time (so moving a team
+   * takes effect on the next decision). "The person leads a team above the resource" is
+   * `intersects(subject.managedTeamIds, resource.teamPathIds)`; "the person belongs to the resource's team or any team above it" is
+   * the same with `subject.teamIds`. A team does not inherit anything by itself: only policies that read this attribute do. Unknown
+   * (so the decision is indeterminate) when the tree could not be read, or the resource lists more teams than can be expanded.
+   */
+  "resource.teamPathIds": "string[]",
 } as const satisfies Record<string, AttributeType>;
 
 export type SubjectAttributeName = keyof typeof SUBJECT_ATTRIBUTES;

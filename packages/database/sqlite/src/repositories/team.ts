@@ -10,7 +10,7 @@ import type {
   TeamStatus,
   UpdateTeamInput,
 } from "@uniora/core";
-import { TeamError, assertExpectedVersion, assertTeamPlacement, assertTeamAuthorization, assertValidCreateTeam, assertValidUpdateTeam, sameTeamData, sanitizeTeamReason } from "@uniora/core";
+import { TeamError, assertExpectedVersion, assertPathSourceTeams, assertTeamPlacement, assertTeamAuthorization, assertValidCreateTeam, assertValidUpdateTeam, sameTeamData, sanitizeTeamReason } from "@uniora/core";
 import type { SqliteExecutor } from "../executor.js";
 import { isForeignKeyViolation, isUniqueViolation, violatedExactly } from "../sqlite-errors.js";
 import { toLikePattern } from "../like.js";
@@ -152,6 +152,24 @@ export function createTeamRepository(db: SqliteExecutor): TeamRepository {
         [id, organizationId],
       );
       return result.rows.map(toTeam);
+    },
+
+    async pathIds(organizationId: string, teamIds: readonly string[], options: { limit?: number } = {}) {
+      const ids = assertPathSourceTeams(teamIds);
+      if (ids.length === 0) return [];
+      const limit = Math.min(Math.max(Math.trunc(options.limit ?? 1000), 1), 5000);
+      const marks = ids.map((_, index) => `?${index + 3}`).join(", ");
+      // The given teams that exist in THIS organization, then their parents, level by level (bounded by the depth guard).
+      const result = await db.query<{ id: string }>(
+        `with recursive up(id, parent_id, depth) as (
+           select id, parent_id, 1 from uniora_teams where organization_id = ?1 and id in (${marks})
+           union
+           select t.id, t.parent_id, up.depth + 1 from uniora_teams t join up on t.id = up.parent_id
+           where t.organization_id = ?1 and up.depth < ${TREE_DEPTH_GUARD}
+         ) select distinct id from up order by id limit ?2`,
+        [organizationId, limit, ...ids],
+      );
+      return result.rows.map((row) => row.id);
     },
 
     async descendants(organizationId: string, id: string) {

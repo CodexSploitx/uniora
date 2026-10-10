@@ -11,6 +11,10 @@ export const MAX_ACTIVE_POLICIES = 200;
 export const MAX_RESOURCE_ATTRIBUTES = 64;
 export const MAX_RESOURCE_VALUE_LENGTH = 1000;
 export const MAX_RESOURCE_LIST_ITEMS = 1000;
+/** Teams of a resource whose ancestors are expanded for `resource.teamPathIds`; a resource in more teams is "unknown". */
+export const MAX_RESOURCE_PATH_TEAMS = 50;
+/** The most ids `resource.teamPathIds` holds (50 teams at the deepest nesting is 400); beyond it the attribute is "unknown". */
+export const MAX_RESOURCE_PATH_IDS = 500;
 
 /** The three results of an evaluation. `indeterminate` is never turned into an allow. */
 export type Verdict = "allow" | "deny" | "indeterminate";
@@ -21,6 +25,7 @@ export type UnknownReason =
   | "attribute_missing"
   | "attribute_type_mismatch"
   | "subject_unavailable"
+  | "team_tree_unavailable"
   | "feature_unavailable"
   | "permission_unavailable"
   | "budget_exceeded";
@@ -32,6 +37,8 @@ export interface ResourceFacts {
   id: string;
   /** Teams the resource belongs to. `[]` is a fact ("none"); leave it out when you do not know. */
   teamIds?: readonly string[];
+  /** `teamIds` plus their ancestors, filled in by the engine (never by the host) when a policy reads `resource.teamPathIds`. */
+  teamPathIds?: readonly string[];
   /** Values of the attributes the policies declare. Anything not declared by an applicable policy is ignored. */
   attributes?: Readonly<Record<string, unknown>>;
 }
@@ -130,7 +137,12 @@ class Run {
     if (resource === undefined) return { ok: false, reason: "resource_missing" };
     if (isBuiltinResourceAttribute(ref)) {
       const type = RESOURCE_ATTRIBUTES[ref as keyof typeof RESOURCE_ATTRIBUTES];
-      const value = ref === "resource.id" ? resource.id : resource.teamIds === undefined ? undefined : [...resource.teamIds];
+      let value: string | string[] | undefined;
+      if (ref === "resource.id") value = resource.id;
+      else if (ref === "resource.teamIds") value = resource.teamIds === undefined ? undefined : [...resource.teamIds];
+      else if (resource.teamIds === undefined) value = undefined;
+      else if (resource.teamPathIds === undefined) return { ok: false, reason: "team_tree_unavailable" };
+      else value = [...resource.teamPathIds];
       if (value === undefined) return { ok: true, absent: true, value: undefined };
       return hasType(value, type) ? { ok: true, value: value as AttributeValue } : { ok: false, reason: "attribute_type_mismatch" };
     }
@@ -327,6 +339,8 @@ export interface RequiredFacts {
   subject: SubjectAttributeName[];
   /** Whether any of them reads the resource. */
   resource: boolean;
+  /** Whether any of them reads `resource.teamPathIds`, which has to be derived from the team tree. */
+  resourceTeamPath: boolean;
 }
 
 export function requiredFacts(policies: ReadonlyArray<{ definition: PolicyDefinition; analysis: PolicyAnalysis }>, request: PolicyRequest): RequiredFacts {
@@ -334,12 +348,14 @@ export function requiredFacts(policies: ReadonlyArray<{ definition: PolicyDefini
   const permissions = new Set<string>();
   const subject = new Set<SubjectAttributeName>();
   let resource = false;
+  let resourceTeamPath = false;
   for (const { definition, analysis } of policies) {
     if (applicability(definition, request) !== "yes") continue;
     for (const feature of analysis.features) features.add(feature);
     for (const permission of analysis.permissions) permissions.add(permission);
     for (const ref of analysis.subjectRefs) subject.add(ref as SubjectAttributeName);
     if (analysis.resourceRefs.length > 0) resource = true;
+    if (analysis.resourceRefs.includes("resource.teamPathIds")) resourceTeamPath = true;
   }
-  return { features: [...features].sort(), permissions: [...permissions].sort(), subject: [...subject].sort(), resource };
+  return { features: [...features].sort(), permissions: [...permissions].sort(), subject: [...subject].sort(), resource, resourceTeamPath };
 }

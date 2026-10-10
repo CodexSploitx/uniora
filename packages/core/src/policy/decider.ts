@@ -11,6 +11,8 @@ import {
   MAX_EVALUATION_STEPS,
   MAX_RESOURCE_ATTRIBUTES,
   MAX_RESOURCE_LIST_ITEMS,
+  MAX_RESOURCE_PATH_IDS,
+  MAX_RESOURCE_PATH_TEAMS,
   combineVerdicts,
   evaluatePolicySet,
   requiredFacts,
@@ -249,6 +251,11 @@ export function createPolicyDecider(deps: DeciderDeps): PolicyDecider {
             subject[name] = roles.filter((role) => role.organizationId === organizationId).map((role) => role.key);
             break;
           }
+          case "subject.managedTeamIds": {
+            const ids = await storage.teamMemberships.activeTeamIds(organizationId, membership.id, { limit: MAX_SUBJECT_TEAMS + 1, responsibilities: ["owner", "manager"] });
+            if (ids.length <= MAX_SUBJECT_TEAMS) subject[name] = ids;
+            break;
+          }
           case "subject.teamIds": {
             const ids = await storage.teamMemberships.activeTeamIds(organizationId, membership.id, { limit: MAX_SUBJECT_TEAMS + 1 });
             // A member in more teams than we can list is not "in these teams only": leave it unknown.
@@ -261,6 +268,19 @@ export function createPolicyDecider(deps: DeciderDeps): PolicyDecider {
       }
     }
     return subject;
+  }
+
+  /** `teamIds` plus their ancestors, or `undefined` when it cannot be known (the policies that read it become indeterminate). */
+  async function teamPath(organizationId: string, teamIds: readonly string[] | undefined): Promise<string[] | undefined> {
+    if (teamIds === undefined) return undefined;
+    if (teamIds.length === 0) return [];
+    if (new Set(teamIds).size > MAX_RESOURCE_PATH_TEAMS) return undefined;
+    try {
+      const ids = await storage.teams.pathIds(organizationId, teamIds, { limit: MAX_RESOURCE_PATH_IDS + 1 });
+      return ids.length <= MAX_RESOURCE_PATH_IDS ? ids : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   async function lookups(input: AuthorizeInput, needs: { features: string[]; permissions: string[] }): Promise<Pick<EvaluationFacts, "features" | "permissions">> {
@@ -343,9 +363,19 @@ export function createPolicyDecider(deps: DeciderDeps): PolicyDecider {
     const broken = set.compiled.filter((entry): entry is Extract<Compiled, { valid: false }> => !entry.valid);
 
     const needs = requiredFacts(valid.map((entry) => ({ definition: entry.evaluable.definition, analysis: entry.analysis })), request);
+    const teamPathIds = resource?.ok && needs.resourceTeamPath ? await teamPath(input.organizationId, resource.facts.teamIds) : undefined;
     const facts: EvaluationFacts = {
       subject: await subjectFacts(base.membership, needs.subject, input.organizationId),
-      ...(resource?.ok ? { resource: { id: resource.facts.id, ...(resource.facts.teamIds !== undefined ? { teamIds: resource.facts.teamIds } : {}), attributes: resource.facts.attributes ?? {} } } : {}),
+      ...(resource?.ok
+        ? {
+            resource: {
+              id: resource.facts.id,
+              ...(resource.facts.teamIds !== undefined ? { teamIds: resource.facts.teamIds } : {}),
+              ...(teamPathIds !== undefined ? { teamPathIds } : {}),
+              attributes: resource.facts.attributes ?? {},
+            },
+          }
+        : {}),
       ...(await lookups(input, needs)),
     };
 

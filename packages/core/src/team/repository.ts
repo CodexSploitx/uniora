@@ -50,6 +50,8 @@ export const MAX_TEAM_REASON_LENGTH = 500;
 export const MAX_TEAM_MEMBER_ROLES = 50;
 /** Teams one member can belong to for policy evaluation; a member in more is `subject.teamIds` unavailable (fail closed). */
 export const MAX_SUBJECT_TEAMS = 500;
+/** Teams whose ancestors `TeamRepository.pathIds` expands in one call. */
+export const MAX_PATH_SOURCE_TEAMS = 50;
 /** Levels in a team tree, counting the top-level team as 1. */
 export const MAX_TEAM_DEPTH = 8;
 
@@ -152,6 +154,13 @@ export interface TeamRepository {
   /** Every team below this one, at any depth, ordered by `id`. */
   descendants(organizationId: string, id: string): Promise<Team[]>;
   /**
+   * The given teams that exist in this organization together with ALL their ancestors (any status), ids only, ordered by `id`, at
+   * most `limit` (default 1000; ask for one more than you can handle to know whether it was cut). Ids that are not teams of this
+   * organization are left out, so a team of another organization can never appear. At most `MAX_PATH_SOURCE_TEAMS` ids may be given
+   * (`team_invalid` otherwise). One recursive query bounded by the tree depth: this is what the policy engine reads as `resource.teamPathIds`.
+   */
+  pathIds(organizationId: string, teamIds: readonly string[], options?: { limit?: number }): Promise<string[]>;
+  /**
    * Changes an ACTIVE team (`team_archived` otherwise). A call that changes nothing keeps the version. Empty input: `team_update_empty`. A new `parentId` is checked (`team_parent_invalid`, `team_cycle`, `team_too_deep`). */
   update(organizationId: string, id: string, input: UpdateTeamInput): Promise<Team>;
   /** Idempotent. An archived team keeps its members and history but cannot be changed or joined until it is restored. A team that still has active sub-teams cannot be archived (`team_has_children`). */
@@ -218,9 +227,11 @@ export interface TeamMembershipRepository {
   /**
    * The ids of the ACTIVE teams this organization membership is an ACTIVE member of (a pending, suspended or removed team
    * membership, or an archived team, does not count), ordered by id, at most `limit` (default 1000). Ask for one more than you
-   * can handle to know whether the list was cut. One indexed query: this is what the policy engine reads as `subject.teamIds`.
+   * can handle to know whether the list was cut. With `responsibilities`, only the teams where the member holds one of them (for
+   * example `["owner", "manager"]` for the teams they lead). One indexed query: this is what the policy engine reads as
+   * `subject.teamIds` and `subject.managedTeamIds`.
    */
-  activeTeamIds(organizationId: string, membershipId: string, options?: { limit?: number }): Promise<string[]>;
+  activeTeamIds(organizationId: string, membershipId: string, options?: { limit?: number; responsibilities?: readonly TeamResponsibility[] }): Promise<string[]>;
   search(options: SearchTeamMembersOptions): Promise<TeamMembership[]>;
   count(options: Omit<SearchTeamMembersOptions, "limit" | "after">): Promise<number>;
   /**
@@ -440,4 +451,21 @@ export function assertValidAddTeamMember(input: AddTeamMemberInput): {
 /** Whether the team membership counts as belonging to the team right now (and so gives context to the engine). */
 export function isTeamMembershipActive(membership: Pick<TeamMembership, "status">): boolean {
   return membership.status === "active";
+}
+
+/** Validates the arguments of `pathIds` the same way in every backend and returns the distinct ids. */
+export function assertPathSourceTeams(teamIds: readonly string[]): string[] {
+  if (!Array.isArray(teamIds) || teamIds.length > MAX_PATH_SOURCE_TEAMS || teamIds.some((id) => typeof id !== "string" || id === "" || id.length > 200)) {
+    throw new TeamError(`pathIds takes at most ${MAX_PATH_SOURCE_TEAMS} team ids of at most 200 characters.`, "team_invalid");
+  }
+  return [...new Set(teamIds)];
+}
+
+/** Validates the `responsibilities` filter of `activeTeamIds`. */
+export function assertResponsibilityFilter(responsibilities: readonly string[] | undefined): TeamResponsibility[] | undefined {
+  if (responsibilities === undefined) return undefined;
+  if (!Array.isArray(responsibilities) || responsibilities.length === 0 || responsibilities.some((value) => !(TEAM_RESPONSIBILITIES as readonly string[]).includes(value))) {
+    throw new TeamError(`A responsibility filter lists some of: ${TEAM_RESPONSIBILITIES.join(", ")}.`, "team_membership_invalid");
+  }
+  return [...new Set(responsibilities)] as TeamResponsibility[];
 }
