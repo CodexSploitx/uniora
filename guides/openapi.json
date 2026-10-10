@@ -84,33 +84,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "identity": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "provider": {
-                        "type": "string",
-                        "maxLength": 64,
-                        "minLength": 1,
-                        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$",
-                        "description": "An opaque label for the auth system the subject belongs to (not necessarily its vendor name). Omit it to use the server's default label.",
-                        "examples": [
-                          "main"
-                        ]
-                      },
-                      "subject": {
-                        "type": "string",
-                        "maxLength": 500,
-                        "minLength": 1,
-                        "description": "The user's stable id in your auth provider. Never an e-mail address.",
-                        "examples": [
-                          "3f2c9a10-8b1e-4c2d-9f7a-1e2b3c4d5e6f"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "subject"
-                    ],
-                    "description": "Who the question is about."
+                    "$ref": "#/components/schemas/IdentityInput"
                   },
                   "organizationId": {
                     "type": "string",
@@ -490,33 +464,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "identity": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "provider": {
-                        "type": "string",
-                        "maxLength": 64,
-                        "minLength": 1,
-                        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$",
-                        "description": "An opaque label for the auth system the subject belongs to (not necessarily its vendor name). Omit it to use the server's default label.",
-                        "examples": [
-                          "main"
-                        ]
-                      },
-                      "subject": {
-                        "type": "string",
-                        "maxLength": 500,
-                        "minLength": 1,
-                        "description": "The user's stable id in your auth provider. Never an e-mail address.",
-                        "examples": [
-                          "3f2c9a10-8b1e-4c2d-9f7a-1e2b3c4d5e6f"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "subject"
-                    ],
-                    "description": "Who the question is about."
+                    "$ref": "#/components/schemas/IdentityInput"
                   },
                   "organizationId": {
                     "type": "string",
@@ -727,33 +675,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "identity": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "provider": {
-                        "type": "string",
-                        "maxLength": 64,
-                        "minLength": 1,
-                        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$",
-                        "description": "An opaque label for the auth system the subject belongs to (not necessarily its vendor name). Omit it to use the server's default label.",
-                        "examples": [
-                          "main"
-                        ]
-                      },
-                      "subject": {
-                        "type": "string",
-                        "maxLength": 500,
-                        "minLength": 1,
-                        "description": "The user's stable id in your auth provider. Never an e-mail address.",
-                        "examples": [
-                          "3f2c9a10-8b1e-4c2d-9f7a-1e2b3c4d5e6f"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "subject"
-                    ],
-                    "description": "Who the question is about."
+                    "$ref": "#/components/schemas/IdentityInput"
                   },
                   "organizationId": {
                     "type": "string",
@@ -1203,33 +1125,7 @@
                     "description": "The secret from the accept link."
                   },
                   "identity": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "provider": {
-                        "type": "string",
-                        "maxLength": 64,
-                        "minLength": 1,
-                        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$",
-                        "description": "An opaque label for the auth system the subject belongs to (not necessarily its vendor name). Omit it to use the server's default label.",
-                        "examples": [
-                          "main"
-                        ]
-                      },
-                      "subject": {
-                        "type": "string",
-                        "maxLength": 500,
-                        "minLength": 1,
-                        "description": "The user's stable id in your auth provider. Never an e-mail address.",
-                        "examples": [
-                          "3f2c9a10-8b1e-4c2d-9f7a-1e2b3c4d5e6f"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "subject"
-                    ],
-                    "description": "Who the question is about."
+                    "$ref": "#/components/schemas/IdentityInput"
                   },
                   "verifiedEmail": {
                     "type": "string",
@@ -1890,33 +1786,7 @@
                     ]
                   },
                   "owner": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "provider": {
-                        "type": "string",
-                        "maxLength": 64,
-                        "minLength": 1,
-                        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$",
-                        "description": "An opaque label for the auth system the subject belongs to (not necessarily its vendor name). Omit it to use the server's default label.",
-                        "examples": [
-                          "main"
-                        ]
-                      },
-                      "subject": {
-                        "type": "string",
-                        "maxLength": 500,
-                        "minLength": 1,
-                        "description": "The user's stable id in your auth provider. Never an e-mail address.",
-                        "examples": [
-                          "3f2c9a10-8b1e-4c2d-9f7a-1e2b3c4d5e6f"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "subject"
-                    ],
-                    "description": "Who the question is about."
+                    "$ref": "#/components/schemas/IdentityInput"
                   }
                 },
                 "required": [
@@ -2330,22 +2200,7 @@
                             "maxLength": 200
                           },
                           "actor": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "properties": {
-                              "provider": {
-                                "type": "string",
-                                "maxLength": 200
-                              },
-                              "subject": {
-                                "type": "string",
-                                "maxLength": 500
-                              }
-                            },
-                            "required": [
-                              "provider",
-                              "subject"
-                            ]
+                            "$ref": "#/components/schemas/Identity"
                           },
                           "action": {
                             "type": "string",
@@ -7362,33 +7217,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "identity": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "provider": {
-                        "type": "string",
-                        "maxLength": 64,
-                        "minLength": 1,
-                        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$",
-                        "description": "An opaque label for the auth system the subject belongs to (not necessarily its vendor name). Omit it to use the server's default label.",
-                        "examples": [
-                          "main"
-                        ]
-                      },
-                      "subject": {
-                        "type": "string",
-                        "maxLength": 500,
-                        "minLength": 1,
-                        "description": "The user's stable id in your auth provider. Never an e-mail address.",
-                        "examples": [
-                          "3f2c9a10-8b1e-4c2d-9f7a-1e2b3c4d5e6f"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "subject"
-                    ],
-                    "description": "Who the question is about."
+                    "$ref": "#/components/schemas/IdentityInput"
                   },
                   "permission": {
                     "type": "string",
@@ -14408,33 +14237,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "identity": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "provider": {
-                        "type": "string",
-                        "maxLength": 64,
-                        "minLength": 1,
-                        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$",
-                        "description": "An opaque label for the auth system the subject belongs to (not necessarily its vendor name). Omit it to use the server's default label.",
-                        "examples": [
-                          "main"
-                        ]
-                      },
-                      "subject": {
-                        "type": "string",
-                        "maxLength": 500,
-                        "minLength": 1,
-                        "description": "The user's stable id in your auth provider. Never an e-mail address.",
-                        "examples": [
-                          "3f2c9a10-8b1e-4c2d-9f7a-1e2b3c4d5e6f"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "subject"
-                    ],
-                    "description": "Who the question is about."
+                    "$ref": "#/components/schemas/IdentityInput"
                   },
                   "organizationId": {
                     "type": "string",
@@ -14777,6 +14580,53 @@
           }
         }
       },
+      "Identity": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "provider": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "subject": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "provider",
+          "subject"
+        ]
+      },
+      "IdentityInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "provider": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$",
+            "description": "An opaque label for the auth system the subject belongs to (not necessarily its vendor name). Omit it to use the server's default label.",
+            "examples": [
+              "main"
+            ]
+          },
+          "subject": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "description": "The user's stable id in your auth provider. Never an e-mail address.",
+            "examples": [
+              "3f2c9a10-8b1e-4c2d-9f7a-1e2b3c4d5e6f"
+            ]
+          }
+        },
+        "required": [
+          "subject"
+        ],
+        "description": "Who the question is about."
+      },
       "Invitation": {
         "type": "object",
         "additionalProperties": false,
@@ -14811,22 +14661,7 @@
             "maxItems": 20
           },
           "invitedBy": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "provider": {
-                "type": "string",
-                "maxLength": 200
-              },
-              "subject": {
-                "type": "string",
-                "maxLength": 500
-              }
-            },
-            "required": [
-              "provider",
-              "subject"
-            ]
+            "$ref": "#/components/schemas/Identity"
           },
           "status": {
             "type": "string",
@@ -14851,22 +14686,7 @@
             "format": "date-time"
           },
           "acceptedBy": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "provider": {
-                "type": "string",
-                "maxLength": 200
-              },
-              "subject": {
-                "type": "string",
-                "maxLength": 500
-              }
-            },
-            "required": [
-              "provider",
-              "subject"
-            ]
+            "$ref": "#/components/schemas/Identity"
           },
           "revokedAt": {
             "type": "string",
@@ -14941,22 +14761,7 @@
             "maxLength": 200
           },
           "identity": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "provider": {
-                "type": "string",
-                "maxLength": 200
-              },
-              "subject": {
-                "type": "string",
-                "maxLength": 500
-              }
-            },
-            "required": [
-              "provider",
-              "subject"
-            ]
+            "$ref": "#/components/schemas/Identity"
           },
           "roleIds": {
             "type": "array",
@@ -14987,22 +14792,7 @@
             "format": "date-time"
           },
           "invitedBy": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "provider": {
-                "type": "string",
-                "maxLength": 200
-              },
-              "subject": {
-                "type": "string",
-                "maxLength": 500
-              }
-            },
-            "required": [
-              "provider",
-              "subject"
-            ]
+            "$ref": "#/components/schemas/Identity"
           },
           "blocked": {
             "type": "object",
@@ -15163,22 +14953,7 @@
             "format": "date-time"
           },
           "createdBy": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "provider": {
-                "type": "string",
-                "maxLength": 200
-              },
-              "subject": {
-                "type": "string",
-                "maxLength": 500
-              }
-            },
-            "required": [
-              "provider",
-              "subject"
-            ]
+            "$ref": "#/components/schemas/Identity"
           },
           "updatedAt": {
             "type": "string",
@@ -15193,22 +14968,7 @@
                 "format": "date-time"
               },
               "by": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "provider": {
-                    "type": "string",
-                    "maxLength": 200
-                  },
-                  "subject": {
-                    "type": "string",
-                    "maxLength": 500
-                  }
-                },
-                "required": [
-                  "provider",
-                  "subject"
-                ]
+                "$ref": "#/components/schemas/Identity"
               },
               "reason": {
                 "type": "string",
@@ -15285,22 +15045,7 @@
             "format": "date-time"
           },
           "createdBy": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "provider": {
-                "type": "string",
-                "maxLength": 200
-              },
-              "subject": {
-                "type": "string",
-                "maxLength": 500
-              }
-            },
-            "required": [
-              "provider",
-              "subject"
-            ]
+            "$ref": "#/components/schemas/Identity"
           },
           "note": {
             "type": "string",
@@ -15480,22 +15225,7 @@
                 "format": "date-time"
               },
               "by": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "provider": {
-                    "type": "string",
-                    "maxLength": 200
-                  },
-                  "subject": {
-                    "type": "string",
-                    "maxLength": 500
-                  }
-                },
-                "required": [
-                  "provider",
-                  "subject"
-                ]
+                "$ref": "#/components/schemas/Identity"
               },
               "reason": {
                 "type": "string",
@@ -15589,22 +15319,7 @@
             "format": "date-time"
           },
           "invitedBy": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "provider": {
-                "type": "string",
-                "maxLength": 200
-              },
-              "subject": {
-                "type": "string",
-                "maxLength": 500
-              }
-            },
-            "required": [
-              "provider",
-              "subject"
-            ]
+            "$ref": "#/components/schemas/Identity"
           },
           "statusChange": {
             "type": "object",
@@ -15615,22 +15330,7 @@
                 "format": "date-time"
               },
               "by": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "provider": {
-                    "type": "string",
-                    "maxLength": 200
-                  },
-                  "subject": {
-                    "type": "string",
-                    "maxLength": 500
-                  }
-                },
-                "required": [
-                  "provider",
-                  "subject"
-                ]
+                "$ref": "#/components/schemas/Identity"
               },
               "reason": {
                 "type": "string",

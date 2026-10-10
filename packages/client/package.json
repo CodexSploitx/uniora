@@ -1,0 +1,57 @@
+{
+  "name": "@uniora/client",
+  "version": "0.9.0",
+  "description": "The typed client of the UNIORA API: decisions, organizations, roles, teams, policies and invitations from your backend, plus a remote authorization engine for the Express and Next guards.",
+  "license": "PolyForm-Shield-1.0.0",
+  "keywords": [
+    "uniora",
+    "authorization",
+    "api-client",
+    "multi-tenant"
+  ],
+  "homepage": "https://github.com/CodexSploitx/uniora#readme",
+  "bugs": {
+    "url": "https://github.com/CodexSploitx/uniora/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CodexSploitx/uniora.git",
+    "directory": "packages/client"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.tests.json",
+    "prepack": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@uniora/core": "workspace:^"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "@uniora/server": "workspace:^",
+    "@uniora/sqlite": "workspace:^",
+    "@types/better-sqlite3": "^9.6.0",
+    "better-sqlite3": "^13.0.3",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}

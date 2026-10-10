@@ -288,6 +288,34 @@ importers:
         specifier: ^2.1.4
         version: 2.1.9(@types/node@26.6.4)(jsdom@30.1.1)(lightningcss@1.32.0)(supports-color@7.2.0)
 
+  packages/client:
+    dependencies:
+      '@uniora/core':
+        specifier: workspace:^
+        version: link:../core
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^9.6.0
+        version: 9.6.0
+      '@types/node':
+        specifier: ^26.6.4
+        version: 26.6.4
+      '@uniora/server':
+        specifier: workspace:^
+        version: link:../server
+      '@uniora/sqlite':
+        specifier: workspace:^
+        version: link:../database/sqlite
+      better-sqlite3:
+        specifier: ^13.0.3
+        version: 13.0.3
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.4
+        version: 2.1.9(@types/node@26.6.4)(jsdom@30.1.1)(lightningcss@1.32.0)(supports-color@7.2.0)
+
   packages/core:
     devDependencies:
       '@types/node':
