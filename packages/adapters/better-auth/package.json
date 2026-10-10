@@ -1,6 +1,6 @@
 {
   "name": "@uniora/better-auth",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Better Auth adapter for @uniora/core: turns a Better Auth session into an Identity",
   "license": "PolyForm-Shield-1.0.0",
   "keywords": [
