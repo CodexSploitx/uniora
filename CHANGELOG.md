@@ -2,9 +2,9 @@
 
 All notable changes to UNIORA. Packages are released in lockstep, so one version number covers all of them. The format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## Unreleased
+## 0.8.0 - 2026-10-10
 
-No migration. Opt-in: nothing changes for code that does not enable it, except the two small additions marked below.
+No migration. The access rules are opt-in: code that does not wrap its storage with `createGuardedStorage` or pass `access` to the invitation service behaves as before, apart from the small additions under "Changed".
 
 ### Added
 
@@ -20,6 +20,10 @@ No migration. Opt-in: nothing changes for code that does not enable it, except t
 
 - `AcceptInvitationResult` has a new `rolesSkipped` field (empty unless the inviter lost power before acceptance); the Express and Next accept routes return it.
 - New audit action `access.change_refused`.
+
+### Fixed
+
+- **PostgreSQL: a suspension that ends within milliseconds no longer fails.** `memberships.suspend` with an end date 1 to 3 ms ahead failed about 6% of the time with check violation `23514` (`memberships_blocked_until_consistent`): `blocked_at` came from the database clock and `blocked_until` from the caller's, so the row could be written after the end date had already passed. `blocked_at` is now clamped to just before `blocked_until` and the member simply reads as active again. SQLite and memory were not affected.
 
 ## 0.7.0 - 2026-10-09
 
