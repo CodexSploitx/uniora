@@ -7,3 +7,5 @@ export type { LogEntry, LogLevel, Logger } from "./logger.js";
 export { ApiError } from "./errors.js";
 export type { Problem } from "./errors.js";
 export type { Route } from "./route.js";
+export { buildOpenApiDocument } from "./openapi.js";
+export type { OpenApiOptions } from "./openapi.js";

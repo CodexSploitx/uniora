@@ -9,7 +9,7 @@ const invitationId = id("The invitation.", "inv_1");
 const orgParams = s.object({ organizationId: org });
 const invitationParams = s.object({ organizationId: org, invitationId });
 
-const InvitationOut = s.object({
+export const InvitationOut = s.object({
   id: s.string({ max: 200 }),
   organizationId: s.string({ max: 200 }),
   email: s.string({ max: 320, description: "Normalized: trimmed and lower-cased." }),
@@ -67,6 +67,7 @@ export const invitationRoutes = [
     path: "/v1/organizations/:organizationId/invitations",
     summary: "Invite someone by e-mail",
     description: `Creates the invitation and, if the server has a sender, e-mails the link. The Owner role can never be offered. Send an \`Idempotency-Key\` to make a retry safe: the same key with the same request creates and sends nothing and answers \`replayed: true\`; the same key with a different request is \`invitation_idempotency_conflict\`.${DELEGATED_NOTE}`,
+    idempotent: true,
     scope: "invitations:write",
     delegated: true,
     status: 201,

@@ -213,6 +213,8 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
         actor = actorFromHeaders({ subject: headerValues(req, "uniora-actor-subject"), provider: headerValues(req, "uniora-actor-provider") }, config.defaultProvider);
       }
       const keyHeader = req.headers["idempotency-key"];
+      if (keyHeader !== undefined && !route.idempotent) throw errors.invalidRequest([{ path: "Idempotency-Key", code: "unknown_field" }]);
+      if (req.headers["if-match"] !== undefined && !route.ifMatch) throw errors.invalidRequest([{ path: "If-Match", code: "unknown_field" }]);
       if (keyHeader !== undefined && (typeof keyHeader !== "string" || !IDEMPOTENCY_KEY.test(keyHeader))) throw errors.invalidRequest([{ path: "Idempotency-Key", code: "pattern" }]);
       const ifMatchHeader = req.headers["if-match"];
       let ifMatch: number | undefined;
@@ -279,6 +281,7 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
         ifMatch,
         idempotencyKey: keyHeader as string | undefined,
         setHeader: (name, value) => {
+          if (name === "ETag" && !route!.etag) throw new Error(`Route ${route!.id} sets an ETag but is not declared with etag: true.`);
           if (name === "ETag" || name === "Location") extra[name] = value;
         },
       };

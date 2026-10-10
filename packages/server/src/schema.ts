@@ -377,17 +377,27 @@ export function project(schema: Schema, value: unknown, path = ""): unknown {
 
 export type JsonSchemaObject = Record<string, unknown>;
 
-/** The JSON Schema (OpenAPI 3.1 flavour) of `schema`. */
-export function toJsonSchema(schema: Schema): JsonSchemaObject {
+/**
+ * The JSON Schema (OpenAPI 3.1 flavour) of `schema`. A schema that is in `refs` (by identity) becomes a `$ref` to the name it has
+ * there, so a shape used by twenty routes is written once in the document.
+ */
+export function toJsonSchema(schema: Schema, refs?: ReadonlyMap<Schema, string>): JsonSchemaObject {
+  const named = refs?.get(schema);
+  if (named !== undefined) return { $ref: `#/components/schemas/${named}` };
+  return convert(schema, refs);
+}
+
+function convert(schema: Schema, refs: ReadonlyMap<Schema, string> | undefined): JsonSchemaObject {
+  const recur = (inner: Schema): JsonSchemaObject => toJsonSchema(inner, refs);
   const documented = (base: JsonSchemaObject, source: Schema): JsonSchemaObject => {
     const { description, example } = source as Base;
     return { ...base, ...(description ? { description } : {}), ...(example !== undefined ? { examples: [example] } : {}) };
   };
   switch (schema.kind) {
     case "optional":
-      return toJsonSchema(schema.inner);
+      return recur(schema.inner);
     case "nullable": {
-      const inner = toJsonSchema(schema.inner);
+      const inner = recur(schema.inner);
       const type = inner.type;
       return { ...inner, type: Array.isArray(type) ? [...type, "null"] : [type, "null"] };
     }
@@ -411,7 +421,7 @@ export function toJsonSchema(schema: Schema): JsonSchemaObject {
       return documented({ type: "string", enum: [...schema.values] }, schema);
     case "array":
       return documented(
-        { type: "array", items: toJsonSchema(schema.item), maxItems: schema.max, ...(schema.min !== undefined ? { minItems: schema.min } : {}) },
+        { type: "array", items: recur(schema.item), maxItems: schema.max, ...(schema.min !== undefined ? { minItems: schema.min } : {}) },
         schema,
       );
     case "object": {
@@ -422,7 +432,7 @@ export function toJsonSchema(schema: Schema): JsonSchemaObject {
         {
           type: "object",
           additionalProperties: false,
-          properties: Object.fromEntries(Object.entries(schema.shape).map(([key, inner]) => [key, toJsonSchema(inner)])),
+          properties: Object.fromEntries(Object.entries(schema.shape).map(([key, inner]) => [key, recur(inner)])),
           ...(required.length > 0 ? { required } : {}),
         },
         schema,
@@ -434,7 +444,7 @@ export function toJsonSchema(schema: Schema): JsonSchemaObject {
           type: "object",
           maxProperties: schema.maxKeys,
           propertyNames: { pattern: schema.keyPattern.source },
-          additionalProperties: toJsonSchema(schema.value),
+          additionalProperties: recur(schema.value),
         },
         schema,
       );

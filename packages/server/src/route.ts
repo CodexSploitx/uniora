@@ -83,6 +83,12 @@ export interface RouteSpec<Pa extends ObjectSchema | undefined = undefined, Q ex
    * speaks for.
    */
   readonly delegated?: boolean;
+  /** Accepts `If-Match` (the version the caller last saw) and refuses a stale one with 412. Any other route refuses the header. */
+  readonly ifMatch?: boolean;
+  /** Answers with the `ETag` of the resource it returns (its version). */
+  readonly etag?: boolean;
+  /** Accepts `Idempotency-Key`: a retry with the same key cannot repeat the change. Any other route refuses the header. */
+  readonly idempotent?: boolean;
   /**
    * The call is about something the route cannot name an organization for (the token of an invitation, the creation of a new
    * organization), so a client restricted to some organizations cannot be allowed to make it: only a client with `"*"` can.
@@ -108,6 +114,9 @@ export interface Route {
   readonly status: 200 | 201 | 204;
   readonly write: boolean;
   readonly delegated: boolean;
+  readonly ifMatch: boolean;
+  readonly etag: boolean;
+  readonly idempotent: boolean;
   readonly allOrganizations: boolean;
   readonly errors: readonly string[];
   readonly organization: ((input: never) => string | undefined) | undefined;
@@ -155,6 +164,9 @@ export function defineRoute<Pa extends ObjectSchema | undefined = undefined, Q e
     status: spec.status ?? 200,
     write: spec.write ?? spec.method !== "GET",
     delegated: spec.delegated ?? false,
+    ifMatch: spec.ifMatch ?? false,
+    etag: spec.etag ?? false,
+    idempotent: spec.idempotent ?? false,
     allOrganizations: spec.allOrganizations ?? false,
     errors: spec.errors,
     organization: spec.organization as Route["organization"],
