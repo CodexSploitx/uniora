@@ -26,6 +26,7 @@ import { MIGRATION_0023_PLATFORM_HARDENING } from "./migrations/0023_platform_ha
 import { MIGRATION_0024_SEARCH_INDEXES } from "./migrations/0024_search_indexes.js";
 import { MIGRATION_0025_POLICIES } from "./migrations/0025_policies.js";
 import { MIGRATION_0026_POLICY_REVISION_SEQUENCE } from "./migrations/0026_policy_revision_sequence.js";
+import { MIGRATION_0027_API_CREDENTIALS } from "./migrations/0027_api_credentials.js";
 
 interface Migration {
   readonly id: string;
@@ -60,6 +61,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0024_search_indexes", sql: MIGRATION_0024_SEARCH_INDEXES },
   { id: "0025_policies", sql: MIGRATION_0025_POLICIES },
   { id: "0026_policy_revision_sequence", sql: MIGRATION_0026_POLICY_REVISION_SEQUENCE },
+  { id: "0027_api_credentials", sql: MIGRATION_0027_API_CREDENTIALS },
 ];
 
 const LEDGER_TABLE = "uniora_schema_migrations";

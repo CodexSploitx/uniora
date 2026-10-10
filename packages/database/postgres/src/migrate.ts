@@ -41,6 +41,7 @@ import { MIGRATION_0038_PLATFORM_HARDENING } from "./migrations/0038_platform_ha
 import { MIGRATION_0039_SEARCH_INDEXES } from "./migrations/0039_search_indexes.js";
 import { MIGRATION_0040_POLICIES } from "./migrations/0040_policies.js";
 import { MIGRATION_0041_POLICY_REVISION_SEQUENCE } from "./migrations/0041_policy_revision_sequence.js";
+import { MIGRATION_0042_API_CREDENTIALS } from "./migrations/0042_api_credentials.js";
 
 interface Migration {
   readonly id: string;
@@ -90,6 +91,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0039_search_indexes", sql: MIGRATION_0039_SEARCH_INDEXES },
   { id: "0040_policies", sql: MIGRATION_0040_POLICIES },
   { id: "0041_policy_revision_sequence", sql: MIGRATION_0041_POLICY_REVISION_SEQUENCE },
+  { id: "0042_api_credentials", sql: MIGRATION_0042_API_CREDENTIALS },
 ];
 
 /**

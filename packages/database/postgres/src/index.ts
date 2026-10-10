@@ -3,3 +3,4 @@ export { applyMigrations, getMigrationStatus, listMigrationIds, listMigrations, 
 export type { AppliedMigration, MigrationRunResult, MigrationStatus } from "./migrate.js";
 export type { Queryable } from "./queryable.js";
 export { createPostgresPlatformStorage } from "./platform-storage.js";
+export { createPostgresApiCredentialStorage } from "./api-credential-storage.js";
