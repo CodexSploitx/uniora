@@ -40,6 +40,8 @@ Your backend ──HTTPS + API key──▶ UNIORA Server ──▶ its own Post
 | D2 | **Two end-user identity modes in the contract from v1**: *asserted* (the backend says who the user is) and *verified token* (UNIORA verifies the user's JWT). **Asserted is implemented first.** | §6. Verified token is in the roadmap; v1 rejects it with a stable code instead of ignoring it. |
 | D3 | **Studio manages API clients and keys** (create, rotate, revoke, disable), with a CLI equivalent for automation. | §9. |
 | D4 | One server per customer, its own database, stateless processes that scale horizontally. | §11. |
+| D6 | **The identity provider is an opaque label, optional in requests.** The server is configured with a default label; requests may send only `subject`. | §6. The label never has to name the vendor, and no request needs to carry it. |
+| D7 | **Every endpoint is documented with examples, and the examples are tested.** | §13. Documentation is part of "done" for every route, not a follow-up. |
 | D5 | **The server is a transport for the existing services and command layer, never a second implementation.** | Changes go through `runAccessCommand`, `runTeamCommand`, `runPolicyCommand`, the invitation service and `createOrganizationWithOwner`. Reads go through the engine and repositories. No route writes through a raw repository. |
 
 D5 is what makes this tractable and safe. The command layer already does the hard part:
@@ -175,6 +177,26 @@ Calls come in two kinds:
 In verified-token mode UNIORA verifies the JWT against the provider configured for the deployment (issuer, audience and
 algorithm pinned, `exp` required) and derives the identity itself. A leaked key can then no longer speak for an arbitrary user.
 
+**The provider label (D6)**: an identity is always stored as `provider` + `subject`. The provider:
+- keeps subjects of two auth systems from colliding;
+- makes identity linking (migrating provider) possible;
+- keeps internal principals apart from end users.
+
+It is an **opaque label chosen by the operator** (`"main"`, `"p1"`, …), not the vendor's name. It reveals nothing about the
+auth provider and nothing about the database. Hiding the vendor would protect little anyway: login redirects and the shape of the
+ids (`user_…`, `auth0|…`) give it away.
+
+The server is configured with a **default label**, so requests may omit it:
+
+```json
+{ "identity": { "subject": "3f2c9a10-8b1e-4c2d-9f7a-1e2b3c4d5e6f" }, "organizationId": "org_acme", "permission": "vehicles.delete" }
+```
+
+- The server fills the default label in before anything else, and stores and compares the full identity.
+- The default never changes once data exists. A second auth system must send its own label explicitly.
+- With no default configured and no label sent, the request is refused (`400 identity_provider_required`); the server never guesses.
+- The same applies to the `Uniora-Actor-Provider` header.
+
 **Reserved providers**: an asserted actor whose provider is `uniora-api`, `uniora-studio` or `uniora-platform` is refused, so nobody
 can impersonate an internal principal in the audit log.
 
@@ -191,8 +213,12 @@ tamper-evident like the rest of the entry.
 **Conventions**
 
 - **Transport**: HTTPS, JSON (`Content-Type: application/json` required), paths under `/v1`.
-- **Errors**: `application/problem+json` (RFC 9457): `{ type, title, status, code, detail?, requestId }`. `code` is the existing
-  stable `UnioraError` code. A `403` never says why, as today.
+- **Errors**: `application/problem+json` (RFC 9457): `{ type, title, status, code, requestId }`.
+  - `code` is the existing stable `UnioraError` code. A `403` never says why, as today.
+  - **The internal error message is never returned.** Some `core` messages name identities (`Identity <provider>:<subject>
+    already has a membership…`). If a host forwarded those to a browser, it would leak who is a member and their provider. The
+    response carries only the code and a generic title.
+  - The full message goes to the server's structured log, keyed by `requestId`, where only operators read it.
 - **Optimistic concurrency**: `expectedVersion` is exposed as `ETag` / `If-Match`.
   - A version conflict (`*_version_conflict`) answers `412`.
   - A write without `If-Match` is allowed, matching the libraries.
@@ -337,21 +363,44 @@ numbers already in [`guides/performance.md`](../guides/performance.md):
    - Malformed, truncated, wrong-checksum, revoked, expired and disabled keys all answer the same `401`, with a timing check (API2).
    - Idempotency races, rate-limit and concurrency abuse, slow-client timeouts.
    - Reserved-provider impersonation.
+   - No response body ever contains an identity that the caller did not send, or an internal error message.
 4. **Mutation checks**: each guard is removed on purpose and must make a test fail, as was done for the SQLite last-Owner guard.
 5. **Adversarial review rounds** against the running server before the first release, as for the earlier security reviews.
 6. **Load tests** against the targets of §12.
 
-## 14. Phases
+## 14. Documentation of every endpoint (D7)
+
+A route is not done until it is documented. Two layers, both generated from the same route table so they cannot drift:
+
+1. **Reference** (`guides/server-api.md` plus the OpenAPI document). For each endpoint:
+   - method and path, the scope it needs, and whether it is an application or a delegated call;
+   - every field of the request and response, with types and limits;
+   - every error `code` it can return, with its HTTP status and what to do about it;
+   - a complete example request (`curl` and `@uniora/client`) and the exact response.
+2. **Guides** (`guides/server.md`) for the flows, not the endpoints:
+   - deploy and configure the server (default provider label, TLS, limits);
+   - create API clients and keys in Studio or the CLI, rotate, revoke;
+   - the signup flow (create an organization with its Owner);
+   - checks and snapshots from a backend;
+   - delegated changes with the actor headers;
+   - invitations end to end;
+   - errors, retries and idempotency;
+   - hardening checklist.
+
+**The examples are tests.** Every example in the reference runs in CI against a real server (SQLite and Postgres) and its response
+is compared with the documented one. A change that breaks an example breaks the build, so the documentation cannot go stale.
+
+## 15. Phases
 
 | Phase | Ships |
 | --- | --- |
-| 1 | Credential storage (Postgres + SQLite + conformance). Studio and CLI management. The server skeleton: authentication, scopes, organization allowlists, limits, errors, health, fail-closed boot. Decisions (`check`, `authorize`, snapshots) and reads. |
+| 1 | Credential storage (Postgres + SQLite + conformance). Studio and CLI management. The server skeleton: authentication, scopes, organization allowlists, default provider label, limits, errors, health, fail-closed boot. Decisions (`check`, `authorize`, snapshots) and reads. Their documentation and tested examples. |
 | 2 | Delegated commands (access, teams, policies, invitations). Provisioning. Idempotency. The generated OpenAPI. `@uniora/client` with the remote engine. |
 | 3 | Verified end-user tokens (D2). OAuth 2.0 client credentials / JWT (D1). Platform commands with a step-up design. Webhooks from the outbox. A shared rate limiter. |
 
-Each phase ships only with its part of the conformance and security suites green.
+Each phase ships only with its part of the conformance and security suites green **and every route it adds documented with tested examples**.
 
-## 15. Open questions
+## 16. Open questions
 
 1. **HTTP framework**: no framework (recommended), Fastify or Hono.
 2. **Read permissions in delegated mode**: which keys (`members.read`, `roles.read`, `audit.read`, …), and whether any read is
