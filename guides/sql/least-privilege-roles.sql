@@ -68,3 +68,34 @@ grant usage, select on all sequences in schema uniora to uniora_app;
 --
 -- -- And make sure the organization role can NOT reach it:
 -- revoke all on schema uniora_platform from uniora_app;
+
+-- ---------------------------------------------------------------------------------------------------------------------
+-- API credentials (optional; only if you run the UNIORA API server, see design/0001-uniora-server.md)
+--
+-- API clients and their keys live in their OWN schema, `uniora_api` (migration 0043). Two different roles need two different
+-- powers, and uniora_app (the code that serves organizations) needs NONE:
+--   uniora_api_server   what the API server connects as to AUTHENTICATE requests. It can READ clients and keys and refresh a
+--                       key's `last_used_at`, and nothing else: a compromised server cannot mint, widen or un-revoke a key.
+--   uniora_api_admin    what Studio and the CLI connect as to manage clients and keys. Full DML on the schema, plus append to
+--                       the audit log (every change is audited in the same transaction).
+-- Run after `uniora migrate`, as uniora_migrator or a superuser.
+--
+--   create role uniora_api_server login password '...' nosuperuser nocreaterole nocreatedb;
+--   create role uniora_api_admin  login password '...' nosuperuser nocreaterole nocreatedb;
+-- ---------------------------------------------------------------------------------------------------------------------
+
+-- grant usage on schema uniora_api to uniora_api_server, uniora_api_admin;
+--
+-- -- The server: read-only, plus the one column it keeps current.
+-- grant select on uniora_api.clients, uniora_api.keys to uniora_api_server;
+-- grant update (last_used_at) on uniora_api.keys to uniora_api_server;
+--
+-- -- Studio / CLI: manage credentials, and write the audit entries that go with each change.
+-- grant select, insert, update on uniora_api.clients, uniora_api.keys to uniora_api_admin;
+-- grant usage on schema uniora to uniora_api_admin;
+-- grant select, insert on uniora.audit_logs to uniora_api_admin;
+-- grant select on uniora.audit_log_checkpoints to uniora_api_admin;
+-- grant usage, select on all sequences in schema uniora to uniora_api_admin;
+--
+-- -- And make sure the organization role can NOT reach credentials:
+-- revoke all on schema uniora_api from uniora_app;

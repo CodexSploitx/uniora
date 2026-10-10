@@ -4,7 +4,8 @@
 // (not async tasks on one connection) are the only way to exercise SQLite's
 // file-level locking, which is what serializes writers across processes.
 import Database from "better-sqlite3";
-import { applyMigrations, createSqliteStorage } from "../../dist/index.js";
+import { generateApiKey } from "@uniora/core";
+import { applyMigrations, createSqliteApiCredentialStorage, createSqliteStorage } from "../../dist/index.js";
 
 const [file, operation, payloadJson, startAtText] = process.argv.slice(2);
 const payload = JSON.parse(payloadJson);
@@ -49,6 +50,19 @@ try {
     case "createMembership":
       await storage.memberships.create(payload);
       break;
+    case "createApiKey": {
+      // The credential storage over the same connection: the cap of two active keys must hold across processes.
+      const generated = generateApiKey();
+      await createSqliteApiCredentialStorage(db).apiKeys.create({
+        id: generated.id,
+        clientId: payload.clientId,
+        secretHash: generated.secretHash,
+        hint: generated.hint,
+        createdBy: { provider: "uniora-cli", subject: "test" },
+        now: new Date(),
+      });
+      break;
+    }
     default:
       throw new Error(`unknown operation ${operation}`);
   }
