@@ -6,5 +6,5 @@
     "lib": ["ES2022"]
   },
   "include": ["src"],
-  "exclude": ["src/**/*.test.ts", "src/test-support", "dist"]
+  "exclude": ["src/**/*.test.ts", "src/test-support", "src/docs-tool", "dist"]
 }
