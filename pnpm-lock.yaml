@@ -256,6 +256,9 @@ importers:
       '@uniora/postgres':
         specifier: workspace:^
         version: link:../database/postgres
+      '@uniora/server':
+        specifier: workspace:^
+        version: link:../server
       '@uniora/sqlite':
         specifier: workspace:^
         version: link:../database/sqlite

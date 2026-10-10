@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 import { bootstrapPlatform } from "@uniora/core";
-import { applyMigrations, createPostgresPlatformStorage, createPostgresStorage, getMigrationStatus } from "@uniora/postgres";
+import { applyMigrations, createPostgresApiCredentialStorage, createPostgresPlatformStorage, createPostgresStorage, getMigrationStatus } from "@uniora/postgres";
 import { describeDatabaseTarget, type CheckResult } from "../cli/output.js";
 import type { DatabaseDriver } from "./types.js";
 
@@ -86,6 +86,9 @@ export function createPostgresDriver(connectionString: string): DatabaseDriver {
       const { role, member } = await bootstrapPlatform({ platform: createPostgresPlatformStorage(pool), admin, actor });
       return { memberId: member.id, roleId: role.id };
     },
+
+    apiCredentials: () => createPostgresApiCredentialStorage(pool),
+    storage: () => createPostgresStorage(pool),
 
     close: () => pool.end(),
   };

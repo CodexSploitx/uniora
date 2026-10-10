@@ -48,6 +48,7 @@
   "dependencies": {
     "@uniora/core": "workspace:^",
     "@uniora/postgres": "workspace:^",
+    "@uniora/server": "workspace:^",
     "@uniora/sqlite": "workspace:^",
     "@uniora/studio": "workspace:^",
     "better-sqlite3": "^13.0.3",

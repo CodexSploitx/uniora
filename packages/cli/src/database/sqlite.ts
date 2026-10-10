@@ -3,6 +3,7 @@ import type { Database } from "better-sqlite3";
 import { bootstrapPlatform } from "@uniora/core";
 import {
   applyMigrations,
+  createSqliteApiCredentialStorage,
   createSqlitePlatformStorage,
   createSqliteStorage,
   getMigrationStatus,
@@ -150,6 +151,9 @@ export function createSqliteDriver(url: string, cwd: string, intent: DatabaseInt
       const { role, member } = await bootstrapPlatform({ platform: createSqlitePlatformStorage(requireDatabase()), admin, actor });
       return { memberId: member.id, roleId: role.id };
     },
+
+    apiCredentials: () => createSqliteApiCredentialStorage(requireDatabase()),
+    storage: () => createSqliteStorage(requireDatabase()),
 
     async close() {
       db?.close();
