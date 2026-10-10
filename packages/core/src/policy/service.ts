@@ -53,6 +53,8 @@ export interface SimulatePolicyInput extends PolicyActor {
   resource?: AuthorizeInput["resource"];
   /** The `context.*` signals to pretend the request had (see `AuthorizeInput.context`). */
   context?: AuthorizeInput["context"];
+  /** How the person authenticated to pretend they did (see `AuthorizeInput.session`), to test `sensitive` policies. */
+  session?: AuthorizeInput["session"];
   /** The moment to pretend the question is asked at, for `environment.*` ("what happens on Saturday at 22:00?"). Defaults to now. */
   at?: Date;
   requireApplicablePolicy?: boolean;
@@ -278,7 +280,7 @@ export function createPolicyService(options: PolicyServiceOptions): PolicyServic
         };
         // A simulation is not a decision anybody acts on: no `onDecision`, no cache.
         const simulator = createAuthorizationEngine(view, { ...options.engine, onDecision: undefined, policies: { ...options.engine?.policies, cache: false, ...(question.at !== undefined ? { now: () => question.at as Date } : {}) } });
-        const { organizationId, identity, permission, teamId, resource, context, requireApplicablePolicy } = question;
+        const { organizationId, identity, permission, teamId, resource, context, session, requireApplicablePolicy } = question;
         return simulator.authorize({
           organizationId,
           identity,
@@ -286,6 +288,7 @@ export function createPolicyService(options: PolicyServiceOptions): PolicyServic
           ...(teamId !== undefined ? { teamId } : {}),
           ...(resource !== undefined ? { resource } : {}),
           ...(context !== undefined ? { context } : {}),
+          ...(session !== undefined ? { session } : {}),
           ...(requireApplicablePolicy !== undefined ? { requireApplicablePolicy } : {}),
         });
       }),

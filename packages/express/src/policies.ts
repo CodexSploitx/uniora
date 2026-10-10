@@ -66,6 +66,8 @@ export interface ResourceAuthorizationContext {
   resource?: AuthorizeInput["resource"];
   /** Signals your server verified about the circumstances of the request (`contextual` policies read them as `context.<name>`). Never copy them from the request. */
   context?: AuthorizeInput["context"];
+  /** How the person authenticated, from YOUR verified session or token (`sensitive` policies read it as `session.*`). Never copy it from the request. */
+  session?: AuthorizeInput["session"];
   /** Evaluate the caller's rights inside this team (see `engine.can`). */
   teamId?: string;
   /** Turn "no policy applies" into a refusal for this route. */

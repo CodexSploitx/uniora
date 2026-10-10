@@ -400,9 +400,11 @@ export type {
   Scalar,
 } from "./policy/types.js";
 export { ATTRIBUTE_TYPES, COMPARISONS, POLICY_EFFECTS, POLICY_KINDS, POLICY_STATUSES, RESERVED_POLICY_KINDS } from "./policy/types.js";
-export { ENVIRONMENT_ATTRIBUTES, PROTECTED_PERMISSION_PREFIX, RESOURCE_ATTRIBUTES, SUBJECT_ATTRIBUTES, isProtectedPermission } from "./policy/attributes.js";
-export type { EnvironmentAttributeName, SubjectAttributeName } from "./policy/attributes.js";
+export { ENVIRONMENT_ATTRIBUTES, PROTECTED_PERMISSION_PREFIX, RESOURCE_ATTRIBUTES, SESSION_ATTRIBUTES, SUBJECT_ATTRIBUTES, isProtectedPermission } from "./policy/attributes.js";
+export type { EnvironmentAttributeName, SessionAttributeName, SubjectAttributeName } from "./policy/attributes.js";
 export { DEFAULT_POLICY_TIMEZONE, environmentAt, isValidTimezone } from "./policy/environment.js";
+export type { AuthorizeSession } from "./policy/session.js";
+export { MAX_ASSURANCE_LEVEL, MAX_CLOCK_SKEW_MS, MAX_SESSION_METHODS } from "./policy/session.js";
 export type { ParsedPolicyDefinition, PolicyAnalysis } from "./policy/definition.js";
 export {
   MAX_CONDITION_CHILDREN,

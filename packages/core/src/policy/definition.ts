@@ -6,10 +6,12 @@ import {
   ENVIRONMENT_ATTRIBUTES,
   RESERVED_NAMESPACES,
   RESOURCE_ATTRIBUTES,
+  SESSION_ATTRIBUTES,
   SUBJECT_ATTRIBUTES,
   isBuiltinResourceAttribute,
   isEnvironmentAttribute,
   isProtectedPermission,
+  isSessionAttribute,
   isSubjectAttribute,
 } from "./attributes.js";
 import { DEFAULT_POLICY_TIMEZONE, isValidTimezone } from "./environment.js";
@@ -55,6 +57,8 @@ export interface PolicyAnalysis {
   environmentRefs: string[];
   /** The `context.*` signals the condition reads. */
   contextRefs: string[];
+  /** The `session.*` attributes (how the person authenticated) the condition reads. */
+  sessionRefs: string[];
   nodes: number;
   depth: number;
 }
@@ -235,6 +239,7 @@ interface ParseState {
   resourceRefs: Set<string>;
   environmentRefs: Set<string>;
   contextRefs: Set<string>;
+  sessionRefs: Set<string>;
 }
 
 function refType(ref: string, state: ParseState, path: string): AttributeType {
@@ -246,6 +251,11 @@ function refType(ref: string, state: ParseState, path: string): AttributeType {
     if (!isEnvironmentAttribute(ref)) bad(`${path}: unknown environment attribute "${ref.slice(0, 60)}". Use ${Object.keys(ENVIRONMENT_ATTRIBUTES).join(", ")}.`);
     state.environmentRefs.add(ref);
     return ENVIRONMENT_ATTRIBUTES[ref as keyof typeof ENVIRONMENT_ATTRIBUTES];
+  }
+  if (namespace === "session") {
+    if (!isSessionAttribute(ref)) bad(`${path}: unknown session attribute "${ref.slice(0, 60)}". Use ${Object.keys(SESSION_ATTRIBUTES).join(", ")}.`);
+    state.sessionRefs.add(ref);
+    return SESSION_ATTRIBUTES[ref as keyof typeof SESSION_ATTRIBUTES];
   }
   if (namespace === "context") {
     state.contextRefs.add(ref);
@@ -269,7 +279,7 @@ function refType(ref: string, state: ParseState, path: string): AttributeType {
     if (declared === undefined) bad(`${path}: ${ref} is not declared in "attributes".`);
     return declared!;
   }
-  return bad(`${path}: unknown attribute "${ref.slice(0, 60)}". Use subject.*, resource.*, environment.* or context.*.`);
+  return bad(`${path}: unknown attribute "${ref.slice(0, 60)}". Use subject.*, resource.*, environment.*, context.* or session.*.`);
 }
 
 function parseOperand(value: unknown, state: ParseState, path: string): { operand: Operand; type: AttributeType } {
@@ -422,6 +432,7 @@ export function parsePolicyDefinition(input: unknown): ParsedPolicyDefinition {
     resourceRefs: new Set(),
     environmentRefs: new Set(),
     contextRefs: new Set(),
+    sessionRefs: new Set(),
   };
   const condition = parseCondition(root.condition, state, 1, "condition");
   if (state.features.size + state.permissions.size > MAX_POLICY_FACT_LOOKUPS) {
@@ -458,6 +469,7 @@ export function parsePolicyDefinition(input: unknown): ParsedPolicyDefinition {
       resourceRefs: [...state.resourceRefs].sort(),
       environmentRefs: [...state.environmentRefs].sort(),
       contextRefs: [...state.contextRefs].sort(),
+      sessionRefs: [...state.sessionRefs].sort(),
       nodes: state.nodes,
       depth: state.maxDepth,
     },
@@ -469,6 +481,9 @@ function checkKind(kind: PolicyKind, resourceType: string | undefined, state: Pa
   if (kind !== "contextual" && (state.environmentRefs.size > 0 || state.contextRefs.size > 0)) {
     bad(`A "${kind}" policy does not read the time or the request context (environment.*, context.*); use a "contextual" policy for that.`);
   }
+  if (kind !== "sensitive" && state.sessionRefs.size > 0) {
+    bad(`A "${kind}" policy does not read how the person authenticated (session.*); use a "sensitive" policy for that.`);
+  }
   switch (kind) {
     case "resource":
       if (resourceType === undefined) bad('A "resource" policy needs a resourceType.');
@@ -479,6 +494,9 @@ function checkKind(kind: PolicyKind, resourceType: string | undefined, state: Pa
       break;
     case "feature":
       if (state.features.size === 0) bad('A "feature" policy must ask for at least one feature.');
+      break;
+    case "sensitive":
+      if (state.sessionRefs.size === 0) bad('A "sensitive" policy must read at least one session.* attribute.');
       break;
     case "contextual":
       if (state.environmentRefs.size + state.contextRefs.size === 0) bad('A "contextual" policy must read at least one environment.* attribute or one context.* signal.');

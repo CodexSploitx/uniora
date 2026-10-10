@@ -5,6 +5,8 @@ import { MAX_SUBJECT_TEAMS } from "../team/repository.js";
 import { isProtectedPermission } from "./attributes.js";
 import type { SubjectAttributeName } from "./attributes.js";
 import { actionMatches, parsePolicyDefinition } from "./definition.js";
+import { readSession } from "./session.js";
+import type { AuthorizeSession } from "./session.js";
 import type { PolicyAnalysis } from "./definition.js";
 import {
   MAX_ACTIVE_POLICIES,
@@ -47,6 +49,11 @@ export interface AuthorizeInput {
    * indeterminate, which refuses. The time is not a signal: the engine reads its own clock (`environment.*`).
    */
   context?: Readonly<Record<string, unknown>>;
+  /**
+   * How the person authenticated, as YOUR server's authentication states it (see `AuthorizeSession`), read by `sensitive` policies as
+   * `session.*`. Never build it from what the browser sent. What is missing makes the policies that need it indeterminate.
+   */
+  session?: AuthorizeSession;
   /** A protected operation: with no applicable policy the answer is deny (`no_applicable_policy`). */
   requireApplicablePolicy?: boolean;
 }
@@ -86,6 +93,12 @@ export interface AuthorizationResult {
   via?: "membership" | "support_grant";
   /** The policy-set revision the decision used; `null` when no policy was consulted. Key any cache of decisions on it. */
   policyRevision: number | null;
+  /**
+   * Present when the refusal comes ONLY from `sensitive` policies that stronger or fresher authentication could satisfy: your sign-in
+   * flow can ask the person to re-authenticate and then ask again. It is a hint (the answer can still be no after the step-up), it
+   * names the policies, and it never exists on an allow. Send the person to your step-up flow; do not echo the policy keys to them.
+   */
+  stepUp?: { policyKeys: string[] };
   /** Every policy that applied, with the revision and hash it was at and what it said. Empty when none applied. */
   policies: PolicyOutcome[];
   evaluatedAt: Date;
@@ -140,6 +153,19 @@ const MAX_CACHED_ORGANIZATIONS = 1000;
 const MAX_FACT_LOOKUPS_PER_DECISION = 64;
 const RESOURCE_TYPE_PATTERN = /^[a-z][a-z0-9_.-]{0,63}$/;
 const ATTRIBUTE_NAME_PATTERN = /^[a-z][A-Za-z0-9_]{0,63}$/;
+
+/**
+ * Whether every policy that did not allow is a `sensitive` one that a fresher or stronger authentication could satisfy. One policy
+ * of another kind, a policy that failed for any other reason (a budget, a stored definition that no longer validates) or a
+ * sensitive policy that is indeterminate for a reason unrelated to the session means more authentication cannot be the whole answer.
+ */
+function stepUpFor(outcomes: readonly PolicyOutcome[]): { policyKeys: string[] } | undefined {
+  const failing = outcomes.filter((outcome) => outcome.result !== "allow");
+  if (failing.length === 0) return undefined;
+  const steppable = (outcome: PolicyOutcome): boolean =>
+    outcome.kind === "sensitive" && (outcome.result === "deny" || (outcome.result === "indeterminate" && outcome.reason === "session_unavailable"));
+  return failing.every(steppable) ? { policyKeys: failing.map((outcome) => outcome.key) } : undefined;
+}
 
 /** Only the named own properties, so the evaluator never sees more than the policies declared. */
 function pick(values: Record<string, unknown>, names: readonly string[]): Record<string, unknown> {
@@ -395,6 +421,13 @@ export function createPolicyDecider(deps: DeciderDeps): PolicyDecider {
       if (context === undefined) return finish("deny", "malformed_input");
     }
 
+    const clock = clockFact();
+    let session: ReturnType<typeof readSession>;
+    if (input.session !== undefined) {
+      session = readSession(input.session, clock.now);
+      if (session === undefined) return finish("deny", "malformed_input");
+    }
+
     const request = { permission: input.permission, ...(resource?.ok ? { resourceType: resource.facts.type } : {}) };
     const valid = set.compiled.filter((entry): entry is Extract<Compiled, { valid: true }> => entry.valid);
     const broken = set.compiled.filter((entry): entry is Extract<Compiled, { valid: false }> => !entry.valid);
@@ -413,7 +446,8 @@ export function createPolicyDecider(deps: DeciderDeps): PolicyDecider {
             },
           }
         : {}),
-      ...(needs.environment ? clockFact() : {}),
+      ...(needs.environment || needs.session ? clock : {}),
+      ...(needs.session && session !== undefined ? { session } : {}),
       ...(context !== undefined && needs.context.length > 0 ? { context: pick(context, needs.context) } : {}),
       ...(await lookups(input, needs)),
     };
@@ -451,7 +485,8 @@ export function createPolicyDecider(deps: DeciderDeps): PolicyDecider {
     }
     const decision = combineVerdicts(outcomes.map((outcome) => outcome.result));
     const reason: AuthorizationReason = decision === "allow" ? "allowed" : decision === "deny" ? "policy_denied" : "policy_indeterminate";
-    return finish(decision, reason, { ...(via ? { via } : {}), policyRevision: set.revision, policies: outcomes });
+    const stepUp = stepUpFor(outcomes);
+    return finish(decision, reason, { ...(via ? { via } : {}), policyRevision: set.revision, policies: outcomes, ...(stepUp ? { stepUp } : {}) });
   }
 
   return {

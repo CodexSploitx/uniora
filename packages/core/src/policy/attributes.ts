@@ -62,10 +62,34 @@ export const ENVIRONMENT_ATTRIBUTES = {
 export type EnvironmentAttributeName = keyof typeof ENVIRONMENT_ATTRIBUTES;
 
 /**
+ * How strongly the person authenticated, as YOUR server's authentication states it in `authorize({ session })`. UNIORA does not
+ * authenticate anybody and cannot verify these: it computes the ages from its own clock and checks the policies against them.
+ * `sensitive` policies read these, and no other kind may.
+ */
+export const SESSION_ATTRIBUTES = {
+  /** Whole seconds since the person last proved who they are (`session.authenticatedAt`). Unknown when the host did not say. */
+  "session.authAgeSeconds": "number",
+  /** Whole seconds since the session started (`session.startedAt`). */
+  "session.ageSeconds": "number",
+  /** Whether a second factor was used in the authentication. */
+  "session.mfa": "boolean",
+  /** The assurance level your authentication reports (0 or more; the meaning of each number is yours: document it in your policies' names). */
+  "session.assuranceLevel": "number",
+  /** The authentication methods used, as your provider names them (`pwd`, `otp`, `webauthn`...). */
+  "session.methods": "string[]",
+} as const satisfies Record<string, AttributeType>;
+
+export type SessionAttributeName = keyof typeof SESSION_ATTRIBUTES;
+
+export function isSessionAttribute(ref: string): ref is SessionAttributeName {
+  return Object.hasOwn(SESSION_ATTRIBUTES, ref);
+}
+
+/**
  * Namespaces reserved for later phases: a definition that uses one is refused. `context.*` is not here: it holds the signals a
  * policy declares in its `context` field and your server supplies (see `AuthorizeInput.context`).
  */
-export const RESERVED_NAMESPACES = ["request", "session"] as const;
+export const RESERVED_NAMESPACES = ["request"] as const;
 
 export function isEnvironmentAttribute(ref: string): ref is EnvironmentAttributeName {
   return Object.hasOwn(ENVIRONMENT_ATTRIBUTES, ref);

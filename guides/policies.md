@@ -50,7 +50,7 @@ anybody out of fixing the rules.
 
 ```jsonc
 {
-  "kind": "scope",                    // access | resource | scope | feature | contextual  (sensitive: designed, not available yet)
+  "kind": "scope",                    // access | resource | scope | feature | contextual | sensitive
   "effect": "require",                // deny | require
   "actions": ["vehicles.update", "vehicles.read"],   // permission keys, "vehicles.*" prefixes, or "*"
   "resourceType": "vehicle",          // the policy applies to resources of this type
@@ -85,7 +85,7 @@ anybody out of fixing the rules.
   unknown; `any` with a true member is true; `not unknown` is unknown. An unknown condition makes the policy indeterminate.
 - **Kinds are checked, not just labels.** `resource` must read a declared resource attribute; `scope` must compare something about the
   person with something about the resource; `feature` must ask for a feature; `access` does not read the resource's state;
-  `contextual` must read the time or the request context, and no other kind may.
+  `contextual` must read the time or the request context, and `sensitive` must read how the person authenticated; no other kind may read either.
 - **Limits:** at most 32 actions, 32 attributes, 64 condition nodes (operands count), depth 8, 16 children per `all`/`any`, 16
   feature/permission lookups, literals of 256 characters or 100 items, 16 KB per definition, 200 active policies per organization,
   and a budget of 20,000 evaluation steps per decision. Unknown fields are errors.
@@ -102,7 +102,8 @@ anybody out of fixing the rules.
 | `feature`, `permission` | the storage and the engine, per request | UNIORA |
 | `environment.*` (`hour`, `dayOfWeek`...) | the engine's own clock, in the policy's `timezone`; the caller cannot supply it | UNIORA |
 | `context.<name>` | **your server code**, when it calls `authorize({ context })`, for the signals the policy declares | your server |
-| `request.*`, `session.*` | reserved for a later phase; refused today | n/a |
+| `session.*` (`authAgeSeconds`, `mfa`...) | **your server's authentication**, when it calls `authorize({ session })`; UNIORA computes the ages with its own clock | your server |
+| `request.*` | reserved for a later phase; refused today | n/a |
 
 Never build `resource` from what the client sent. Load the resource from your own database on the server and pass what you read; a
 policy is only as trustworthy as the facts it is given. A resource must carry its `organizationId`, which the engine compares with
@@ -185,6 +186,50 @@ service's `simulate` accepts `at` (an instant) and `context`, so you can ask "wh
 activating. Time zones come from the runtime's timezone database: keep Node's up to date, because two hosts with different database versions can
 disagree around a daylight-saving change.
 
+## Sensitive actions and step-up
+
+A `sensitive` policy protects an action by **how strongly the person authenticated**: "refunds need a sign-in from the last five minutes with a
+second factor", "deleting a key needs a hardware key". UNIORA does not authenticate anybody, so it cannot check any of this itself: your server
+states it from the verified session or token, and the policy decides on that. It complements your own step-up flow; it never replaces it.
+
+```ts
+const result = await engine.authorize({
+  identity, organizationId, permission: "payments.refund",
+  session: {
+    authenticatedAt: new Date(claims.auth_time * 1000),   // the LAST sign-in or step-up, as a Date (auth_time is in seconds)
+    mfa: claims.amr.includes("mfa"),
+    methods: claims.amr,                                    // up to 16 names: "pwd", "otp", "webauthn"...
+    assuranceLevel: 2,                                      // optional integer 0-100; what each number means is yours
+  },
+});
+if (result.stepUp) return redirectToReauthentication();     // see below
+if (!result.allowed) return forbidden();
+```
+
+```jsonc
+{
+  "kind": "sensitive", "effect": "require", "actions": ["payments.refund"],
+  "condition": { "all": [
+    { "lte": [{ "ref": "session.authAgeSeconds" }, { "value": 300 }] },
+    { "eq":  [{ "ref": "session.mfa" },            { "value": true }] }
+  ] },
+  "denyReason": "step_up_required"
+}
+```
+
+- **Attributes** (`session.*`): `authAgeSeconds` (since `authenticatedAt`), `ageSeconds` (since `startedAt`), `mfa`, `assuranceLevel`, `methods`.
+  The ages are computed by the engine's clock, never taken from the host. A date more than a minute in the future is not believed (the
+  attribute is unknown); a little skew is tolerated.
+- **Missing is not strong.** If your server does not say something a policy needs, that policy is indeterminate (`session_unavailable`) and
+  the request is refused. A `session` that is not plain data (wrong types, unknown fields, a getter, text instead of a `Date`) is
+  `malformed_input`, a deny.
+- **`result.stepUp`** is present when the refusal comes **only** from sensitive policies that more recent or stronger authentication could
+  satisfy: `{ policyKeys: [...] }`. Send the person to your step-up flow, then ask again with the new `session`. It is a hint, not a promise
+  (the answer can still be no), it is absent when anything else also refuses, when the engine's clock failed, or for a policy that cannot be
+  evaluated; and the keys are for your logs, not for the end user. It never appears on an allow.
+- **Audit:** the decision record names the policies, their kind and the `stepUp` keys; it never contains the session values.
+- `simulate` takes a `session` too (in JSON, `authenticatedAt` and `startedAt` as ISO-8601 text).
+
 ## Lifecycle and versions
 
 `draft` → `active` ⇄ `disabled` → `retired` (terminal).
@@ -223,8 +268,6 @@ cached by UNIORA; if you cache them, key them on `policyRevision` plus whatever 
 
 ## Designed, not implemented (later phases)
 
-- **Sensitive-action policies.** The `sensitive` kind with requirements such as "recent re-authentication", fed by the host's
-  authentication through `environment.*`; they complement, never replace, the host's own step-up flow.
 - **Platform baseline policies** that apply to every organization, administered from the platform scope.
 
 ## Using it in your application
