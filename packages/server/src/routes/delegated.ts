@@ -34,3 +34,10 @@ export function runPolicy(ctx: RouteContext, command: string, organizationId: st
 export function requireInvitations(ctx: RouteContext): void {
   if (!ctx.delegated().invitations) throw errors.notImplemented("invitations_not_configured");
 }
+
+/** Sets the `ETag` of a resource that carries a `version`, and returns it as the handler's answer. */
+export function withEtag<T>(ctx: RouteContext, result: unknown): T {
+  const version = (result as { version?: unknown } | null)?.version;
+  if (typeof version === "number") ctx.setHeader("ETag", etag(version));
+  return result as T;
+}

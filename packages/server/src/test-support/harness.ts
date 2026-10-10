@@ -41,7 +41,7 @@ export function createBackend(name: BackendName): Backend {
 
 /** An organization "acme" with an owner, a viewer role with `reports.read` and two members, and one more organization "globex". */
 export async function seed(storage: UnioraStorage): Promise<void> {
-  for (const key of ["reports.read", "vehicles.delete", "members.roles.manage", "members.invite", "members.block", "members.remove", "roles.manage", "teams.manage"]) {
+  for (const key of ["reports.read", "vehicles.delete", "members.roles.manage", "members.invite", "members.block", "members.remove", "roles.manage", "teams.manage", "teams.members.add", "teams.members.remove", "teams.members.manage", "policies.read", "policies.manage", "policies.activate"]) {
     await storage.permissions.register({ key });
   }
   await createOrganizationWithOwner(storage, {
@@ -56,7 +56,7 @@ export async function seed(storage: UnioraStorage): Promise<void> {
     id: "role_manager",
     organizationId: "org_acme",
     name: "Manager",
-    permissionKeys: ["members.roles.manage", "members.invite", "members.block", "members.remove", "roles.manage", "reports.read"],
+    permissionKeys: ["members.roles.manage", "members.invite", "members.block", "members.remove", "roles.manage", "reports.read", "teams.manage", "teams.members.add", "teams.members.remove", "teams.members.manage", "policies.read", "policies.manage", "policies.activate"],
   });
   await storage.memberships.create({ id: "mem_mgr", organizationId: "org_acme", identity: { provider: "main", subject: "mgr" }, roleIds: ["role_manager"] });
   await storage.memberships.create({ id: "mem_ana", organizationId: "org_acme", identity: { provider: "main", subject: "ana" }, roleIds: ["role_viewer"] });

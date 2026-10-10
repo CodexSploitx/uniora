@@ -72,7 +72,7 @@ export function statusForCode(code: string): number {
   if (/_version_conflict$/.test(code)) return 412;
   if (/_forbidden$|_escalation$|_self_change$|_target_stronger$|_owner_protected$/.test(code)) return 403;
   if (/_rate_limited$|_cooldown$/.test(code)) return 429;
-  if (/_exists$|_taken$|_conflict$|^last_owner$|_in_use$|_busy$|_already_member$|_duplicate_pending$/.test(code)) return 409;
+  if (/_exists$|_taken$|_conflict$|^last_owner$|_in_use$|_busy$|_already_member$|_duplicate_pending$|_has_children$|_not_archived$|_archived$|_transition_invalid$/.test(code)) return 409;
   return 400;
 }
 

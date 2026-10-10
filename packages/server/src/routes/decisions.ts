@@ -4,6 +4,7 @@ import { errors } from "../errors.js";
 import { defineRoute } from "../route.js";
 import { s } from "../schema.js";
 import { IdentityInput, id, mapPool } from "./common.js";
+import { ContextInput, ResourceInput, SessionInput } from "./schemas.js";
 
 const permissionKey = (description: string) => s.string({ min: 1, max: 200, description, example: "vehicles.delete" });
 const featureKey = (description: string) => s.string({ min: 1, max: 200, description, example: "advanced_reports" });
@@ -132,43 +133,9 @@ export const decisionRoutes = [
       organizationId: id("The organization the question is about.", "org_acme"),
       permission: permissionKey("The permission the identity needs."),
       teamId,
-      resource: s.optional(
-        s.object(
-          {
-            type: s.string({ min: 1, max: 64, description: "What kind of resource (`vehicle`, `ticket`): policies are matched on it.", example: "vehicle" }),
-            id: id("The resource's id in your database.", "veh_42"),
-            organizationId: id("The organization the resource belongs to, as YOUR database says. A mismatch is `cross_tenant_resource`."),
-            teamIds: s.optional(s.array(id("A team the resource belongs to."), { max: 50 })),
-            attributes: s.optional(
-              s.record(s.json({ maxDepth: 2, maxNodes: 100, maxString: 500 }), {
-                maxKeys: 50,
-                keyPattern: /^[A-Za-z][A-Za-z0-9_.]{0,63}$/,
-                description: "The values of the attributes the policies declare (`status`, `ownerIdentity`...).",
-              }),
-            ),
-          },
-          { description: "The thing the question is about." },
-        ),
-      ),
-      context: s.optional(
-        s.record(s.json({ maxDepth: 2, maxNodes: 100, maxString: 500 }), {
-          maxKeys: 20,
-          keyPattern: /^[A-Za-z][A-Za-z0-9_]{0,63}$/,
-          description: "Signals about the request that your server verified (`{ \"ipCountry\": \"ES\" }`). Only the ones a policy declares are used.",
-        }),
-      ),
-      session: s.optional(
-        s.object(
-          {
-            authenticatedAt: s.optional(s.date({ description: "When the person last proved who they are (a sign-in or a step-up), NOT when the session began." })),
-            startedAt: s.optional(s.date({ description: "When the session began." })),
-            mfa: s.optional(s.bool({ description: "Whether a second factor was used." })),
-            assuranceLevel: s.optional(s.int({ min: 0, max: 100 })),
-            methods: s.optional(s.array(s.string({ min: 1, max: 64, pattern: /^[A-Za-z0-9_.:-]{1,64}$/ }), { max: 16 })),
-          },
-          { description: "How the person authenticated, as your server's authentication states it." },
-        ),
-      ),
+      resource: ResourceInput,
+      context: ContextInput,
+      session: SessionInput,
       requireApplicablePolicy: s.optional(s.bool({ description: "A protected operation: with no applicable policy the answer is deny." })),
     }),
     response: s.object({

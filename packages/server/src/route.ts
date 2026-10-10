@@ -110,7 +110,6 @@ export function defineRoute<Pa extends ObjectSchema | undefined = undefined, Q e
   if (!spec.path.startsWith("/v1/")) throw new Error(`Route ${spec.id}: paths live under /v1/.`);
   if (!spec.scope) throw new Error(`Route ${spec.id}: every route names exactly one scope.`);
   if (spec.method === "GET" && spec.body) throw new Error(`Route ${spec.id}: a GET has no body.`);
-  if (spec.delegated && spec.write === false) throw new Error(`Route ${spec.id}: a delegated route changes data.`);
   const names: string[] = [];
   const pattern = spec.path
     .split("/")
