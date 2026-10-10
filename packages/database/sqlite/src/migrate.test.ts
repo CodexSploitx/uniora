@@ -57,6 +57,88 @@ describe("migration ledger", () => {
     expect(() => db.exec("insert into uniora_roles (id, organization_id, name, name_normalized, key) values ('r6', 'o', 'x', 'ventas', 'e')")).toThrow(/UNIQUE/);
   });
 
+  it("0027 reconstruye las tablas de políticas sin perder datos, revisiones ni contadores, y deja los mismos índices y triggers", () => {
+    const migrations = listMigrations();
+    const index = migrations.findIndex((migration) => migration.id === "0027_policy_kinds");
+    for (const migration of migrations.slice(0, index)) db.exec(migration.sql);
+
+    const hash = (character: string) => character.repeat(64);
+    const definition = (kind: string, extra = "") => JSON.stringify({ kind, effect: "deny", actions: ["a.b"], condition: { feature: "x" } }).replace("}", `${extra}}`);
+    db.exec("insert into uniora_organizations (id, name, slug) values ('o1', 'O1', 'o1'), ('o2', 'O2', 'o2')");
+    db.exec("begin");
+    for (const [id, org, key] of [["p1", "o1", "uno"], ["p2", "o1", "dos"], ["p3", "o2", "tres"]] as const) {
+      db.prepare(
+        `insert into uniora_policies (id, organization_id, key, name, kind, effect, definition, definition_hash, created_at, created_by_provider, created_by_subject, updated_at)
+         values (?, ?, ?, ?, 'access', 'deny', ?, ?, '2026-01-01T00:00:00.000Z', 'sys', 'import', '2026-01-01T00:00:00.000Z')`,
+      ).run(id, org, key, key, definition("access"), hash("a"));
+      db.prepare(
+        `insert into uniora_policy_revisions (policy_id, organization_id, revision, definition, definition_hash, created_at, created_by_provider, created_by_subject)
+         values (?, ?, 1, ?, ?, '2026-01-01T00:00:00.000Z', 'sys', 'import')`,
+      ).run(id, org, definition("access"), hash("a"));
+    }
+    db.exec("commit");
+    // p1: activated, then edited to revision 2 (the live path through the triggers).
+    db.exec("update uniora_policies set status = 'active', version = 2, activated_at = '2026-01-02T00:00:00.000Z', updated_at = '2026-01-02T00:00:00.000Z' where id = 'p1'");
+    db.exec("begin");
+    db.prepare(
+      `insert into uniora_policy_revisions (policy_id, organization_id, revision, definition, definition_hash, created_at, created_by_provider, created_by_subject, note)
+       values ('p1', 'o1', 2, ?, ?, '2026-01-03T00:00:00.000Z', 'sys', 'import', 'second')`,
+    ).run(definition("access", ', "denyReason": "later"'), hash("b"));
+    db.prepare("update uniora_policies set revision = 2, definition = ?, definition_hash = ?, version = 3 where id = 'p1'").run(definition("access", ', "denyReason": "later"'), hash("b"));
+    db.exec("commit");
+
+    const snapshot = () => ({
+      policies: db.prepare("select * from uniora_policies order by id").all(),
+      revisions: db.prepare("select * from uniora_policy_revisions order by policy_id, revision").all(),
+      sets: db.prepare("select * from uniora_policy_set_revisions order by organization_id").all(),
+      counter: db.prepare("select * from uniora_policy_revision_counter").all(),
+    });
+    const objects = () =>
+      (db.prepare("select type, name, tbl_name, sql from sqlite_master where (name like 'uniora\\_polic%' escape '\\' or tbl_name like 'uniora\\_polic%' escape '\\') and name not like 'sqlite_%' order by type, name").all() as { type: string; name: string; tbl_name: string; sql: string }[]).map(
+        (row) => ({ ...row, sql: row.sql.replace(/\s+/g, " ").replace(", 'contextual', 'sensitive'", "").replace("create table if not exists", "create table").replace("create trigger if not exists", "create trigger").replace("create index if not exists", "create index") }),
+      );
+    const before = snapshot();
+    const objectsBefore = objects();
+    expect(before.policies).toHaveLength(3);
+    expect(before.revisions).toHaveLength(4);
+
+    // As the migrator runs it: one transaction (deferred foreign keys are checked at commit).
+    db.exec("begin immediate");
+    db.exec(migrations[index]!.sql);
+    db.exec("commit");
+
+    expect(snapshot()).toEqual(before);
+    expect(objects()).toEqual(objectsBefore);
+    expect(db.pragma("foreign_key_check")).toEqual([]);
+    expect(db.pragma("integrity_check")).toEqual([{ integrity_check: "ok" }]);
+
+    // The new kinds are accepted, an unknown one is not, and the lifecycle triggers still guard the new tables.
+    db.exec("begin");
+    db.prepare(
+      `insert into uniora_policies (id, organization_id, key, name, kind, effect, definition, definition_hash, created_at, created_by_provider, created_by_subject, updated_at)
+       values ('p4', 'o1', 'cuatro', 'cuatro', 'contextual', 'deny', ?, ?, '2026-01-01T00:00:00.000Z', 'sys', 'import', '2026-01-01T00:00:00.000Z')`,
+    ).run(definition("contextual"), hash("c"));
+    db.prepare(
+      `insert into uniora_policy_revisions (policy_id, organization_id, revision, definition, definition_hash, created_at, created_by_provider, created_by_subject)
+       values ('p4', 'o1', 1, ?, ?, '2026-01-01T00:00:00.000Z', 'sys', 'import')`,
+    ).run(definition("contextual"), hash("c"));
+    db.exec("commit");
+    expect(db.prepare("select kind from uniora_policies where id = 'p4'").get()).toEqual({ kind: "contextual" });
+    expect(() =>
+      db.exec(
+        `insert into uniora_policies (id, organization_id, key, name, kind, effect, definition, definition_hash, created_at, created_by_provider, created_by_subject, updated_at)
+         values ('p5', 'o1', 'cinco', 'cinco', 'magic', 'deny', '${definition("magic")}', '${hash("d")}', 'x', 'sys', 'import', 'x')`,
+      ),
+    ).toThrow(/CHECK/);
+    expect(() => db.exec("update uniora_policies set version = version + 2 where id = 'p3'")).toThrow(/policy_immutable/);
+    expect(() => db.exec("delete from uniora_policies where id = 'p1'")).toThrow(/policy_not_draft/);
+    expect(() => db.exec("update uniora_policy_revisions set note = 'x' where policy_id = 'p1'")).toThrow(/policy_immutable/);
+    // Deleting an organization still cascades through both tables.
+    db.exec("delete from uniora_organizations where id = 'o2'");
+    expect(db.prepare("select count(*) as n from uniora_policies where organization_id = 'o2'").get()).toEqual({ n: 0 });
+    expect(db.prepare("select count(*) as n from uniora_policy_revisions where organization_id = 'o2'").get()).toEqual({ n: 0 });
+  });
+
   it("status es de solo lectura: no crea nada en una base virgen y reporta todo pendiente", () => {
     const status = getMigrationStatus(db);
 

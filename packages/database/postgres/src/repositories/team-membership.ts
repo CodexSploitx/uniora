@@ -11,6 +11,7 @@ import type {
 import {
   TeamError,
   assertExpectedVersion,
+  assertResponsibilityFilter,
   assertTeamAuthorization,
   assertTeamMemberStatus,
   assertTeamResponsibility,
@@ -148,14 +149,16 @@ export function createTeamMembershipRepository(db: Queryable): TeamMembershipRep
   }
 
   return {
-    async activeTeamIds(organizationId: string, membershipId: string, options: { limit?: number } = {}) {
+    async activeTeamIds(organizationId: string, membershipId: string, options: { limit?: number; responsibilities?: readonly TeamResponsibility[] } = {}) {
       const limit = Math.min(Math.max(Math.trunc(options.limit ?? 1000), 1), 5000);
+      const responsibilities = assertResponsibilityFilter(options.responsibilities);
       const result = await db.query<{ team_id: string }>(
         `select tm.team_id from uniora.team_memberships tm
          join uniora.teams t on t.id = tm.team_id and t.organization_id = tm.organization_id
          where tm.organization_id = $1 and tm.membership_id = $2 and tm.status = 'active' and t.status = 'active'
+           and ($4::text[] is null or tm.responsibility = any($4::text[]))
          order by tm.team_id limit $3`,
-        [organizationId, membershipId, limit],
+        [organizationId, membershipId, limit, responsibilities ?? null],
       );
       return result.rows.map((row) => row.team_id);
     },

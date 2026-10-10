@@ -170,7 +170,7 @@ export interface PolicyRow {
   id: string;
   key: string;
   name: string;
-  kind: "access" | "resource" | "scope" | "feature";
+  kind: "access" | "resource" | "scope" | "feature" | "contextual" | "sensitive";
   effect: "deny" | "require";
   status: "draft" | "active" | "disabled" | "retired";
   revision: number;

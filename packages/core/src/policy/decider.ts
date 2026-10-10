@@ -5,12 +5,16 @@ import { MAX_SUBJECT_TEAMS } from "../team/repository.js";
 import { isProtectedPermission } from "./attributes.js";
 import type { SubjectAttributeName } from "./attributes.js";
 import { actionMatches, parsePolicyDefinition } from "./definition.js";
+import { readSession } from "./session.js";
+import type { AuthorizeSession } from "./session.js";
 import type { PolicyAnalysis } from "./definition.js";
 import {
   MAX_ACTIVE_POLICIES,
   MAX_EVALUATION_STEPS,
   MAX_RESOURCE_ATTRIBUTES,
   MAX_RESOURCE_LIST_ITEMS,
+  MAX_RESOURCE_PATH_IDS,
+  MAX_RESOURCE_PATH_TEAMS,
   combineVerdicts,
   evaluatePolicySet,
   requiredFacts,
@@ -38,6 +42,18 @@ export interface AuthorizeInput {
   /** The team context of the permission check, with the same meaning as `CanInput.teamId`. */
   teamId?: string;
   resource?: AuthorizeResource;
+  /**
+   * Signals about the circumstances of the request that YOUR server verified (`{ ipCountry: "ES", deviceManaged: true }`),
+   * read by `contextual` policies as `context.<name>`. Only the signals a policy declares are used. Never copy values from the
+   * end user's request: a user can put anything in a header or a body. A signal that is missing makes the policy that needs it
+   * indeterminate, which refuses. The time is not a signal: the engine reads its own clock (`environment.*`).
+   */
+  context?: Readonly<Record<string, unknown>>;
+  /**
+   * How the person authenticated, as YOUR server's authentication states it (see `AuthorizeSession`), read by `sensitive` policies as
+   * `session.*`. Never build it from what the browser sent. What is missing makes the policies that need it indeterminate.
+   */
+  session?: AuthorizeSession;
   /** A protected operation: with no applicable policy the answer is deny (`no_applicable_policy`). */
   requireApplicablePolicy?: boolean;
 }
@@ -77,6 +93,12 @@ export interface AuthorizationResult {
   via?: "membership" | "support_grant";
   /** The policy-set revision the decision used; `null` when no policy was consulted. Key any cache of decisions on it. */
   policyRevision: number | null;
+  /**
+   * Present when the refusal comes ONLY from `sensitive` policies that stronger or fresher authentication could satisfy: your sign-in
+   * flow can ask the person to re-authenticate and then ask again. It is a hint (the answer can still be no after the step-up), it
+   * names the policies, and it never exists on an allow. Send the person to your step-up flow; do not echo the policy keys to them.
+   */
+  stepUp?: { policyKeys: string[] };
   /** Every policy that applied, with the revision and hash it was at and what it said. Empty when none applied. */
   policies: PolicyOutcome[];
   evaluatedAt: Date;
@@ -87,6 +109,8 @@ export interface PolicyDeciderOptions {
   cache?: boolean;
   /** The evaluation step budget of one decision (default 20,000). */
   maxEvaluationSteps?: number;
+  /** The clock for `environment.*` (default `() => new Date()`). Only for tests and simulations; a clock that throws makes those policies indeterminate. */
+  now?: () => Date;
   /** Called with whatever made a decision `evaluation_error` (log it). Errors thrown by the hook are ignored. */
   onError?: (error: unknown) => void;
 }
@@ -130,12 +154,49 @@ const MAX_FACT_LOOKUPS_PER_DECISION = 64;
 const RESOURCE_TYPE_PATTERN = /^[a-z][a-z0-9_.-]{0,63}$/;
 const ATTRIBUTE_NAME_PATTERN = /^[a-z][A-Za-z0-9_]{0,63}$/;
 
+/**
+ * Whether every policy that did not allow is a `sensitive` one that a fresher or stronger authentication could satisfy. One policy
+ * of another kind, a policy that failed for any other reason (a budget, a stored definition that no longer validates) or a
+ * sensitive policy that is indeterminate for a reason unrelated to the session means more authentication cannot be the whole answer.
+ */
+function stepUpFor(outcomes: readonly PolicyOutcome[]): { policyKeys: string[] } | undefined {
+  const failing = outcomes.filter((outcome) => outcome.result !== "allow");
+  if (failing.length === 0) return undefined;
+  const steppable = (outcome: PolicyOutcome): boolean =>
+    outcome.kind === "sensitive" && (outcome.result === "deny" || (outcome.result === "indeterminate" && outcome.reason === "session_unavailable"));
+  return failing.every(steppable) ? { policyKeys: failing.map((outcome) => outcome.key) } : undefined;
+}
+
+/** Only the named own properties, so the evaluator never sees more than the policies declared. */
+function pick(values: Record<string, unknown>, names: readonly string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+  for (const name of names) if (Object.hasOwn(values, name)) out[name] = values[name];
+  return out;
+}
+
 const isText = (value: unknown, max: number): value is string => typeof value === "string" && value.length > 0 && value.length <= max;
 
 function isIdentity(value: unknown): value is Identity {
   if (typeof value !== "object" || value === null) return false;
   const { provider, subject } = value as Record<string, unknown>;
   return isText(provider, 500) && isText(subject, 500);
+}
+
+/** Copies host-supplied values into a plain object without calling any getter, or returns `undefined` when the shape is not acceptable. */
+function readValues(raw: unknown): Record<string, unknown> | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const names = Object.keys(raw);
+  if (names.length > MAX_RESOURCE_ATTRIBUTES) return undefined;
+  const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+  for (const name of names) {
+    if (!ATTRIBUTE_NAME_PATTERN.test(name)) return undefined;
+    const descriptor = Object.getOwnPropertyDescriptor(raw, name);
+    if (!descriptor || !("value" in descriptor)) return undefined;
+    const value = descriptor.value as unknown;
+    // Arrays are copied so the evaluator never sees a live object; everything else is a primitive or ignored as a mismatch later.
+    out[name] = Array.isArray(value) ? (value.length <= MAX_RESOURCE_LIST_ITEMS ? [...(value as unknown[])] : Symbol("too-long")) : value;
+  }
+  return out;
 }
 
 /** Reads the resource the host passed into plain data, without calling any getter, or reports why it cannot be used. */
@@ -158,21 +219,9 @@ function readResource(resource: unknown): { ok: true; facts: ResourceFacts & { t
     teamIds = [...(rawTeams as string[])];
   }
 
-  const attributes: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
   const rawAttributes = read("attributes");
-  if (rawAttributes !== undefined) {
-    if (typeof rawAttributes !== "object" || rawAttributes === null || Array.isArray(rawAttributes)) return { ok: false };
-    const names = Object.keys(rawAttributes);
-    if (names.length > MAX_RESOURCE_ATTRIBUTES) return { ok: false };
-    for (const name of names) {
-      if (!ATTRIBUTE_NAME_PATTERN.test(name)) return { ok: false };
-      const descriptor = Object.getOwnPropertyDescriptor(rawAttributes, name);
-      if (!descriptor || !("value" in descriptor)) return { ok: false };
-      const value = descriptor.value as unknown;
-      // Arrays are copied so the evaluator never sees a live object; everything else is a primitive or ignored as a mismatch later.
-      attributes[name] = Array.isArray(value) ? (value.length <= MAX_RESOURCE_LIST_ITEMS ? [...(value as unknown[])] : Symbol("too-long")) : value;
-    }
-  }
+  const attributes = rawAttributes === undefined ? (Object.create(null) as Record<string, unknown>) : readValues(rawAttributes);
+  if (attributes === undefined) return { ok: false };
   return { ok: true, facts: { type, id, organizationId, ...(teamIds !== undefined ? { teamIds } : {}), attributes } };
 }
 
@@ -249,6 +298,11 @@ export function createPolicyDecider(deps: DeciderDeps): PolicyDecider {
             subject[name] = roles.filter((role) => role.organizationId === organizationId).map((role) => role.key);
             break;
           }
+          case "subject.managedTeamIds": {
+            const ids = await storage.teamMemberships.activeTeamIds(organizationId, membership.id, { limit: MAX_SUBJECT_TEAMS + 1, responsibilities: ["owner", "manager"] });
+            if (ids.length <= MAX_SUBJECT_TEAMS) subject[name] = ids;
+            break;
+          }
           case "subject.teamIds": {
             const ids = await storage.teamMemberships.activeTeamIds(organizationId, membership.id, { limit: MAX_SUBJECT_TEAMS + 1 });
             // A member in more teams than we can list is not "in these teams only": leave it unknown.
@@ -261,6 +315,19 @@ export function createPolicyDecider(deps: DeciderDeps): PolicyDecider {
       }
     }
     return subject;
+  }
+
+  /** `teamIds` plus their ancestors, or `undefined` when it cannot be known (the policies that read it become indeterminate). */
+  async function teamPath(organizationId: string, teamIds: readonly string[] | undefined): Promise<string[] | undefined> {
+    if (teamIds === undefined) return undefined;
+    if (teamIds.length === 0) return [];
+    if (new Set(teamIds).size > MAX_RESOURCE_PATH_TEAMS) return undefined;
+    try {
+      const ids = await storage.teams.pathIds(organizationId, teamIds, { limit: MAX_RESOURCE_PATH_IDS + 1 });
+      return ids.length <= MAX_RESOURCE_PATH_IDS ? ids : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   async function lookups(input: AuthorizeInput, needs: { features: string[]; permissions: string[] }): Promise<Pick<EvaluationFacts, "features" | "permissions">> {
@@ -292,6 +359,16 @@ export function createPolicyDecider(deps: DeciderDeps): PolicyDecider {
       }),
     ]);
     return { features, permissions };
+  }
+
+  /** The instant of the decision for `environment.*`, or nothing when the clock cannot be read (those policies become indeterminate). */
+  function clockFact(): { now?: number } {
+    try {
+      const at = (deps.options?.now ?? (() => new Date()))().getTime();
+      return Number.isFinite(at) ? { now: at } : {};
+    } catch {
+      return {};
+    }
   }
 
   async function decide(input: AuthorizeInput, now: Date): Promise<AuthorizationResult> {
@@ -338,14 +415,40 @@ export function createPolicyDecider(deps: DeciderDeps): PolicyDecider {
     const set = await loadSet(input.organizationId);
     if (set.tooLarge) return finish("indeterminate", "policy_set_too_large", { ...(via ? { via } : {}), policyRevision: set.revision });
 
+    let context: Record<string, unknown> | undefined;
+    if (input.context !== undefined) {
+      context = readValues(input.context);
+      if (context === undefined) return finish("deny", "malformed_input");
+    }
+
+    const clock = clockFact();
+    let session: ReturnType<typeof readSession>;
+    if (input.session !== undefined) {
+      session = readSession(input.session, clock.now);
+      if (session === undefined) return finish("deny", "malformed_input");
+    }
+
     const request = { permission: input.permission, ...(resource?.ok ? { resourceType: resource.facts.type } : {}) };
     const valid = set.compiled.filter((entry): entry is Extract<Compiled, { valid: true }> => entry.valid);
     const broken = set.compiled.filter((entry): entry is Extract<Compiled, { valid: false }> => !entry.valid);
 
     const needs = requiredFacts(valid.map((entry) => ({ definition: entry.evaluable.definition, analysis: entry.analysis })), request);
+    const teamPathIds = resource?.ok && needs.resourceTeamPath ? await teamPath(input.organizationId, resource.facts.teamIds) : undefined;
     const facts: EvaluationFacts = {
       subject: await subjectFacts(base.membership, needs.subject, input.organizationId),
-      ...(resource?.ok ? { resource: { id: resource.facts.id, ...(resource.facts.teamIds !== undefined ? { teamIds: resource.facts.teamIds } : {}), attributes: resource.facts.attributes ?? {} } } : {}),
+      ...(resource?.ok
+        ? {
+            resource: {
+              id: resource.facts.id,
+              ...(resource.facts.teamIds !== undefined ? { teamIds: resource.facts.teamIds } : {}),
+              ...(teamPathIds !== undefined ? { teamPathIds } : {}),
+              attributes: resource.facts.attributes ?? {},
+            },
+          }
+        : {}),
+      ...(needs.environment || needs.session ? clock : {}),
+      ...(needs.session && session !== undefined ? { session } : {}),
+      ...(context !== undefined && needs.context.length > 0 ? { context: pick(context, needs.context) } : {}),
       ...(await lookups(input, needs)),
     };
 
@@ -382,7 +485,8 @@ export function createPolicyDecider(deps: DeciderDeps): PolicyDecider {
     }
     const decision = combineVerdicts(outcomes.map((outcome) => outcome.result));
     const reason: AuthorizationReason = decision === "allow" ? "allowed" : decision === "deny" ? "policy_denied" : "policy_indeterminate";
-    return finish(decision, reason, { ...(via ? { via } : {}), policyRevision: set.revision, policies: outcomes });
+    const stepUp = stepUpFor(outcomes);
+    return finish(decision, reason, { ...(via ? { via } : {}), policyRevision: set.revision, policies: outcomes, ...(stepUp ? { stepUp } : {}) });
   }
 
   return {

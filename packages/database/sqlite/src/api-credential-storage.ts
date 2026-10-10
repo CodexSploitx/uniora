@@ -6,7 +6,7 @@ import { createApiClientRepository, createApiKeyRepository } from "./repositorie
 
 /**
  * SQLite implementation of `ApiCredentialStorage` over a `better-sqlite3` connection you own: the API clients and keys of
- * migration 0027 and the audit log for the entries it writes. Run `applyMigrations(db)` first. SQLite has no per-table
+ * migration 0028 and the audit log for the entries it writes. Run `applyMigrations(db)` first. SQLite has no per-table
  * privileges, so for real separation open a second connection (or file) for it and keep it out of code that serves
  * organizations.
  */

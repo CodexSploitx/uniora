@@ -1,5 +1,5 @@
 /**
- * API credentials (same model as `@uniora/postgres`'s `0042_api_credentials`): who may call the UNIORA API server and with what
+ * API credentials (same model as `@uniora/postgres`'s `0043_api_credentials`): who may call the UNIORA API server and with what
  * power, kept in `uniora_api_*` tables that no organization table references. SQLite has no schemas or per-table grants: keep
  * the credential storage out of code that serves organizations, or open this file with a separate connection for it.
  *
@@ -9,7 +9,7 @@
  *   client are active at once; the repository decides that inside a `begin immediate` transaction, so nothing can slip
  *   past it. A key's id is the public part embedded in the key itself.
  */
-export const MIGRATION_0027_API_CREDENTIALS = `
+export const MIGRATION_0028_API_CREDENTIALS = `
 create table if not exists uniora_api_clients (
   id text primary key check (length(id) between 1 and 200),
   name text not null check (length(name) between 1 and 100),

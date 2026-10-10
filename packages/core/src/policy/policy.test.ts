@@ -115,7 +115,7 @@ describe("a policy only restricts", () => {
     const policy = await live(world, "p1", "vehicles.scope", scopeDefinition);
     const own = await ask(world);
     expect(own).toMatchObject({ decision: "allow", reason: "allowed" });
-    expect(own.policies).toEqual([{ policyId: "p1", key: "vehicles.scope", revision: 1, definitionHash: policy.definitionHash, effect: "require", result: "allow" }]);
+    expect(own.policies).toEqual([{ policyId: "p1", key: "vehicles.scope", kind: "scope", revision: 1, definitionHash: policy.definitionHash, effect: "require", result: "allow" }]);
     expect(own.policyRevision).toBeGreaterThan(0);
     const other = await ask(world, ana, vehicle({ teamIds: ["t-mad"] }));
     expect(other).toMatchObject({ decision: "deny", reason: "policy_denied" });

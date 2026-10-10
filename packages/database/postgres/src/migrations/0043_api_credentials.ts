@@ -11,7 +11,7 @@
  *   A key's id is the public part embedded in the key itself.
  * Every change is audited in `uniora.audit_logs` (global entries) in the same transaction, without any secret.
  */
-export const MIGRATION_0042_API_CREDENTIALS = `
+export const MIGRATION_0043_API_CREDENTIALS = `
 create schema if not exists uniora_api;
 
 create table if not exists uniora_api.clients (

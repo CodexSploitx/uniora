@@ -13,7 +13,7 @@ function scopeOf(db: Queryable, pool?: Pool): ApiCredentialTransaction {
 }
 
 /**
- * PostgreSQL implementation of `ApiCredentialStorage`: the API clients and keys of `uniora_api` (migration 0042), and the audit
+ * PostgreSQL implementation of `ApiCredentialStorage`: the API clients and keys of `uniora_api` (migration 0043), and the audit
  * log of `uniora` for the entries it writes. Build it over its OWN pool when you can (a database user that reaches
  * `uniora_api`, which the user that serves organizations should not). Run `applyMigrations(pool)` first.
  */

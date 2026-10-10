@@ -1,8 +1,10 @@
-import { RESOURCE_ATTRIBUTES, SUBJECT_ATTRIBUTES, isBuiltinResourceAttribute, isProtectedPermission, isSubjectAttribute } from "./attributes.js";
-import type { SubjectAttributeName } from "./attributes.js";
+import { RESOURCE_ATTRIBUTES, SESSION_ATTRIBUTES, SUBJECT_ATTRIBUTES, isBuiltinResourceAttribute, isEnvironmentAttribute, isProtectedPermission, isSessionAttribute, isSubjectAttribute } from "./attributes.js";
+import type { EnvironmentAttributeName, SubjectAttributeName } from "./attributes.js";
+import type { SessionFacts } from "./session.js";
 import { actionMatches } from "./definition.js";
+import { DEFAULT_POLICY_TIMEZONE, environmentAt } from "./environment.js";
 import type { PolicyAnalysis } from "./definition.js";
-import type { AttributeType, AttributeValue, Comparison, Condition, Operand, PolicyDefinition, PolicyEffect } from "./types.js";
+import type { AttributeType, AttributeValue, Comparison, Condition, Operand, PolicyDefinition, PolicyEffect, PolicyKind } from "./types.js";
 
 /** How much work one decision may do. A rule that needs more is "indeterminate", never silently skipped. */
 export const MAX_EVALUATION_STEPS = 20_000;
@@ -11,6 +13,10 @@ export const MAX_ACTIVE_POLICIES = 200;
 export const MAX_RESOURCE_ATTRIBUTES = 64;
 export const MAX_RESOURCE_VALUE_LENGTH = 1000;
 export const MAX_RESOURCE_LIST_ITEMS = 1000;
+/** Teams of a resource whose ancestors are expanded for `resource.teamPathIds`; a resource in more teams is "unknown". */
+export const MAX_RESOURCE_PATH_TEAMS = 50;
+/** The most ids `resource.teamPathIds` holds (50 teams at the deepest nesting is 400); beyond it the attribute is "unknown". */
+export const MAX_RESOURCE_PATH_IDS = 500;
 
 /** The three results of an evaluation. `indeterminate` is never turned into an allow. */
 export type Verdict = "allow" | "deny" | "indeterminate";
@@ -21,6 +27,9 @@ export type UnknownReason =
   | "attribute_missing"
   | "attribute_type_mismatch"
   | "subject_unavailable"
+  | "team_tree_unavailable"
+  | "environment_unavailable"
+  | "session_unavailable"
   | "feature_unavailable"
   | "permission_unavailable"
   | "budget_exceeded";
@@ -32,6 +41,8 @@ export interface ResourceFacts {
   id: string;
   /** Teams the resource belongs to. `[]` is a fact ("none"); leave it out when you do not know. */
   teamIds?: readonly string[];
+  /** `teamIds` plus their ancestors, filled in by the engine (never by the host) when a policy reads `resource.teamPathIds`. */
+  teamPathIds?: readonly string[];
   /** Values of the attributes the policies declare. Anything not declared by an applicable policy is ignored. */
   attributes?: Readonly<Record<string, unknown>>;
 }
@@ -42,6 +53,12 @@ export interface EvaluationFacts {
   resource?: ResourceFacts;
   features: ReadonlyMap<string, boolean | "unknown">;
   permissions: ReadonlyMap<string, boolean | "unknown">;
+  /** The instant of the decision in epoch milliseconds, from the engine's clock. Absent when the clock could not be read. */
+  now?: number;
+  /** The values of the `context` signals the host supplied. Anything not declared by an applicable policy is ignored. */
+  context?: Readonly<Record<string, unknown>>;
+  /** How the person authenticated, as the host's server stated it (ages already computed by the engine). Absent when it said nothing. */
+  session?: SessionFacts;
 }
 
 export interface PolicyRequest {
@@ -62,6 +79,8 @@ export interface EvaluablePolicy {
 export interface PolicyOutcome {
   policyId: string;
   key: string;
+  /** The kind of the policy; absent for a stored policy that no longer validates (nobody can tell what it was meant to do). */
+  kind?: PolicyKind;
   revision: number;
   definitionHash: string;
   effect: PolicyEffect;
@@ -109,6 +128,7 @@ type Resolved = { ok: true; value: AttributeValue } | { ok: false; reason: Unkno
 class Run {
   steps = 0;
   firstUnknown: UnknownReason | undefined;
+  private environment: Record<EnvironmentAttributeName, number> | null | undefined;
   constructor(
     readonly definition: PolicyDefinition,
     readonly facts: EvaluationFacts,
@@ -120,17 +140,53 @@ class Run {
     return "unknown";
   }
 
+  /** The clock in this policy's timezone, computed once per run; `null` when it cannot be read. */
+  private clock(): Record<EnvironmentAttributeName, number> | null {
+    if (this.environment === undefined) {
+      this.environment = this.facts.now === undefined ? null : environmentAt(this.facts.now, this.definition.timezone ?? DEFAULT_POLICY_TIMEZONE);
+    }
+    return this.environment;
+  }
+
   resolveRef(ref: string): Resolved {
     if (isSubjectAttribute(ref)) {
       const value = this.facts.subject[ref];
       if (value === undefined) return { ok: false, reason: "subject_unavailable" };
       return hasType(value, SUBJECT_ATTRIBUTES[ref]) ? { ok: true, value } : { ok: false, reason: "attribute_type_mismatch" };
     }
+    if (isEnvironmentAttribute(ref)) {
+      const clock = this.clock();
+      return clock === null ? { ok: false, reason: "environment_unavailable" } : { ok: true, value: clock[ref] };
+    }
+    if (isSessionAttribute(ref)) {
+      const value = this.facts.session?.[ref];
+      if (value === undefined) {
+        // An age that cannot be computed because the engine's clock failed is not something re-authenticating would fix.
+        const isAge = ref === "session.authAgeSeconds" || ref === "session.ageSeconds";
+        return { ok: false, reason: isAge && this.facts.now === undefined && this.facts.session !== undefined ? "environment_unavailable" : "session_unavailable" };
+      }
+      return hasType(value, SESSION_ATTRIBUTES[ref]) ? { ok: true, value } : { ok: false, reason: "attribute_type_mismatch" };
+    }
+    if (ref.startsWith("context.")) {
+      const name = ref.slice("context.".length);
+      const contextSignals = this.definition.context;
+      const declared = contextSignals !== undefined && Object.hasOwn(contextSignals, name) ? contextSignals[name] : undefined;
+      if (declared === undefined) return { ok: false, reason: "attribute_missing" };
+      const supplied = this.facts.context;
+      const raw = supplied !== undefined && Object.hasOwn(supplied, name) ? supplied[name] : undefined;
+      if (raw === undefined || raw === null) return { ok: true, absent: true, value: undefined };
+      return hasType(raw, declared) ? { ok: true, value: raw as AttributeValue } : { ok: false, reason: "attribute_type_mismatch" };
+    }
     const resource = this.facts.resource;
     if (resource === undefined) return { ok: false, reason: "resource_missing" };
     if (isBuiltinResourceAttribute(ref)) {
       const type = RESOURCE_ATTRIBUTES[ref as keyof typeof RESOURCE_ATTRIBUTES];
-      const value = ref === "resource.id" ? resource.id : resource.teamIds === undefined ? undefined : [...resource.teamIds];
+      let value: string | string[] | undefined;
+      if (ref === "resource.id") value = resource.id;
+      else if (ref === "resource.teamIds") value = resource.teamIds === undefined ? undefined : [...resource.teamIds];
+      else if (resource.teamIds === undefined) value = undefined;
+      else if (resource.teamPathIds === undefined) return { ok: false, reason: "team_tree_unavailable" };
+      else value = [...resource.teamPathIds];
       if (value === undefined) return { ok: true, absent: true, value: undefined };
       return hasType(value, type) ? { ok: true, value: value as AttributeValue } : { ok: false, reason: "attribute_type_mismatch" };
     }
@@ -252,7 +308,7 @@ class Run {
  */
 export function evaluatePolicy(policy: EvaluablePolicy, request: PolicyRequest, facts: EvaluationFacts, budget: { steps: number } = { steps: MAX_EVALUATION_STEPS }): PolicyOutcome | null {
   const { definition } = policy;
-  const base = { policyId: policy.id, key: policy.key, revision: policy.revision, definitionHash: policy.definitionHash, effect: definition.effect };
+  const base = { policyId: policy.id, key: policy.key, kind: definition.kind, revision: policy.revision, definitionHash: policy.definitionHash, effect: definition.effect };
   const applies = applicability(definition, request);
   if (applies === "no") return null;
   if (applies === "unknown") return { ...base, result: "indeterminate", reason: "resource_missing" };
@@ -302,6 +358,7 @@ export function evaluatePolicySet(
       ? ({
           policyId: policy.id,
           key: policy.key,
+          kind: policy.definition.kind,
           revision: policy.revision,
           definitionHash: policy.definitionHash,
           effect: policy.definition.effect,
@@ -327,6 +384,14 @@ export interface RequiredFacts {
   subject: SubjectAttributeName[];
   /** Whether any of them reads the resource. */
   resource: boolean;
+  /** Whether any of them reads `resource.teamPathIds`, which has to be derived from the team tree. */
+  resourceTeamPath: boolean;
+  /** Whether any of them reads `environment.*` (the clock). */
+  environment: boolean;
+  /** The `context.*` signals any of them reads, by name; the engine passes on only these. */
+  context: string[];
+  /** Whether any of them reads `session.*`. */
+  session: boolean;
 }
 
 export function requiredFacts(policies: ReadonlyArray<{ definition: PolicyDefinition; analysis: PolicyAnalysis }>, request: PolicyRequest): RequiredFacts {
@@ -334,12 +399,20 @@ export function requiredFacts(policies: ReadonlyArray<{ definition: PolicyDefini
   const permissions = new Set<string>();
   const subject = new Set<SubjectAttributeName>();
   let resource = false;
+  let resourceTeamPath = false;
+  let environment = false;
+  let session = false;
+  const context = new Set<string>();
   for (const { definition, analysis } of policies) {
     if (applicability(definition, request) !== "yes") continue;
     for (const feature of analysis.features) features.add(feature);
     for (const permission of analysis.permissions) permissions.add(permission);
     for (const ref of analysis.subjectRefs) subject.add(ref as SubjectAttributeName);
     if (analysis.resourceRefs.length > 0) resource = true;
+    if (analysis.resourceRefs.includes("resource.teamPathIds")) resourceTeamPath = true;
+    if (analysis.environmentRefs.length > 0) environment = true;
+    if (analysis.sessionRefs.length > 0) session = true;
+    for (const ref of analysis.contextRefs) context.add(ref.slice("context.".length));
   }
-  return { features: [...features].sort(), permissions: [...permissions].sort(), subject: [...subject].sort(), resource };
+  return { features: [...features].sort(), permissions: [...permissions].sort(), subject: [...subject].sort(), resource, resourceTeamPath, environment, context: [...context].sort(), session };
 }

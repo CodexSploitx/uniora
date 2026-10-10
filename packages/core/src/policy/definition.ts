@@ -3,13 +3,18 @@ import { canonicalJson } from "../shared/canonical-json.js";
 import { assertValidFeatureKey } from "../feature/key.js";
 import { assertValidPermissionKey } from "../permission/key.js";
 import {
+  ENVIRONMENT_ATTRIBUTES,
   RESERVED_NAMESPACES,
   RESOURCE_ATTRIBUTES,
+  SESSION_ATTRIBUTES,
   SUBJECT_ATTRIBUTES,
   isBuiltinResourceAttribute,
+  isEnvironmentAttribute,
   isProtectedPermission,
+  isSessionAttribute,
   isSubjectAttribute,
 } from "./attributes.js";
+import { DEFAULT_POLICY_TIMEZONE, isValidTimezone } from "./environment.js";
 import { PolicyError } from "./errors.js";
 import { ATTRIBUTE_TYPES, COMPARISONS, POLICY_EFFECTS, POLICY_KINDS, RESERVED_POLICY_KINDS } from "./types.js";
 import type { AttributeType, AttributeValue, Comparison, Condition, Operand, PolicyDefinition, PolicyEffect, PolicyKind } from "./types.js";
@@ -17,6 +22,7 @@ import type { AttributeType, AttributeValue, Comparison, Condition, Operand, Pol
 /** Hard limits of a definition. They bound the cost of evaluating it and the size of what is stored. */
 export const MAX_POLICY_ACTIONS = 32;
 export const MAX_POLICY_ATTRIBUTES = 32;
+export const MAX_POLICY_CONTEXT_SIGNALS = 16;
 export const MAX_CONDITION_NODES = 64;
 export const MAX_CONDITION_DEPTH = 8;
 export const MAX_CONDITION_CHILDREN = 16;
@@ -47,6 +53,12 @@ export interface PolicyAnalysis {
   permissions: string[];
   subjectRefs: string[];
   resourceRefs: string[];
+  /** The `environment.*` attributes (the clock) the condition reads. */
+  environmentRefs: string[];
+  /** The `context.*` signals the condition reads. */
+  contextRefs: string[];
+  /** The `session.*` attributes (how the person authenticated) the condition reads. */
+  sessionRefs: string[];
   nodes: number;
   depth: number;
 }
@@ -154,21 +166,44 @@ function parseActions(value: unknown): string[] {
 }
 
 function parseAttributes(value: unknown): Record<string, AttributeType> | undefined {
+  return parseDeclarations(value, "attributes", "attribute", MAX_POLICY_ATTRIBUTES, (name) => isBuiltinResourceAttribute(`resource.${name}`));
+}
+
+/** The request-context signals a policy reads. Built-in names do not exist in this namespace, so nothing is reserved. */
+function parseContext(value: unknown): Record<string, AttributeType> | undefined {
+  return parseDeclarations(value, "context", "context signal", MAX_POLICY_CONTEXT_SIGNALS, () => false);
+}
+
+function parseDeclarations(
+  value: unknown,
+  field: string,
+  noun: string,
+  max: number,
+  isBuiltin: (name: string) => boolean,
+): Record<string, AttributeType> | undefined {
   if (value === undefined) return undefined;
-  const object = asObject(value, "attributes", Object.keys(value as object));
+  const object = asObject(value, field, Object.keys(value as object));
   const names = Object.keys(object).sort();
-  if (names.length > MAX_POLICY_ATTRIBUTES) bad(`attributes can declare at most ${MAX_POLICY_ATTRIBUTES} entries.`);
+  if (names.length > max) bad(`${field} can declare at most ${max} entries.`);
   const out: Record<string, AttributeType> = {};
   for (const name of names) {
-    if (!ATTRIBUTE_NAME_PATTERN.test(name)) bad(`attribute name "${name.slice(0, 40)}" must start with a lowercase letter and use letters, digits and underscores (at most 64 characters).`);
-    if (isBuiltinResourceAttribute(`resource.${name}`)) bad(`attribute "${name}" is built in; it cannot be declared.`);
+    if (!ATTRIBUTE_NAME_PATTERN.test(name)) bad(`${noun} name "${name.slice(0, 40)}" must start with a lowercase letter and use letters, digits and underscores (at most 64 characters).`);
+    if (isBuiltin(name)) bad(`${noun} "${name}" is built in; it cannot be declared.`);
     const type = object[name];
     if (typeof type !== "string" || !(ATTRIBUTE_TYPES as readonly string[]).includes(type)) {
-      bad(`attribute "${name}" must have one of the types: ${ATTRIBUTE_TYPES.join(", ")}.`);
+      bad(`${noun} "${name}" must have one of the types: ${ATTRIBUTE_TYPES.join(", ")}.`);
     }
     out[name] = type as AttributeType;
   }
   return out;
+}
+
+function parseTimezone(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !isValidTimezone(value)) {
+    bad('timezone must be an IANA timezone name known to this runtime, for example "Europe/Madrid" or "UTC" (offsets such as "+02:00" do not follow daylight saving and are not accepted).');
+  }
+  return value === DEFAULT_POLICY_TIMEZONE ? undefined : (value as string);
 }
 
 function literalType(value: unknown, path: string): AttributeType {
@@ -196,17 +231,39 @@ interface ParseState {
   nodes: number;
   maxDepth: number;
   attributes: Record<string, AttributeType>;
+  context: Record<string, AttributeType>;
   hasResourceType: boolean;
   features: Set<string>;
   permissions: Set<string>;
   subjectRefs: Set<string>;
   resourceRefs: Set<string>;
+  environmentRefs: Set<string>;
+  contextRefs: Set<string>;
+  sessionRefs: Set<string>;
 }
 
 function refType(ref: string, state: ParseState, path: string): AttributeType {
   const namespace = ref.split(".", 1)[0] ?? "";
   if ((RESERVED_NAMESPACES as readonly string[]).includes(namespace)) {
-    bad(`${path}: "${namespace}.*" attributes are reserved for contextual policies, which are designed but not available yet.`);
+    bad(`${path}: "${namespace}.*" attributes are reserved for a later phase and are not available yet.`);
+  }
+  if (namespace === "environment") {
+    if (!isEnvironmentAttribute(ref)) bad(`${path}: unknown environment attribute "${ref.slice(0, 60)}". Use ${Object.keys(ENVIRONMENT_ATTRIBUTES).join(", ")}.`);
+    state.environmentRefs.add(ref);
+    return ENVIRONMENT_ATTRIBUTES[ref as keyof typeof ENVIRONMENT_ATTRIBUTES];
+  }
+  if (namespace === "session") {
+    if (!isSessionAttribute(ref)) bad(`${path}: unknown session attribute "${ref.slice(0, 60)}". Use ${Object.keys(SESSION_ATTRIBUTES).join(", ")}.`);
+    state.sessionRefs.add(ref);
+    return SESSION_ATTRIBUTES[ref as keyof typeof SESSION_ATTRIBUTES];
+  }
+  if (namespace === "context") {
+    state.contextRefs.add(ref);
+    const signal = ref.slice("context.".length);
+    // Own properties only, as for resource attributes.
+    const declared = Object.hasOwn(state.context, signal) ? state.context[signal] : undefined;
+    if (declared === undefined) bad(`${path}: ${ref} is not declared in "context".`);
+    return declared!;
   }
   if (isSubjectAttribute(ref)) {
     state.subjectRefs.add(ref);
@@ -222,7 +279,7 @@ function refType(ref: string, state: ParseState, path: string): AttributeType {
     if (declared === undefined) bad(`${path}: ${ref} is not declared in "attributes".`);
     return declared!;
   }
-  return bad(`${path}: unknown attribute "${ref.slice(0, 60)}". Use subject.* or resource.*.`);
+  return bad(`${path}: unknown attribute "${ref.slice(0, 60)}". Use subject.*, resource.*, environment.*, context.* or session.*.`);
 }
 
 function parseOperand(value: unknown, state: ParseState, path: string): { operand: Operand; type: AttributeType } {
@@ -330,7 +387,7 @@ function parseCondition(value: unknown, state: ParseState, depth: number, path: 
  */
 export function parsePolicyDefinition(input: unknown): ParsedPolicyDefinition {
   const plain = snapshot(input, { nodes: 0 }, 0, "definition");
-  const root = asObject(plain, "definition", ["kind", "effect", "actions", "resourceType", "attributes", "condition", "denyReason"], ["kind", "effect", "actions", "condition"]);
+  const root = asObject(plain, "definition", ["kind", "effect", "actions", "resourceType", "attributes", "context", "timezone", "condition", "denyReason"], ["kind", "effect", "actions", "condition"]);
 
   const kind = root.kind;
   if (typeof kind === "string" && (RESERVED_POLICY_KINDS as readonly string[]).includes(kind)) {
@@ -352,6 +409,8 @@ export function parsePolicyDefinition(input: unknown): ParsedPolicyDefinition {
   }
   const attributes = parseAttributes(root.attributes);
   if (attributes && Object.keys(attributes).length > 0 && resourceType === undefined) bad("Declaring resource attributes needs a resourceType.");
+  const context = parseContext(root.context);
+  const timezone = parseTimezone(root.timezone);
 
   let denyReason: string | undefined;
   if (root.denyReason !== undefined) {
@@ -365,11 +424,15 @@ export function parsePolicyDefinition(input: unknown): ParsedPolicyDefinition {
     nodes: 0,
     maxDepth: 0,
     attributes: attributes ?? {},
+    context: context ?? {},
     hasResourceType: resourceType !== undefined,
     features: new Set(),
     permissions: new Set(),
     subjectRefs: new Set(),
     resourceRefs: new Set(),
+    environmentRefs: new Set(),
+    contextRefs: new Set(),
+    sessionRefs: new Set(),
   };
   const condition = parseCondition(root.condition, state, 1, "condition");
   if (state.features.size + state.permissions.size > MAX_POLICY_FACT_LOOKUPS) {
@@ -377,6 +440,9 @@ export function parsePolicyDefinition(input: unknown): ParsedPolicyDefinition {
   }
   const declaredButUnused = Object.keys(attributes ?? {}).filter((name) => !state.resourceRefs.has(`resource.${name}`));
   if (declaredButUnused.length > 0) bad(`attribute "${declaredButUnused[0]}" is declared but the condition never reads it.`);
+  const signalUnused = Object.keys(context ?? {}).filter((name) => !state.contextRefs.has(`context.${name}`));
+  if (signalUnused.length > 0) bad(`context signal "${signalUnused[0]}" is declared but the condition never reads it.`);
+  if (root.timezone !== undefined && state.environmentRefs.size === 0) bad("A timezone only matters to environment.* attributes, and the condition reads none.");
 
   checkKind(kind as PolicyKind, resourceType, state);
 
@@ -386,6 +452,8 @@ export function parsePolicyDefinition(input: unknown): ParsedPolicyDefinition {
     actions,
     ...(resourceType !== undefined ? { resourceType } : {}),
     ...(attributes !== undefined && Object.keys(attributes).length > 0 ? { attributes } : {}),
+    ...(context !== undefined && Object.keys(context).length > 0 ? { context } : {}),
+    ...(timezone !== undefined ? { timezone } : {}),
     condition,
     ...(denyReason !== undefined ? { denyReason } : {}),
   };
@@ -399,6 +467,9 @@ export function parsePolicyDefinition(input: unknown): ParsedPolicyDefinition {
       permissions: [...state.permissions].sort(),
       subjectRefs: [...state.subjectRefs].sort(),
       resourceRefs: [...state.resourceRefs].sort(),
+      environmentRefs: [...state.environmentRefs].sort(),
+      contextRefs: [...state.contextRefs].sort(),
+      sessionRefs: [...state.sessionRefs].sort(),
       nodes: state.nodes,
       depth: state.maxDepth,
     },
@@ -407,6 +478,12 @@ export function parsePolicyDefinition(input: unknown): ParsedPolicyDefinition {
 
 /** A kind is a promise about what the definition looks at; a definition that breaks it is refused. */
 function checkKind(kind: PolicyKind, resourceType: string | undefined, state: ParseState): void {
+  if (kind !== "contextual" && (state.environmentRefs.size > 0 || state.contextRefs.size > 0)) {
+    bad(`A "${kind}" policy does not read the time or the request context (environment.*, context.*); use a "contextual" policy for that.`);
+  }
+  if (kind !== "sensitive" && state.sessionRefs.size > 0) {
+    bad(`A "${kind}" policy does not read how the person authenticated (session.*); use a "sensitive" policy for that.`);
+  }
   switch (kind) {
     case "resource":
       if (resourceType === undefined) bad('A "resource" policy needs a resourceType.');
@@ -417,6 +494,12 @@ function checkKind(kind: PolicyKind, resourceType: string | undefined, state: Pa
       break;
     case "feature":
       if (state.features.size === 0) bad('A "feature" policy must ask for at least one feature.');
+      break;
+    case "sensitive":
+      if (state.sessionRefs.size === 0) bad('A "sensitive" policy must read at least one session.* attribute.');
+      break;
+    case "contextual":
+      if (state.environmentRefs.size + state.contextRefs.size === 0) bad('A "contextual" policy must read at least one environment.* attribute or one context.* signal.');
       break;
     case "access":
       if ([...state.resourceRefs].some((ref) => !isBuiltinResourceAttribute(ref))) bad('An "access" policy does not read the state of the resource; use a "resource" policy for that.');

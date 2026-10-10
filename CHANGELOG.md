@@ -2,6 +2,28 @@
 
 All notable changes to UNIORA. Packages are released in lockstep, so one version number covers all of them. The format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## 0.9.0 - 2026-10-10
+
+Includes new migrations: Postgres `0042`, SQLite `0027` (run `uniora migrate`). The Postgres one only widens a CHECK on `policies.kind`. The SQLite one rebuilds the two policy tables (SQLite cannot change a CHECK): rows, revisions and revision counters are preserved, indexes and triggers are recreated as they were, and writes to those two small tables (at most 1000 policies per organization) wait for a moment. No other breaking change: policies that exist keep working, and code that does not pass `context` or `session` behaves as before.
+
+### Added
+
+- **Policies: team hierarchy.** `subject.managedTeamIds` (the active teams the person owns or manages) and `resource.teamPathIds` (the resource's teams plus all their ancestors, read from the team tree at decision time) let a policy say "a leader reaches everything below their team" with `intersects`. The tree is walked up from the resource by primary key (bounded depth, at most 50 teams per resource, 500 ids), so a regional manager with thousands of sub-teams costs the same as anyone; nothing is inherited unless a policy reads the attribute, roles are never inherited, and unknown (tree unreadable, too many teams) makes the policy indeterminate. `TeamRepository.pathIds` and the `responsibilities` filter of `activeTeamIds` are new repository methods, implemented in memory, SQLite and PostgreSQL and covered by conformance.
+- **Policies: contextual and temporal conditions.** The new `contextual` kind reads `environment.*` (`epochSeconds`, `year`, `month`, `dayOfMonth`, `dayOfWeek`, `hour`, `minuteOfDay`, `dateNumber`), the engine's own clock in the policy's IANA `timezone` (default `UTC`; daylight saving included; the caller cannot supply the time), and `context.<name>`, signals your server verified and declared in the policy's `context` field and passes in `authorize({ context })`. A missing clock or signal makes the policy indeterminate (refused). `PolicyDeciderOptions.now` fixes the clock in tests; `simulate` takes `at` and `context`. `isValidTimezone` and `environmentAt` are exported.
+- **Policies: sensitive actions and step-up.** The new `sensitive` kind reads `session.authAgeSeconds`, `session.ageSeconds`, `session.mfa`, `session.assuranceLevel` and `session.methods`, which your server's authentication states in `authorize({ session })` (ages are computed by the engine's clock; a date from the future beyond a minute is not believed). When the refusal comes only from sensitive policies that fresher or stronger authentication could satisfy, the result carries `stepUp: { policyKeys }` so your own sign-in flow can ask for more and then ask again (also recorded in the decision audit, never the session values). A malformed `session` or `context` is `malformed_input`. `simulate` takes `session` too.
+- Every policy outcome in a result now carries the policy `kind`.
+- Studio labels the two new kinds in English and Spanish.
+- Guide: `guides/policies.md` (hierarchies, time and context, sensitive actions).
+
+### Changed
+
+- `POLICY_KINDS` now lists `contextual` and `sensitive` and `RESERVED_POLICY_KINDS` is empty; the `session.*` and `context.*` namespaces are no longer reserved (only `request.*` is).
+- The PostgreSQL and SQLite schemas already accept the `sensitive` kind with this release's migrations, so no further migration is needed for it.
+
+### Fixed
+
+- Conformance: the near-instant suspension loop no longer fails on a slow machine when the end date passes before the write is validated (the refusal is the right answer; the test now expects it).
+
 ## 0.8.0 - 2026-10-10
 
 No migration. The access rules are opt-in: code that does not wrap its storage with `createGuardedStorage` or pass `access` to the invitation service behaves as before, apart from the small additions under "Changed".

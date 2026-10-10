@@ -377,7 +377,7 @@ describe("what a request needs", () => {
       ],
       request,
     );
-    expect(needs).toEqual({ features: ["fleet_pro"], permissions: ["vehicles.override"], subject: ["subject.teamIds"], resource: true });
+    expect(needs).toEqual({ features: ["fleet_pro"], permissions: ["vehicles.override"], subject: ["subject.teamIds"], resource: true, resourceTeamPath: false, environment: false, context: [], session: false });
   });
 });
 

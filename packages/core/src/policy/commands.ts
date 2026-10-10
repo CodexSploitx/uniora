@@ -37,7 +37,7 @@ export interface PolicyCommandContext {
   organizationId: string;
 }
 
-type Kind = "string" | "string?" | "string|null?" | "number?" | "object" | "object?" | "boolean?" | "identity" | "pageLimit?";
+type Kind = "string" | "string?" | "string|null?" | "number?" | "object" | "object?" | "boolean?" | "date?" | "identity" | "pageLimit?";
 type Shape = Record<string, Kind>;
 
 const SHAPES: Record<PolicyCommand, Shape> = {
@@ -56,6 +56,9 @@ const SHAPES: Record<PolicyCommand, Shape> = {
     permission: "string",
     teamId: "string?",
     resource: "object?",
+    context: "object?",
+    session: "object?",
+    at: "date?",
     requireApplicablePolicy: "boolean?",
     candidate: "object?",
   },
@@ -89,6 +92,12 @@ function check(name: string, kind: Kind, value: unknown): unknown {
     case "boolean":
       if (typeof value === "boolean") return value;
       break;
+    case "date": {
+      // An ISO-8601 instant as text; it becomes a Date, and anything that is not one is refused.
+      const at = typeof value === "string" && value.length <= 40 && ISO_INSTANT.test(value) ? new Date(value) : undefined;
+      if (at !== undefined && !Number.isNaN(at.getTime())) return at;
+      break;
+    }
     case "object":
       if (isPlainObject(value)) return value;
       break;
@@ -99,6 +108,21 @@ function check(name: string, kind: Kind, value: unknown): unknown {
       break;
   }
   throw bad(`"${name}" is not valid.`);
+}
+
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T[\d:.]+(Z|[+-]\d{2}:\d{2})$/;
+
+/** A `session` in JSON carries its two moments as ISO-8601 text; they become dates, and text that is not an instant is refused. Everything else is checked by the engine. */
+function sessionFromJson(value: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...value };
+  for (const field of ["authenticatedAt", "startedAt"]) {
+    if (!Object.hasOwn(value, field)) continue;
+    const text = value[field];
+    const at = typeof text === "string" && text.length <= 40 && ISO_INSTANT.test(text) ? new Date(text) : undefined;
+    if (at === undefined || Number.isNaN(at.getTime())) throw bad(`"session.${field}" must be an ISO-8601 instant.`);
+    out[field] = at;
+  }
+  return out;
 }
 
 /** Keeps only what the command declares and checks each field; an unknown field is an error, never silently passed on. */
@@ -158,9 +182,11 @@ export async function runPolicyCommand(service: PolicyService, command: string, 
     case "validatePolicy":
       result = await service.validate({ ...who, definition: input.definition });
       break;
-    case "simulate":
-      result = await service.simulate({ ...who, ...(input as object) } as Parameters<PolicyService["simulate"]>[0]);
+    case "simulate": {
+      const session = input.session === undefined ? undefined : sessionFromJson(input.session as Record<string, unknown>);
+      result = await service.simulate({ ...who, ...(input as object), ...(session !== undefined ? { session } : {}) } as Parameters<PolicyService["simulate"]>[0]);
       break;
+    }
   }
   return JSON.parse(JSON.stringify(result));
 }

@@ -51,6 +51,12 @@ export interface SimulatePolicyInput extends PolicyActor {
   permission: string;
   teamId?: string;
   resource?: AuthorizeInput["resource"];
+  /** The `context.*` signals to pretend the request had (see `AuthorizeInput.context`). */
+  context?: AuthorizeInput["context"];
+  /** How the person authenticated to pretend they did (see `AuthorizeInput.session`), to test `sensitive` policies. */
+  session?: AuthorizeInput["session"];
+  /** The moment to pretend the question is asked at, for `environment.*` ("what happens on Saturday at 22:00?"). Defaults to now. */
+  at?: Date;
   requireApplicablePolicy?: boolean;
   /**
    * Try a definition without saving it. With `policyId` it takes the place of that policy's definition (whatever its status,
@@ -273,14 +279,16 @@ export function createPolicyService(options: PolicyServiceOptions): PolicyServic
           transaction: options.storage.transaction.bind(options.storage),
         };
         // A simulation is not a decision anybody acts on: no `onDecision`, no cache.
-        const simulator = createAuthorizationEngine(view, { ...options.engine, onDecision: undefined, policies: { ...options.engine?.policies, cache: false } });
-        const { organizationId, identity, permission, teamId, resource, requireApplicablePolicy } = question;
+        const simulator = createAuthorizationEngine(view, { ...options.engine, onDecision: undefined, policies: { ...options.engine?.policies, cache: false, ...(question.at !== undefined ? { now: () => question.at as Date } : {}) } });
+        const { organizationId, identity, permission, teamId, resource, context, session, requireApplicablePolicy } = question;
         return simulator.authorize({
           organizationId,
           identity,
           permission,
           ...(teamId !== undefined ? { teamId } : {}),
           ...(resource !== undefined ? { resource } : {}),
+          ...(context !== undefined ? { context } : {}),
+          ...(session !== undefined ? { session } : {}),
           ...(requireApplicablePolicy !== undefined ? { requireApplicablePolicy } : {}),
         });
       }),

@@ -44,8 +44,10 @@ export function createPolicyDecisionAuditor(
           reason: result.reason,
           ...(result.via !== undefined ? { via: result.via } : {}),
           policyRevision: result.policyRevision,
+          ...(result.stepUp !== undefined ? { stepUp: { policyKeys: result.stepUp.policyKeys } } : {}),
           policies: result.policies.map((policy) => ({
             key: policy.key,
+            ...(policy.kind !== undefined ? { kind: policy.kind } : {}),
             revision: policy.revision,
             definitionHash: policy.definitionHash,
             result: policy.result,
