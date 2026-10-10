@@ -114,13 +114,12 @@ describe("parsePolicyDefinition: what is refused", () => {
   });
 
   it("refuses the kinds that are designed but not available, and unknown kinds", () => {
-    expect(message({ ...scope, kind: "contextual" })).toMatch(/not available yet/);
     expect(message({ ...scope, kind: "sensitive" })).toMatch(/not available yet/);
     expect(code({ ...scope, kind: "magic" })).toBe("policy_definition_invalid");
   });
 
-  it("refuses the reserved namespaces (time, request, session, context)", () => {
-    for (const ref of ["environment.now", "context.ip", "request.ip", "session.age"]) {
+  it("refuses the reserved namespaces (request, session)", () => {
+    for (const ref of ["request.ip", "session.age"]) {
       expect(message(withCondition({ eq: [{ ref }, { value: "x" }] }))).toMatch(/reserved/);
     }
   });

@@ -19,11 +19,13 @@ export type PolicyEffect = (typeof POLICY_EFFECTS)[number];
  * - `resource`: a condition on the state of the resource (needs a `resourceType`).
  * - `scope`: limits the resources a person reaches by comparing who they are with the resource (their teams with the resource's).
  * - `feature`: the action needs a Feature enabled for the organization.
+ * - `contextual`: depends on WHEN or in WHAT CIRCUMSTANCES the request happens (`environment.*`: the engine's clock in the policy's
+ *   timezone; `context.*`: signals your server verified and declares). It may also read the person and the resource.
  */
-export const POLICY_KINDS = ["access", "resource", "scope", "feature"] as const;
+export const POLICY_KINDS = ["access", "resource", "scope", "feature", "contextual"] as const;
 export type PolicyKind = (typeof POLICY_KINDS)[number];
 /** Designed, not implemented yet: a definition using one is refused with a clear message instead of being half-supported. */
-export const RESERVED_POLICY_KINDS = ["contextual", "sensitive"] as const;
+export const RESERVED_POLICY_KINDS = ["sensitive"] as const;
 
 /**
  * - `draft`: being written; never evaluated; can be deleted.
@@ -70,6 +72,13 @@ export interface PolicyDefinition {
   resourceType?: string;
   /** The resource attributes the condition reads, with their type: the policy states what it needs, and nothing else is read. */
   attributes?: Record<string, AttributeType>;
+  /**
+   * The request-context signals the condition reads as `context.<name>` (`ipCountry`, `deviceManaged`), with their type. Your
+   * server states them in `authorize({ context })` after verifying them; the end user's request never supplies them.
+   */
+  context?: Record<string, AttributeType>;
+  /** The IANA timezone (`Europe/Madrid`) in which `environment.hour`, `dayOfWeek`... are computed. Defaults to `UTC`. */
+  timezone?: string;
   condition: Condition;
   /** A short machine code returned when this policy denies (`vehicle_locked`). Defaults to `policy_denied`. */
   denyReason?: string;

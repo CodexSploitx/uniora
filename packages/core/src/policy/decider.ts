@@ -40,6 +40,13 @@ export interface AuthorizeInput {
   /** The team context of the permission check, with the same meaning as `CanInput.teamId`. */
   teamId?: string;
   resource?: AuthorizeResource;
+  /**
+   * Signals about the circumstances of the request that YOUR server verified (`{ ipCountry: "ES", deviceManaged: true }`),
+   * read by `contextual` policies as `context.<name>`. Only the signals a policy declares are used. Never copy values from the
+   * end user's request: a user can put anything in a header or a body. A signal that is missing makes the policy that needs it
+   * indeterminate, which refuses. The time is not a signal: the engine reads its own clock (`environment.*`).
+   */
+  context?: Readonly<Record<string, unknown>>;
   /** A protected operation: with no applicable policy the answer is deny (`no_applicable_policy`). */
   requireApplicablePolicy?: boolean;
 }
@@ -89,6 +96,8 @@ export interface PolicyDeciderOptions {
   cache?: boolean;
   /** The evaluation step budget of one decision (default 20,000). */
   maxEvaluationSteps?: number;
+  /** The clock for `environment.*` (default `() => new Date()`). Only for tests and simulations; a clock that throws makes those policies indeterminate. */
+  now?: () => Date;
   /** Called with whatever made a decision `evaluation_error` (log it). Errors thrown by the hook are ignored. */
   onError?: (error: unknown) => void;
 }
@@ -132,12 +141,36 @@ const MAX_FACT_LOOKUPS_PER_DECISION = 64;
 const RESOURCE_TYPE_PATTERN = /^[a-z][a-z0-9_.-]{0,63}$/;
 const ATTRIBUTE_NAME_PATTERN = /^[a-z][A-Za-z0-9_]{0,63}$/;
 
+/** Only the named own properties, so the evaluator never sees more than the policies declared. */
+function pick(values: Record<string, unknown>, names: readonly string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+  for (const name of names) if (Object.hasOwn(values, name)) out[name] = values[name];
+  return out;
+}
+
 const isText = (value: unknown, max: number): value is string => typeof value === "string" && value.length > 0 && value.length <= max;
 
 function isIdentity(value: unknown): value is Identity {
   if (typeof value !== "object" || value === null) return false;
   const { provider, subject } = value as Record<string, unknown>;
   return isText(provider, 500) && isText(subject, 500);
+}
+
+/** Copies host-supplied values into a plain object without calling any getter, or returns `undefined` when the shape is not acceptable. */
+function readValues(raw: unknown): Record<string, unknown> | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const names = Object.keys(raw);
+  if (names.length > MAX_RESOURCE_ATTRIBUTES) return undefined;
+  const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+  for (const name of names) {
+    if (!ATTRIBUTE_NAME_PATTERN.test(name)) return undefined;
+    const descriptor = Object.getOwnPropertyDescriptor(raw, name);
+    if (!descriptor || !("value" in descriptor)) return undefined;
+    const value = descriptor.value as unknown;
+    // Arrays are copied so the evaluator never sees a live object; everything else is a primitive or ignored as a mismatch later.
+    out[name] = Array.isArray(value) ? (value.length <= MAX_RESOURCE_LIST_ITEMS ? [...(value as unknown[])] : Symbol("too-long")) : value;
+  }
+  return out;
 }
 
 /** Reads the resource the host passed into plain data, without calling any getter, or reports why it cannot be used. */
@@ -160,21 +193,9 @@ function readResource(resource: unknown): { ok: true; facts: ResourceFacts & { t
     teamIds = [...(rawTeams as string[])];
   }
 
-  const attributes: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
   const rawAttributes = read("attributes");
-  if (rawAttributes !== undefined) {
-    if (typeof rawAttributes !== "object" || rawAttributes === null || Array.isArray(rawAttributes)) return { ok: false };
-    const names = Object.keys(rawAttributes);
-    if (names.length > MAX_RESOURCE_ATTRIBUTES) return { ok: false };
-    for (const name of names) {
-      if (!ATTRIBUTE_NAME_PATTERN.test(name)) return { ok: false };
-      const descriptor = Object.getOwnPropertyDescriptor(rawAttributes, name);
-      if (!descriptor || !("value" in descriptor)) return { ok: false };
-      const value = descriptor.value as unknown;
-      // Arrays are copied so the evaluator never sees a live object; everything else is a primitive or ignored as a mismatch later.
-      attributes[name] = Array.isArray(value) ? (value.length <= MAX_RESOURCE_LIST_ITEMS ? [...(value as unknown[])] : Symbol("too-long")) : value;
-    }
-  }
+  const attributes = rawAttributes === undefined ? (Object.create(null) as Record<string, unknown>) : readValues(rawAttributes);
+  if (attributes === undefined) return { ok: false };
   return { ok: true, facts: { type, id, organizationId, ...(teamIds !== undefined ? { teamIds } : {}), attributes } };
 }
 
@@ -314,6 +335,16 @@ export function createPolicyDecider(deps: DeciderDeps): PolicyDecider {
     return { features, permissions };
   }
 
+  /** The instant of the decision for `environment.*`, or nothing when the clock cannot be read (those policies become indeterminate). */
+  function clockFact(): { now?: number } {
+    try {
+      const at = (deps.options?.now ?? (() => new Date()))().getTime();
+      return Number.isFinite(at) ? { now: at } : {};
+    } catch {
+      return {};
+    }
+  }
+
   async function decide(input: AuthorizeInput, now: Date): Promise<AuthorizationResult> {
     const permission = typeof input.permission === "string" ? input.permission : "";
     const organizationId = typeof input.organizationId === "string" ? input.organizationId : "";
@@ -358,6 +389,12 @@ export function createPolicyDecider(deps: DeciderDeps): PolicyDecider {
     const set = await loadSet(input.organizationId);
     if (set.tooLarge) return finish("indeterminate", "policy_set_too_large", { ...(via ? { via } : {}), policyRevision: set.revision });
 
+    let context: Record<string, unknown> | undefined;
+    if (input.context !== undefined) {
+      context = readValues(input.context);
+      if (context === undefined) return finish("deny", "malformed_input");
+    }
+
     const request = { permission: input.permission, ...(resource?.ok ? { resourceType: resource.facts.type } : {}) };
     const valid = set.compiled.filter((entry): entry is Extract<Compiled, { valid: true }> => entry.valid);
     const broken = set.compiled.filter((entry): entry is Extract<Compiled, { valid: false }> => !entry.valid);
@@ -376,6 +413,8 @@ export function createPolicyDecider(deps: DeciderDeps): PolicyDecider {
             },
           }
         : {}),
+      ...(needs.environment ? clockFact() : {}),
+      ...(context !== undefined && needs.context.length > 0 ? { context: pick(context, needs.context) } : {}),
       ...(await lookups(input, needs)),
     };
 

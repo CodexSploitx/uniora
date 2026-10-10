@@ -50,7 +50,7 @@ anybody out of fixing the rules.
 
 ```jsonc
 {
-  "kind": "scope",                    // access | resource | scope | feature  (contextual, sensitive: designed, not available yet)
+  "kind": "scope",                    // access | resource | scope | feature | contextual  (sensitive: designed, not available yet)
   "effect": "require",                // deny | require
   "actions": ["vehicles.update", "vehicles.read"],   // permission keys, "vehicles.*" prefixes, or "*"
   "resourceType": "vehicle",          // the policy applies to resources of this type
@@ -84,7 +84,8 @@ anybody out of fixing the rules.
 - **Unknown (Kleene) logic:** a leaf that cannot be decided is *unknown*. `all` with a false member is false even if another is
   unknown; `any` with a true member is true; `not unknown` is unknown. An unknown condition makes the policy indeterminate.
 - **Kinds are checked, not just labels.** `resource` must read a declared resource attribute; `scope` must compare something about the
-  person with something about the resource; `feature` must ask for a feature; `access` does not read the resource's state.
+  person with something about the resource; `feature` must ask for a feature; `access` does not read the resource's state;
+  `contextual` must read the time or the request context, and no other kind may.
 - **Limits:** at most 32 actions, 32 attributes, 64 condition nodes (operands count), depth 8, 16 children per `all`/`any`, 16
   feature/permission lookups, literals of 256 characters or 100 items, 16 KB per definition, 200 active policies per organization,
   and a budget of 20,000 evaluation steps per decision. Unknown fields are errors.
@@ -99,7 +100,9 @@ anybody out of fixing the rules.
 | `resource.teamPathIds` | the team tree: `resource.teamIds` plus every ancestor of those teams, read at decision time | UNIORA (from the teams your server states) |
 | `resource.id`, `resource.teamIds`, `resource.<declared>` | **your server code**, when it calls `authorize({ resource })` | your server |
 | `feature`, `permission` | the storage and the engine, per request | UNIORA |
-| `environment.*`, `context.*`, `request.*`, `session.*` | reserved for later phases; refused today | n/a |
+| `environment.*` (`hour`, `dayOfWeek`...) | the engine's own clock, in the policy's `timezone`; the caller cannot supply it | UNIORA |
+| `context.<name>` | **your server code**, when it calls `authorize({ context })`, for the signals the policy declares | your server |
+| `request.*`, `session.*` | reserved for a later phase; refused today | n/a |
 
 Never build `resource` from what the client sent. Load the resource from your own database on the server and pass what you read; a
 policy is only as trustworthy as the facts it is given. A resource must carry its `organizationId`, which the engine compares with
@@ -145,6 +148,43 @@ sub-teams costs the same as anybody else. Roles are never inherited: a team stil
 or the resource lists more than 50 teams, `resource.teamPathIds` is *unknown* and the policy is indeterminate (a refusal), never a guess.
 Team ids of another organization are ignored.
 
+## Time and context
+
+A `contextual` policy depends on **when** or **in what circumstances** the request happens. Two sources, both server-side:
+
+- **`environment.*` is the engine's clock.** It is read when the decision is made and expressed in the policy's `timezone` (an IANA name such as
+  `Europe/Madrid`; default `UTC`; offsets like `+02:00` are refused because they do not follow daylight saving). Attributes, all numbers:
+  `epochSeconds` (an absolute moment, whatever the timezone), `year`, `month` (1-12), `dayOfMonth`, `dayOfWeek` (1 Monday to 7 Sunday),
+  `hour` (0-23), `minuteOfDay` (0-1439, so "from 08:00" is `gte 480`) and `dateNumber` (`20261231`, so a date compares with `lt`/`gte`).
+  No request can carry the time: `authorize({ now })` or `{ environment }` are ignored.
+- **`context.<name>` is a signal your server verified**, declared in the policy's `context` field with its type and passed in
+  `authorize({ context: { ipCountry: "ES" } })`. Derive it from something you trust (your proxy's verified client address, your device
+  management, your session), never copy a header or a body field. Only the signals the applicable policies declare are read.
+
+```jsonc
+{
+  "kind": "contextual", "effect": "require", "actions": ["vehicles.delete"],
+  "timezone": "Europe/Madrid",
+  "context": { "ipCountry": "string" },
+  "condition": { "all": [
+    { "gte": [{ "ref": "environment.dayOfWeek" },  { "value": 1 }] },  { "lte": [{ "ref": "environment.dayOfWeek" },  { "value": 5 }] },
+    { "gte": [{ "ref": "environment.minuteOfDay" }, { "value": 480 }] }, { "lt":  [{ "ref": "environment.minuteOfDay" }, { "value": 1080 }] },
+    { "in": [{ "ref": "context.ipCountry" }, { "value": ["ES", "PT"] }] }
+  ] },
+  "denyReason": "outside_business_hours"
+}
+```
+
+If the clock cannot be read, or a signal is missing or has the wrong type, the policy is **indeterminate** (`environment_unavailable`,
+`attribute_missing`, `attribute_type_mismatch`) and the request is refused: absence of a signal is never "all clear". Use `exists` on a signal
+when absence is a case you want to handle on purpose. A contextual policy may also read `subject.*` and `resource.*`, so "nobody edits a locked
+vehicle outside office hours" is one policy. The decision records the policies and their results, never the values of the signals.
+
+**Testing and simulation.** `createAuthorizationEngine(storage, { policies: { now: () => new Date(...) } })` fixes the clock in tests. The policy
+service's `simulate` accepts `at` (an instant) and `context`, so you can ask "what happens on Saturday at 22:00 from Portugal?" before
+activating. Time zones come from the runtime's timezone database: keep Node's up to date, because two hosts with different database versions can
+disagree around a daylight-saving change.
+
 ## Lifecycle and versions
 
 `draft` → `active` ⇄ `disabled` → `retired` (terminal).
@@ -183,8 +223,6 @@ cached by UNIORA; if you cache them, key them on `policyRevision` plus whatever 
 
 ## Designed, not implemented (later phases)
 
-- **Contextual and temporal conditions.** The `environment.*` namespace, fed only by a trusted server-side provider (the engine's
-  clock, a risk signal your server verified), typed, with `indeterminate` when the provider fails.
 - **Sensitive-action policies.** The `sensitive` kind with requirements such as "recent re-authentication", fed by the host's
   authentication through `environment.*`; they complement, never replace, the host's own step-up flow.
 - **Platform baseline policies** that apply to every organization, administered from the platform scope.
