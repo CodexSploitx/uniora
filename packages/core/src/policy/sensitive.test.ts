@@ -108,6 +108,7 @@ describe("reading the session the host states", () => {
       Object.create({ mfa: true }, { x: { value: 1, enumerable: true } }),
     ];
     for (const value of bad) expect(readSession(value, now), JSON.stringify(value)).toBeUndefined();
+    expect(readSession({ authenticatedAt: { [Symbol.toStringTag]: "Date", getTime: () => now } }, now)).toBeUndefined();
     const getter = {};
     Object.defineProperty(getter, "mfa", { enumerable: true, get: () => true });
     expect(readSession(getter, now)).toBeUndefined();

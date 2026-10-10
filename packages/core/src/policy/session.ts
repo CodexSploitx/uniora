@@ -59,7 +59,13 @@ export function readSession(raw: unknown, nowMs: number | undefined): SessionFac
     const value = read(field);
     if (value === undefined) continue;
     if (!isDate(value)) return undefined;
-    const at = Date.prototype.getTime.call(value) as number;
+    let at: number;
+    try {
+      at = Date.prototype.getTime.call(value) as number;
+    } catch {
+      // An object that only claims to be a Date (a forged Symbol.toStringTag).
+      return undefined;
+    }
     if (!Number.isFinite(at)) return undefined;
     if (nowMs === undefined || at > nowMs + MAX_CLOCK_SKEW_MS) continue;
     facts[attribute] = Math.max(0, Math.floor((nowMs - at) / 1000));
