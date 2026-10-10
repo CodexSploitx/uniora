@@ -445,6 +445,8 @@ export const en = {
   "policies.kind.resource": "Resource",
   "policies.kind.scope": "Scope",
   "policies.kind.feature": "Feature",
+  "policies.kind.contextual": "Contextual",
+  "policies.kind.sensitive": "Sensitive action",
   "policies.effect.deny": "Denies when true",
   "policies.effect.require": "Requires",
   "policies.revisionLabel": "Revision {revision}",

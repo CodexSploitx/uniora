@@ -362,6 +362,31 @@ export function definePolicyConformance(harness: { storage(): UnioraStorage; pol
       expect(await ask(vehicle(["t-mad"]))).toMatchObject({ decision: "allow", allowed: true });
     });
 
+    it("política contextual: se guarda con su zona horaria y señales, y el motor decide con su reloj y el contexto del servidor", async () => {
+      const w = await seed();
+      const definition = {
+        kind: "contextual",
+        effect: "require",
+        actions: ["reports.run"],
+        timezone: "Europe/Madrid",
+        context: { ipCountry: "string" },
+        condition: { all: [{ gte: [{ ref: "environment.hour" }, { value: 8 }] }, { lt: [{ ref: "environment.hour" }, { value: 18 }] }, { in: [{ ref: "context.ipCountry" }, { value: ["ES", "PT"] }] }] },
+        denyReason: "outside_hours_or_country",
+      };
+      const created = await create(w, "p-ctx", "office-hours", definition);
+      expect(created).toMatchObject({ kind: "contextual", effect: "require", revision: 1 });
+      expect((await w.trusted.policies.findById("org-1", "p-ctx"))?.definition).toEqual(created.definition);
+      await w.trusted.policies.activate("org-1", "p-ctx", { actor: ana });
+      let moment = new Date("2026-10-09T08:00:00Z"); // 10:00 in Madrid
+      const engine = createAuthorizationEngine(w.storage, { policies: { now: () => moment } });
+      const run = (context?: Record<string, unknown>) => engine.authorize({ identity: ana, organizationId: "org-1", permission: "reports.run", ...(context ? { context } : {}) });
+      expect(await run({ ipCountry: "ES" })).toMatchObject({ allowed: true });
+      expect(await run({ ipCountry: "US" })).toMatchObject({ allowed: false, reason: "policy_denied" });
+      expect(await run()).toMatchObject({ allowed: false, decision: "indeterminate" });
+      moment = new Date("2026-10-09T17:00:00Z"); // 19:00 in Madrid
+      expect(await run({ ipCountry: "ES" })).toMatchObject({ allowed: false, reason: "policy_denied", policies: [{ reason: "outside_hours_or_country" }] });
+    });
+
     it("la base rechaza SQL directo sobre revisiones: ni se editan ni se borran sueltas", async () => {
       const w = await seed();
       await create(w, "p1", "one");

@@ -64,6 +64,8 @@ export interface ResourceAuthorizationContext {
   organizationId: string;
   /** The resource the request is about: its type, id, organization, teams and declared attributes. */
   resource?: AuthorizeInput["resource"];
+  /** Signals your server verified about the circumstances of the request (`contextual` policies read them as `context.<name>`). Never copy them from the request. */
+  context?: AuthorizeInput["context"];
   /** Evaluate the caller's rights inside this team (see `engine.can`). */
   teamId?: string;
   /** Turn "no policy applies" into a refusal for this route. */

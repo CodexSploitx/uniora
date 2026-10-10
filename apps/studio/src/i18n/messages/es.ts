@@ -442,6 +442,8 @@ export const es: Record<keyof typeof en, string> = {
   "policies.kind.resource": "Recurso",
   "policies.kind.scope": "Alcance",
   "policies.kind.feature": "Función",
+  "policies.kind.contextual": "Contextual",
+  "policies.kind.sensitive": "Acción sensible",
   "policies.effect.deny": "Deniega si se cumple",
   "policies.effect.require": "Exige",
   "policies.revisionLabel": "Revisión {revision}",

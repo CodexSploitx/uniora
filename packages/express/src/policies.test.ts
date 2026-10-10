@@ -120,6 +120,18 @@ describe("authorizeResource", () => {
     expect(decisions).toEqual(["allowed", "policy_denied", "policy_denied"]);
   });
 
+  it("passes the context the server resolved to the engine, and nothing else", async () => {
+    const seen: unknown[] = [];
+    const engine = { authorize: async (input: unknown) => (seen.push(input), { decision: "allow", allowed: true, reason: "allowed", policies: [] }) } as never;
+    let nexted = false;
+    await authorizeResource(engine, {
+      permission: "x.y",
+      resolve: () => ({ identity: ana, organizationId: "org", context: { ipCountry: "ES" } }),
+    })({}, { status: () => ({ json: () => undefined }), json: () => undefined } as never, () => { nexted = true; });
+    expect(nexted).toBe(true);
+    expect(seen).toEqual([{ identity: ana, organizationId: "org", context: { ipCountry: "ES" }, permission: "x.y" }]);
+  });
+
   it("is fail-closed: an engine error goes to next(err), never to the handler", async () => {
     const calls: string[] = [];
     const engine = { authorize: async () => { throw new Error("db down"); } } as never;

@@ -37,7 +37,7 @@ export interface PolicyCommandContext {
   organizationId: string;
 }
 
-type Kind = "string" | "string?" | "string|null?" | "number?" | "object" | "object?" | "boolean?" | "identity" | "pageLimit?";
+type Kind = "string" | "string?" | "string|null?" | "number?" | "object" | "object?" | "boolean?" | "date?" | "identity" | "pageLimit?";
 type Shape = Record<string, Kind>;
 
 const SHAPES: Record<PolicyCommand, Shape> = {
@@ -56,6 +56,8 @@ const SHAPES: Record<PolicyCommand, Shape> = {
     permission: "string",
     teamId: "string?",
     resource: "object?",
+    context: "object?",
+    at: "date?",
     requireApplicablePolicy: "boolean?",
     candidate: "object?",
   },
@@ -89,6 +91,12 @@ function check(name: string, kind: Kind, value: unknown): unknown {
     case "boolean":
       if (typeof value === "boolean") return value;
       break;
+    case "date": {
+      // An ISO-8601 instant as text; it becomes a Date, and anything that is not one is refused.
+      const at = typeof value === "string" && value.length <= 40 && /^\d{4}-\d{2}-\d{2}T[\d:.]+(Z|[+-]\d{2}:\d{2})$/.test(value) ? new Date(value) : undefined;
+      if (at !== undefined && !Number.isNaN(at.getTime())) return at;
+      break;
+    }
     case "object":
       if (isPlainObject(value)) return value;
       break;

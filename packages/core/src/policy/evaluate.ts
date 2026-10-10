@@ -1,6 +1,7 @@
-import { RESOURCE_ATTRIBUTES, SUBJECT_ATTRIBUTES, isBuiltinResourceAttribute, isProtectedPermission, isSubjectAttribute } from "./attributes.js";
-import type { SubjectAttributeName } from "./attributes.js";
+import { RESOURCE_ATTRIBUTES, SUBJECT_ATTRIBUTES, isBuiltinResourceAttribute, isEnvironmentAttribute, isProtectedPermission, isSubjectAttribute } from "./attributes.js";
+import type { EnvironmentAttributeName, SubjectAttributeName } from "./attributes.js";
 import { actionMatches } from "./definition.js";
+import { DEFAULT_POLICY_TIMEZONE, environmentAt } from "./environment.js";
 import type { PolicyAnalysis } from "./definition.js";
 import type { AttributeType, AttributeValue, Comparison, Condition, Operand, PolicyDefinition, PolicyEffect } from "./types.js";
 
@@ -26,6 +27,7 @@ export type UnknownReason =
   | "attribute_type_mismatch"
   | "subject_unavailable"
   | "team_tree_unavailable"
+  | "environment_unavailable"
   | "feature_unavailable"
   | "permission_unavailable"
   | "budget_exceeded";
@@ -49,6 +51,10 @@ export interface EvaluationFacts {
   resource?: ResourceFacts;
   features: ReadonlyMap<string, boolean | "unknown">;
   permissions: ReadonlyMap<string, boolean | "unknown">;
+  /** The instant of the decision in epoch milliseconds, from the engine's clock. Absent when the clock could not be read. */
+  now?: number;
+  /** The values of the `context` signals the host supplied. Anything not declared by an applicable policy is ignored. */
+  context?: Readonly<Record<string, unknown>>;
 }
 
 export interface PolicyRequest {
@@ -116,6 +122,7 @@ type Resolved = { ok: true; value: AttributeValue } | { ok: false; reason: Unkno
 class Run {
   steps = 0;
   firstUnknown: UnknownReason | undefined;
+  private environment: Record<EnvironmentAttributeName, number> | null | undefined;
   constructor(
     readonly definition: PolicyDefinition,
     readonly facts: EvaluationFacts,
@@ -127,11 +134,33 @@ class Run {
     return "unknown";
   }
 
+  /** The clock in this policy's timezone, computed once per run; `null` when it cannot be read. */
+  private clock(): Record<EnvironmentAttributeName, number> | null {
+    if (this.environment === undefined) {
+      this.environment = this.facts.now === undefined ? null : environmentAt(this.facts.now, this.definition.timezone ?? DEFAULT_POLICY_TIMEZONE);
+    }
+    return this.environment;
+  }
+
   resolveRef(ref: string): Resolved {
     if (isSubjectAttribute(ref)) {
       const value = this.facts.subject[ref];
       if (value === undefined) return { ok: false, reason: "subject_unavailable" };
       return hasType(value, SUBJECT_ATTRIBUTES[ref]) ? { ok: true, value } : { ok: false, reason: "attribute_type_mismatch" };
+    }
+    if (isEnvironmentAttribute(ref)) {
+      const clock = this.clock();
+      return clock === null ? { ok: false, reason: "environment_unavailable" } : { ok: true, value: clock[ref] };
+    }
+    if (ref.startsWith("context.")) {
+      const name = ref.slice("context.".length);
+      const contextSignals = this.definition.context;
+      const declared = contextSignals !== undefined && Object.hasOwn(contextSignals, name) ? contextSignals[name] : undefined;
+      if (declared === undefined) return { ok: false, reason: "attribute_missing" };
+      const supplied = this.facts.context;
+      const raw = supplied !== undefined && Object.hasOwn(supplied, name) ? supplied[name] : undefined;
+      if (raw === undefined || raw === null) return { ok: true, absent: true, value: undefined };
+      return hasType(raw, declared) ? { ok: true, value: raw as AttributeValue } : { ok: false, reason: "attribute_type_mismatch" };
     }
     const resource = this.facts.resource;
     if (resource === undefined) return { ok: false, reason: "resource_missing" };
@@ -341,6 +370,10 @@ export interface RequiredFacts {
   resource: boolean;
   /** Whether any of them reads `resource.teamPathIds`, which has to be derived from the team tree. */
   resourceTeamPath: boolean;
+  /** Whether any of them reads `environment.*` (the clock). */
+  environment: boolean;
+  /** The `context.*` signals any of them reads, by name; the engine passes on only these. */
+  context: string[];
 }
 
 export function requiredFacts(policies: ReadonlyArray<{ definition: PolicyDefinition; analysis: PolicyAnalysis }>, request: PolicyRequest): RequiredFacts {
@@ -349,6 +382,8 @@ export function requiredFacts(policies: ReadonlyArray<{ definition: PolicyDefini
   const subject = new Set<SubjectAttributeName>();
   let resource = false;
   let resourceTeamPath = false;
+  let environment = false;
+  const context = new Set<string>();
   for (const { definition, analysis } of policies) {
     if (applicability(definition, request) !== "yes") continue;
     for (const feature of analysis.features) features.add(feature);
@@ -356,6 +391,8 @@ export function requiredFacts(policies: ReadonlyArray<{ definition: PolicyDefini
     for (const ref of analysis.subjectRefs) subject.add(ref as SubjectAttributeName);
     if (analysis.resourceRefs.length > 0) resource = true;
     if (analysis.resourceRefs.includes("resource.teamPathIds")) resourceTeamPath = true;
+    if (analysis.environmentRefs.length > 0) environment = true;
+    for (const ref of analysis.contextRefs) context.add(ref.slice("context.".length));
   }
-  return { features: [...features].sort(), permissions: [...permissions].sort(), subject: [...subject].sort(), resource, resourceTeamPath };
+  return { features: [...features].sort(), permissions: [...permissions].sort(), subject: [...subject].sort(), resource, resourceTeamPath, environment, context: [...context].sort() };
 }

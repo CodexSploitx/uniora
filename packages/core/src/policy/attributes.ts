@@ -38,8 +38,38 @@ export const RESOURCE_ATTRIBUTES = {
 
 export type SubjectAttributeName = keyof typeof SUBJECT_ATTRIBUTES;
 
-/** Namespaces reserved for later phases (time, request context, parent scopes): a definition that uses one is refused. */
-export const RESERVED_NAMESPACES = ["environment", "context", "request", "session"] as const;
+/**
+ * The clock, read by the engine (never by the caller) at the moment of the decision and expressed in the policy's `timezone`
+ * (UTC by default). `epochSeconds` does not depend on the timezone: use it for an absolute moment ("until the audit closes").
+ */
+export const ENVIRONMENT_ATTRIBUTES = {
+  /** Seconds since 1970-01-01T00:00:00Z. */
+  "environment.epochSeconds": "number",
+  "environment.year": "number",
+  /** 1 (January) to 12. */
+  "environment.month": "number",
+  "environment.dayOfMonth": "number",
+  /** ISO weekday: 1 (Monday) to 7 (Sunday). */
+  "environment.dayOfWeek": "number",
+  /** 0 to 23. */
+  "environment.hour": "number",
+  /** 0 to 1439: `hour * 60 + minute`, to compare a time of day with one comparison (`gte 540` is "from 09:00"). */
+  "environment.minuteOfDay": "number",
+  /** The local date as the number `YYYYMMDD` (`20261231`), so dates compare with `lt`/`gte` without text parsing. */
+  "environment.dateNumber": "number",
+} as const satisfies Record<string, AttributeType>;
+
+export type EnvironmentAttributeName = keyof typeof ENVIRONMENT_ATTRIBUTES;
+
+/**
+ * Namespaces reserved for later phases: a definition that uses one is refused. `context.*` is not here: it holds the signals a
+ * policy declares in its `context` field and your server supplies (see `AuthorizeInput.context`).
+ */
+export const RESERVED_NAMESPACES = ["request", "session"] as const;
+
+export function isEnvironmentAttribute(ref: string): ref is EnvironmentAttributeName {
+  return Object.hasOwn(ENVIRONMENT_ATTRIBUTES, ref);
+}
 
 export function isSubjectAttribute(ref: string): ref is SubjectAttributeName {
   return Object.hasOwn(SUBJECT_ATTRIBUTES, ref);
