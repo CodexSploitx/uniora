@@ -2,6 +2,29 @@
 
 All notable changes to UNIORA. Packages are released in lockstep, so one version number covers all of them. The format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased
+
+Includes new migrations: Postgres `0043`, SQLite `0028` (run `uniora migrate`). They only add the tables of the API credentials (`uniora_api` schema in Postgres, `uniora_api_*` tables in SQLite); nothing existing changes.
+
+### Added
+
+- **`@uniora/server`: UNIORA as its own self-hosted API.** Your backends call it over HTTP with an API key; your auth provider stays in your project. Node `http` with no framework. Keys (`uniora_sk_…`) are stored as SHA-256, compared in constant time and never cached; a client has scopes and an organization list, and every route has exactly one scope. Rate limits per key, concurrency caps, body/time limits, slow-client timeouts and a failed-authentication throttle. Strict input (unknown fields refused), shaped output, `application/problem+json` errors with stable codes and never an internal message. It refuses to start without migrations, and off loopback without TLS or a declared TLS proxy. `/healthz`, `/readyz`, read-only mode, JSON logs that never carry a key.
+  - **Decisions and reads** (`check`, `check:batch`, `authorize` with `session`/`context`/`stepUp`, `snapshots`; organizations, members, roles, permissions, features, teams, audit log).
+  - **Delegated changes** on behalf of an end user (`Uniora-Actor-*` headers, `actor:assert` scope): members and roles, teams, policies and invitations. The access, team and policy services apply their rules to that user, over a guarded storage, and every audit entry carries `metadata.via = { apiClientId, keyId, requestId }` inside the hash chain. `If-Match`/`ETag` for optimistic concurrency.
+  - **Sign-up**: `POST /v1/organizations` creates an organization with its first Owner; an `Idempotency-Key` makes a retry safe (the ids are derived from the client and the key, so the organization itself is the record).
+  - **Invitations**: create, resend, revoke, and the preview/accept flow your server relays.
+- **API credentials in core** (`createApiCredentialService`, `authenticateApiKey`, storage for memory, Postgres and SQLite with a shared conformance suite): clients, keys (two active at once, for rotation), audit entries without secrets.
+- **`createAuditContextStorage`**: stamps every audit entry written through a storage with a reserved `via` object.
+- **`@uniora/client`**: a typed client generated from the route table, with timeouts, retries only where they cannot repeat a change, an automatic `Idempotency-Key`, `paginate()`, and `createRemoteEngine()`, an `AuthorizationEngine` over HTTP so the Express and Next guards work unchanged (fails closed; a test compares it with the local engine).
+- **CLI**: `uniora server clients|keys|start`.
+- **Studio**: an **API clients** section: create clients with scopes grouped by category and presets, create keys (shown once), rotate, revoke, disable; the new audit actions in the activity feed.
+- **Documentation**: [`guides/server.md`](guides/server.md), and [`guides/server-api.md`](guides/server-api.md) and [`guides/openapi.json`](guides/openapi.json), generated from the route table; every example in the reference is executed against a real server in CI and the files are diffed, so they cannot go stale. Design: [`design/0001-uniora-server.md`](design/0001-uniora-server.md).
+- Audit action names: `api_client.created|updated|disabled|enabled`, `api_key.created|revoked`.
+
+### Fixed
+
+- `createMemoryStorage().organizations.create` replaced an existing organization when the id was repeated; it now rejects it like the databases do.
+
 ## 0.9.0 - 2026-10-10
 
 Includes new migrations: Postgres `0042`, SQLite `0027` (run `uniora migrate`). The Postgres one only widens a CHECK on `policies.kind`. The SQLite one rebuilds the two policy tables (SQLite cannot change a CHECK): rows, revisions and revision counters are preserved, indexes and triggers are recreated as they were, and writes to those two small tables (at most 1000 policies per organization) wait for a moment. No other breaking change: policies that exist keep working, and code that does not pass `context` or `session` behaves as before.

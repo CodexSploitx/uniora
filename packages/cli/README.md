@@ -11,6 +11,8 @@ npx uniora init      # uniora.config.mjs + .env.example (--provider sqlite for S
 npx uniora check     # validate config and the database connection
 npx uniora migrate   # apply pending migrations (--status and --dry-run touch nothing)
 npx uniora platform init --admin provider:subject   # first Platform Administrator (once; see guides/platform.md)
+npx uniora server clients create --name backend --scopes check --orgs '*'   # API clients and keys of the server (guides/server.md)
+npx uniora server start   # run the API server
 npx uniora doctor    # Node, .gitignore, config, database, migrations, owners, audit chain, SMTP, Studio
 npx uniora studio    # local admin UI (--read-only, --port N, --no-open)
 ```

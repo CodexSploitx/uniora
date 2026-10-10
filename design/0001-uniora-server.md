@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Status | **Draft for review.** Nothing here is built yet. |
+| Status | **Phases 1 and 2 implemented** (see §17 for where the implementation differs from or settles this text). Phase 3 is not started. |
 | Decisions recorded | 2026-10-10 (D1–D5 below) |
 | Tracks | [`guides/roadmap.md`](../guides/roadmap.md) — "A standalone API server", "OAuth 2.0 client credentials", "Verified end-user tokens" |
 
@@ -402,9 +402,42 @@ Each phase ships only with its part of the conformance and security suites green
 
 ## 16. Open questions
 
-1. **HTTP framework**: no framework (recommended), Fastify or Hono.
-2. **Read permissions in delegated mode**: which keys (`members.read`, `roles.read`, `audit.read`, …), and whether any read is
+1. ~~**HTTP framework**~~: settled, no framework (Node `http`).
+2. **Read permissions in delegated mode** (still open: reads are application calls except policies): which keys (`members.read`, `roles.read`, `audit.read`, …), and whether any read is
    allowed to every active member. Default deny.
 3. **Rate-limit defaults** (§8): to be tuned with the load tests.
 4. **Verified-token configuration**: one identity provider per deployment, or several (one per auth adapter), each with its own
    issuer and audience.
+
+## 17. What the implementation settled (phases 1 and 2)
+
+Where the build made a decision this document left open, or did something differently from the draft:
+
+- **Reads are application calls.** Only the policy reads (`policies.list|get|revisions`) are delegated, because the policy service already
+  checks `policies.read` for the actor. Delegated reads of members, roles and teams need the read-permission keys of §16.2 first.
+- **`Idempotency-Key` is not a separate store.** Invitations already had a durable, organization-scoped key. For sign-up
+  (`POST /v1/organizations`) the ids of what is created are derived from the client and the key, so the organization is the record of the
+  first request: a retry, or ten at once, meets `organization_exists`, finds what the first made and answers it (`replayed: true`) or
+  refuses a different request (`422 idempotency_key_reused`). Nothing to lose, expire or race. The header is refused on any route that
+  does not declare it, like `If-Match`, so nobody believes a retry is safe when it is not.
+- **`organizations.create`, `invitations.preview` and `invitations.accept` need a client with `"*"`.** The token (or the not-yet-existing
+  organization) names the organization, not the caller, so a client limited to some organizations cannot be allowed to make them.
+- **Guarded storage is not optional.** Every delegated call builds the access, team, policy and invitation services for that request over
+  `createGuardedStorage(createAuditContextStorage(storage, via))`. The guard means a handler that tried to write power directly would
+  fail; a source-scan test fails if a route writes through the plain storage.
+- **`via` is stamped by a storage wrapper** (`createAuditContextStorage`, in core), not by each service, so every audit entry written in
+  the request, by any service, carries `{ apiClientId, keyId, requestId }` inside the hash chain. The key `via` is reserved: what an
+  operation put there is replaced.
+- **Access errors.** `*_forbidden` answers a plain `403 forbidden` whatever service raised it; the four anti-escalation rules keep their
+  codes (they describe the rule, not the target). An unknown invitation is `404 invitation_not_found` to whoever manages it and
+  `400 invalid_invitation` to the invitee, always the same.
+- **The actor header is percent-encoded** (`encodeURIComponent`), so any subject survives HTTP header rules and means the same as in a
+  body; a repeated header is refused (Node folds duplicates, so the raw headers are counted).
+- **One contract, generated.** The route table is the source of the server, the OpenAPI document (`guides/openapi.json`), the typed
+  `@uniora/client` surface (`packages/client/src/generated.ts`) and the API reference (`guides/server-api.md`). The reference is built
+  from a run against a real server with ids and moments normalized, so every example was executed; three tests diff the committed
+  files. A route that sets an `ETag` or accepts `If-Match` / `Idempotency-Key` must declare it.
+- **Test matrix.** Memory, SQLite and PostgreSQL (when `TEST_DATABASE_URL` is set, as in CI), real HTTP, a security battery generated from
+  the route table, and mutation checks (each guard removed on purpose must fail a test).
+- **A real bug found on the way:** the in-memory storage replaced an organization when the id was repeated; it now rejects it like the
+  databases.
