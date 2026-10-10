@@ -7,3 +7,5 @@ export type { PlatformHarness } from "./platform-suite.js";
 export { defineAccessScenarios } from "./access-suite.js";
 export type { AccessHarness } from "./access-suite.js";
 export type { PolicyProbe } from "./policy-suite.js";
+export { defineApiCredentialConformance } from "./api-suite.js";
+export type { ApiHarness } from "./api-suite.js";
