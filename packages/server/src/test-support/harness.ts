@@ -112,9 +112,9 @@ export interface Fixture {
   readonly server: RunningServer;
   readonly logs: LogEntry[];
   /** Creates a client and a key; returns the key to send as `Authorization: Bearer`. */
-  issue(input?: { name?: string; scopes?: ApiScope[]; organizations?: "*" | string[] }): Promise<{ token: string; clientId: string; keyId: string }>;
+  issue(input?: { name?: string; scopes?: ApiScope[]; organizations?: "*" | string[]; id?: string }): Promise<{ token: string; clientId: string; keyId: string }>;
   /** A signed token of the staff identity provider (`staff`) for `subject`, or of the customer-facing one (`main`). */
-  sign(subject: string, options?: { provider?: "staff" | "main"; claims?: Record<string, unknown> }): string;
+  sign(subject: string, options?: { provider?: "staff" | "main" | "machine"; claims?: Record<string, unknown> }): string;
   call(method: string, path: string, init?: { token?: string | null; body?: unknown; raw?: string; headers?: Record<string, string>; actor?: string; operator?: string | { subject: string; claims?: Record<string, unknown> } }): Promise<{ status: number; body: any; headers: Headers; text: string }>;
   stop(): Promise<void>;
 }
@@ -125,7 +125,12 @@ let counter = 0;
 export const IDP = {
   main: { key: testKey("rsa", "main-key-1"), issuer: "https://idp.example.com/" },
   staff: { key: testKey("rsa", "staff-key-1"), issuer: "https://staff.example.com/" },
+  machine: { key: testKey("rsa", "machine-key-1"), issuer: "https://machines.example.com/" },
 } as const;
+
+/** The API client the test machine stands for, with a fixed id so the server can be configured before the client exists. */
+export const MACHINE_CLIENT_ID = "apc_machineclient001";
+export const MACHINE_SUBJECT = "m2m-billing-app";
 export const STAFF_ROOT = { provider: "staff", subject: "root" };
 
 /** Both providers configured, the platform on, and `root` bootstrapped as its first administrator. Pass it as `options` of `startFixture`. */
@@ -166,6 +171,7 @@ export async function startFixture(
       name: input.name ?? `client-${++counter}`,
       scopes: input.scopes ?? ALL_SCOPES,
       organizations: input.organizations ?? "*",
+      ...(input.id ? { id: input.id } : {}),
     });
     const created = await service.createKey({ actor: OPERATOR, clientId: client.id });
     return { token: created.token, clientId: client.id, keyId: created.key.id };
@@ -174,7 +180,7 @@ export async function startFixture(
   const sign: Fixture["sign"] = (subject, signOptions = {}) => {
     const idp = IDP[signOptions.provider ?? "main"];
     return signJwt(
-      { iss: idp.issuer, aud: "uniora", sub: subject, iat: nowSeconds() - 5, exp: nowSeconds() + 300, ...signOptions.claims },
+      { iss: idp.issuer, aud: signOptions.provider === "machine" ? "uniora-api" : "uniora", sub: subject, iat: nowSeconds() - 5, exp: nowSeconds() + 300, ...signOptions.claims },
       idp.key.privateKey,
       { alg: "RS256", kid: idp.key.publicJwk.kid as string },
     );
@@ -218,3 +224,20 @@ export async function startFixture(
 }
 
 export { silentLogger };
+
+/** The customer's OAuth server as a machine-token provider: `m2m-billing-app` is the API client `MACHINE_CLIENT_ID`. */
+export function machineOptions(extra: Partial<UnioraServerOptions> = {}): Partial<UnioraServerOptions> {
+  return {
+    machineTokens: [
+      {
+        provider: "machines",
+        issuer: IDP.machine.issuer,
+        audience: "uniora-api",
+        algorithms: ["RS256"],
+        jwks: { keys: [IDP.machine.key.publicJwk as never] },
+        clients: { [MACHINE_SUBJECT]: MACHINE_CLIENT_ID },
+      },
+    ],
+    ...extra,
+  };
+}

@@ -20,7 +20,7 @@ function requestStorage(config: ResolvedConfig, principal: ApiPrincipal, request
   //   issue, so a handler that tried to write power directly would get `access_authorization_required`;
   // - the audit context: every audit entry carries `metadata.via = { apiClientId, keyId, requestId }`, set here, inside the hash chain,
   //   where the person the call speaks for cannot forge it.
-  return createGuardedStorage(createAuditContextStorage(config.storage, { apiClientId: principal.client.id, keyId: principal.key.id, requestId, ...(actorMode ? { actorMode } : {}) }));
+  return createGuardedStorage(createAuditContextStorage(config.storage, { apiClientId: principal.client.id, keyId: principal.key.id, requestId, ...(principal.credential === "token" ? { credential: "token" } : {}), ...(actorMode ? { actorMode } : {}) }));
 }
 
 export function createApplicationContext(config: ResolvedConfig, principal: ApiPrincipal, requestId: string, actorMode?: "asserted" | "verified"): ApplicationContext {
@@ -60,7 +60,7 @@ function invitationOptions(config: ResolvedConfig) {
 export function createPlatformContext(config: ResolvedConfig, principal: ApiPrincipal, requestId: string, operator: VerifiedActor): PlatformContext {
   const platform = config.platform;
   if (!platform) throw new Error("The platform is not configured.");
-  const via = { apiClientId: principal.client.id, keyId: principal.key.id, requestId, actorMode: "verified" };
+  const via = { apiClientId: principal.client.id, keyId: principal.key.id, requestId, ...(principal.credential === "token" ? { credential: "token" } : {}), actorMode: "verified" };
   const rule = platform.stepUp;
   const service = createPlatformService({
     platform: createPlatformAuditContext(platform.storage, via),

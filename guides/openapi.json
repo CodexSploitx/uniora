@@ -60,6 +60,9 @@
   "security": [
     {
       "ApiKey": []
+    },
+    {
+      "MachineToken": []
     }
   ],
   "paths": {
@@ -74,6 +77,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "check",
@@ -470,6 +476,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "check",
@@ -697,6 +706,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "check",
@@ -949,6 +961,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "organizations:read",
@@ -1158,6 +1173,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "invitations:write",
@@ -1394,6 +1412,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "invitations:write",
@@ -1613,6 +1634,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "organizations:read",
@@ -1806,6 +1830,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "organizations:create",
@@ -2034,6 +2061,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "organizations:read",
@@ -2180,6 +2210,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "audit:read",
@@ -2424,6 +2457,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "organizations:read",
@@ -2668,6 +2704,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "invitations:write",
@@ -2982,6 +3021,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "invitations:write",
@@ -3162,6 +3204,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "invitations:write",
@@ -3434,6 +3479,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "organizations:read",
@@ -3654,6 +3702,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "members:write",
@@ -3861,6 +3912,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "organizations:read",
@@ -4022,6 +4076,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "members:write",
@@ -4260,6 +4317,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "members:write",
@@ -4472,6 +4532,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "members:write",
@@ -4686,6 +4749,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "members:write",
@@ -4932,6 +4998,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "members:write",
@@ -5131,6 +5200,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "organizations:read",
@@ -5397,6 +5469,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "policies:write",
@@ -5668,6 +5743,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "policies:write",
@@ -5865,6 +5943,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "organizations:read",
@@ -6059,6 +6140,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "policies:write",
@@ -6331,6 +6415,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "policies:write",
@@ -6579,6 +6666,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "policies:write",
@@ -6827,6 +6917,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "policies:write",
@@ -7075,6 +7168,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "organizations:read",
@@ -7314,6 +7410,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "organizations:read",
@@ -7753,6 +7852,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "organizations:read",
@@ -7991,6 +8093,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "organizations:read",
@@ -8196,6 +8301,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "roles:write",
@@ -8449,6 +8557,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "roles:write",
@@ -8682,6 +8793,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "roles:write",
@@ -8927,6 +9041,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "roles:write",
@@ -9190,6 +9307,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "organizations:read",
@@ -9440,6 +9560,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "roles:write",
@@ -9702,6 +9825,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "roles:write",
@@ -9911,6 +10037,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "roles:write",
@@ -10122,6 +10251,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "teams:write",
@@ -10330,6 +10462,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "teams:write",
@@ -10526,6 +10661,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "teams:write",
@@ -10722,6 +10860,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "teams:write",
@@ -10962,6 +11103,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "teams:write",
@@ -11171,6 +11315,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "teams:write",
@@ -11382,6 +11529,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "teams:write",
@@ -11617,6 +11767,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "teams:write",
@@ -11885,6 +12038,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "organizations:read",
@@ -12114,6 +12270,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "teams:write",
@@ -12383,6 +12542,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "teams:write",
@@ -12590,6 +12752,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "organizations:read",
@@ -12755,6 +12920,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "teams:write",
@@ -13044,6 +13212,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "teams:write",
@@ -13292,6 +13463,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "teams:write",
@@ -13488,6 +13662,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "organizations:read",
@@ -13723,6 +13900,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "teams:write",
@@ -14008,6 +14188,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "teams:write",
@@ -14217,6 +14400,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "organizations:read",
@@ -14429,6 +14615,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "platform:admin",
@@ -14707,6 +14896,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "platform:admin",
@@ -15022,6 +15214,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "platform:admin",
@@ -15210,6 +15405,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "platform:admin",
@@ -15471,6 +15669,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "platform:admin",
@@ -15755,6 +15956,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "platform:admin",
@@ -16031,6 +16235,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "platform:admin",
@@ -16341,6 +16548,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "platform:admin",
@@ -16549,6 +16759,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "platform:admin",
@@ -16768,6 +16981,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "platform:admin",
@@ -17005,6 +17221,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "platform:admin",
@@ -17298,6 +17517,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "platform:admin",
@@ -17484,6 +17706,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "platform:admin",
@@ -17784,6 +18009,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "platform:admin",
@@ -18081,6 +18309,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "platform:admin",
@@ -18304,6 +18535,9 @@
         "security": [
           {
             "ApiKey": []
+          },
+          {
+            "MachineToken": []
           }
         ],
         "x-uniora-scope": "check",
@@ -18552,6 +18786,12 @@
         "scheme": "bearer",
         "bearerFormat": "uniora_sk_…",
         "description": "An API key created in Studio or with `uniora server keys create`. Each key belongs to a client that has scopes and a list of organizations; a call outside them is refused."
+      },
+      "MachineToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "An OAuth 2.0 `client_credentials` access token from the deployment's own identity provider, when the server is configured with `machineTokens`. It stands for one API client (the one the token's subject is mapped to): that client's scopes and organizations are the ceiling, and the token's `scope` claim can only narrow them."
       }
     },
     "headers": {

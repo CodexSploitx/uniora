@@ -64,6 +64,8 @@ export interface VerifiedActor {
   /** Facts for `session.*` policies, from `auth_time`, `amr` and `acr`. Only what the token states; the rest is unknown. */
   readonly session: AuthorizeSession;
   readonly expiresAt: Date;
+  /** The scopes the token states (`scope`, space-separated, or `scp`, a list), or `undefined` when it states none. Used to NARROW a machine token, never to widen it. */
+  readonly scopes?: readonly string[];
 }
 
 /** `invalid`: the token is not acceptable (always the same answer to the caller). `unavailable`: it could not be checked right now. */
@@ -477,9 +479,21 @@ export function createActorTokenVerifier(providers: readonly ResolvedProvider[],
       const subject = claims[provider.subjectClaim];
       if (typeof subject !== "string" || subject.length < 1 || subject.length > 500 || CONTROL.test(subject)) throw new ActorTokenError("invalid", "subject");
 
-      return { identity: { provider: provider.provider, subject }, session: sessionOf(provider, claims, seconds, tolerance), expiresAt: new Date(exp * 1000) };
+      const scopes = scopesOf(claims);
+      return { identity: { provider: provider.provider, subject }, session: sessionOf(provider, claims, seconds, tolerance), expiresAt: new Date(exp * 1000), ...(scopes ? { scopes } : {}) };
     },
   };
+}
+
+const SCOPE_TOKEN = /^[\x21\x23-\x5b\x5d-\x7e]{1,200}$/;
+
+/** `scope` (RFC 6749: space-separated) or `scp` (a list): what the token says it may do. A malformed claim refuses the token. */
+function scopesOf(claims: Record<string, unknown>): string[] | undefined {
+  const raw = claims.scope ?? claims.scp;
+  if (raw === undefined) return undefined;
+  const items = typeof raw === "string" ? raw.split(" ").filter((item) => item !== "") : raw;
+  if (!Array.isArray(items) || items.length > 50 || items.some((item) => typeof item !== "string" || !SCOPE_TOKEN.test(item))) throw new ActorTokenError("invalid", "scope");
+  return [...new Set(items as string[])];
 }
 
 /** What the token says about how the person authenticated. Only stated facts; an absent claim stays unknown. */

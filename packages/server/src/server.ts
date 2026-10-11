@@ -12,6 +12,7 @@ import type { ResolvedConfig, UnioraServerOptions } from "./config.js";
 import { ApiError, errors, problemOf, toApiError } from "./errors.js";
 import { assertJsonContentType, hasBody, parseJsonBody, queryToObject, readBody, send } from "./http.js";
 import { ActorTokenError, createActorTokenVerifier } from "./actor-token.js";
+import { createMachineTokenAuthenticator, looksLikeJwt } from "./machine-token.js";
 import type { VerifiedActor } from "./actor-token.js";
 import { createApplicationContext, createDelegatedContext, createPlatformContext } from "./delegation.js";
 import { actorFromHeaders, completeIdentity } from "./identity.js";
@@ -164,6 +165,7 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
         ...(config.webhooks.retainDeliveredDays !== undefined ? { retainDeliveredDays: config.webhooks.retainDeliveredDays } : {}),
       })
     : undefined;
+  const machines = config.machineProviders.providers.length > 0 ? createMachineTokenAuthenticator(config.machineProviders, config.credentials, { now: config.now, onWarning: (message, detail) => log({ level: "warn", msg: message, ...detail }) }) : undefined;
   const failures = new FailureThrottle({ maxFailures: limits.authFailuresPerMinute, windowMs: 60_000 });
   let inFlight = 0;
   let closing = false;
@@ -247,7 +249,18 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
       const blockedFor = failures.blockedFor(throttleKey(source));
       if (blockedFor > 0) throw errors.rateLimited(blockedFor);
       try {
-        principal = (await authenticateApiKey(config.credentials, req.headers.authorization, { now: config.now() })) ?? undefined;
+        const bearer = typeof req.headers.authorization === "string" ? /^Bearer ([^ ]+)$/i.exec(req.headers.authorization)?.[1] : undefined;
+        if (machines && bearer !== undefined && looksLikeJwt(bearer)) {
+          // The deployment's own OAuth server proved who the machine is; any reason it did not is the same 401 as a bad key.
+          principal = (await machines.authenticate(bearer).catch((error: unknown) => {
+            if (!(error instanceof ActorTokenError)) throw error;
+            if (error.kind === "unavailable") throw error;
+            log({ level: "warn", msg: "machine token refused", requestId, kind: error.kind, reason: error.reason });
+            return null;
+          })) ?? undefined;
+        } else {
+          principal = (await authenticateApiKey(config.credentials, req.headers.authorization, { now: config.now() })) ?? undefined;
+        }
       } catch (error) {
         log({ level: "error", msg: "credential storage failed", requestId, error });
         throw new ApiError(503, "unavailable", { headers: { "Retry-After": "5" } });

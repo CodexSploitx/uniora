@@ -1,4 +1,4 @@
-import type { ActorTokenProvider, InvitationConfig, PlatformConfig, ServerLimits, WebhooksConfig } from "@uniora/server";
+import type { ActorTokenProvider, InvitationConfig, MachineTokenProvider, PlatformConfig, ServerLimits, WebhooksConfig } from "@uniora/server";
 
 /**
  * Configuración explícita de UNIORA (docs/PROYECT.md §20). El proyecto
@@ -30,6 +30,8 @@ export interface UnioraServerConfig {
   readonly limits?: Partial<ServerLimits>;
   /** Proveedores de identidad cuyos tokens acepta `Uniora-Actor-Token`. */
   readonly actorTokens?: readonly ActorTokenProvider[];
+  /** Tokens `client_credentials` de tu servidor OAuth, aceptados en `Authorization: Bearer` en lugar de una clave de API. */
+  readonly machineTokens?: readonly MachineTokenProvider[];
   readonly requireVerifiedActors?: boolean;
   /** Un presupuesto de límite de tasa compartido entre instancias (necesita la tabla de límites, ya migrada). */
   readonly sharedRateLimit?: boolean;

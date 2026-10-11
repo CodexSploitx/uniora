@@ -3,6 +3,8 @@ import type { ApiCredentialStorage, AuthorizationEngineOptions, InvitationServic
 import { isReservedIdentityProvider } from "@uniora/core";
 import { resolveActorTokenProviders } from "./actor-token.js";
 import type { ActorTokenProvider, ResolvedProvider } from "./actor-token.js";
+import { resolveMachineTokenProviders } from "./machine-token.js";
+import type { MachineTokenProvider, ResolvedMachineProviders } from "./machine-token.js";
 import { createJsonLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
 
@@ -136,6 +138,14 @@ export interface UnioraServerOptions {
    */
   actorTokens?: readonly ActorTokenProvider[];
   /**
+   * OAuth 2.0 `client_credentials` access tokens from YOUR identity provider (Auth0 machine-to-machine, Okta, Azure AD, Keycloak...),
+   * accepted in `Authorization: Bearer` in place of an UNIORA API key. Each provider says which API client each machine (token subject)
+   * is; the client's scopes and organization allowlist stay the ceiling, and the token's own `scope` can only narrow them. Nothing to
+   * distribute or rotate on the UNIORA side, and disabling the API client cuts the machine off at once. Use an audience of its own
+   * (never the one of `actorTokens`). See `guides/server.md`.
+   */
+  machineTokens?: readonly MachineTokenProvider[];
+  /**
    * Refuse asserted actors (`Uniora-Actor-Subject`) on delegated calls: only a verified token is accepted. Needs `actorTokens`. This
    * is what makes a leaked key unable to impersonate anybody; turn it on once your backends send tokens.
    */
@@ -183,6 +193,7 @@ export interface ResolvedConfig {
   readonly limits: Readonly<ServerLimits>;
   readonly engine: AuthorizationEngineOptions | undefined;
   readonly actorProviders: readonly ResolvedProvider[];
+  readonly machineProviders: ResolvedMachineProviders;
   readonly requireVerifiedActors: boolean;
   readonly invitations: InvitationConfig | undefined;
   readonly policies: Omit<PolicyServiceOptions, "storage" | "engine"> | undefined;
@@ -247,6 +258,11 @@ export function resolveConfig(options: UnioraServerOptions): ResolvedConfig {
     );
   }
   const actorProviders = resolveActorTokenProviders(options.actorTokens);
+  const machineProviders = resolveMachineTokenProviders(options.machineTokens);
+  for (const machine of machineProviders.providers) {
+    const clash = actorProviders.find((actor) => actor.issuer === machine.issuer && machine.audiences.some((audience) => actor.audiences.includes(audience)));
+    if (clash) throw new ServerConfigError(`machineTokens and actorTokens accept the same issuer with a shared audience ("${machine.issuer}"): give machine tokens an audience of their own, or a user token could be mistaken for a machine one.`);
+  }
   if (options.requireVerifiedActors === true && actorProviders.length === 0) {
     throw new ServerConfigError("`requireVerifiedActors` needs `actorTokens`: with no provider configured no delegated call could ever be made.");
   }
@@ -260,6 +276,7 @@ export function resolveConfig(options: UnioraServerOptions): ResolvedConfig {
     limits: Object.freeze(limits),
     engine: options.engine,
     actorProviders,
+    machineProviders,
     requireVerifiedActors: options.requireVerifiedActors === true,
     invitations: options.invitations,
     policies: options.policies,

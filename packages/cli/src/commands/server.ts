@@ -394,6 +394,7 @@ export async function runServerStart(cwd: string, options: ServerOptions): Promi
       ...(trustedProxyHops !== undefined ? { trustedProxyHops } : {}),
       ...(section.limits ? { limits: section.limits } : {}),
       ...(section.actorTokens ? { actorTokens: section.actorTokens } : {}),
+      ...(section.machineTokens ? { machineTokens: section.machineTokens } : {}),
       ...(section.requireVerifiedActors !== undefined ? { requireVerifiedActors: section.requireVerifiedActors } : {}),
       ...(section.sharedRateLimit !== undefined ? { sharedRateLimit: section.sharedRateLimit } : {}),
       ...(section.invitations ? { invitations: section.invitations } : {}),
@@ -403,6 +404,7 @@ export async function runServerStart(cwd: string, options: ServerOptions): Promi
     });
     enabled = [
       ...(section.actorTokens ? [`tokens de usuario (${section.actorTokens.length} proveedor(es)${section.requireVerifiedActors ? ", obligatorios" : ""})`] : []),
+      ...(section.machineTokens ? [`tokens de máquina (${section.machineTokens.length} proveedor(es))`] : []),
       ...(section.platform ? ["plataforma"] : []),
       ...(section.webhooks ? [section.webhooks.run === false ? "webhooks (el worker corre aparte)" : "webhooks"] : []),
       ...(section.sharedRateLimit ? ["límite de tasa compartido"] : []),

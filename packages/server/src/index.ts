@@ -16,3 +16,4 @@ export { createWebhookDispatcher } from "./webhooks/dispatcher.js";
 export type { TickResult, WebhookDispatcher, WebhookDispatcherOptions } from "./webhooks/dispatcher.js";
 export { sendWebhook } from "./webhooks/send.js";
 export type { SendWebhookInput, SendWebhookResult } from "./webhooks/send.js";
+export type { MachineTokenProvider } from "./machine-token.js";

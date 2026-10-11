@@ -88,7 +88,7 @@ export function validateConfig(config: unknown, source: string): UnioraConfig {
     if (!isRecord(config.server) || Array.isArray(config.server)) {
       throw new UnioraConfigError(`Configuración inválida en ${source}: "server" debe ser un objeto.`);
     }
-    const known = new Set(["defaultProvider", "trustedProxyHops", "readOnly", "limits", "actorTokens", "requireVerifiedActors", "sharedRateLimit", "invitations", "platform", "webhooks"]);
+    const known = new Set(["defaultProvider", "trustedProxyHops", "readOnly", "limits", "actorTokens", "machineTokens", "requireVerifiedActors", "sharedRateLimit", "invitations", "platform", "webhooks"]);
     const unknown = Object.keys(config.server).find((key) => !known.has(key));
     if (unknown !== undefined) {
       throw new UnioraConfigError(`Configuración inválida en ${source}: "server.${unknown}" no existe. Disponibles: ${[...known].join(", ")}.`);

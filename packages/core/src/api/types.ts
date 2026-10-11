@@ -51,6 +51,11 @@ export interface ApiKeyRecord extends ApiKey {
 export interface ApiPrincipal {
   readonly client: ApiClient;
   readonly key: ApiKey;
+  /**
+   * What proved who it is. `"key"` (or nothing): an UNIORA API key. `"token"`: an access token from the deployment's own OAuth 2.0
+   * server, in which case `client.scopes` is already narrowed to what the token asked for and `key` is a stand-in that names the machine.
+   */
+  readonly credential?: "key" | "token";
 }
 
 export function isApiKeyActive(key: Pick<ApiKey, "revokedAt" | "expiresAt">, now: Date): boolean {

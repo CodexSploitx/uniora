@@ -178,7 +178,7 @@ function operation(route: Route): Json {
     tags: [tag.name],
     summary: route.summary,
     description: route.description,
-    security: [{ ApiKey: [] }],
+    security: [{ ApiKey: [] }, { MachineToken: [] }],
     "x-uniora-scope": route.scope,
     "x-uniora-delegated": route.delegated,
     "x-uniora-platform": route.platform,
@@ -247,7 +247,7 @@ export function buildOpenApiDocument(options: OpenApiOptions = {}): Json {
     },
     servers: [{ url: "https://uniora.example.com", description: "Your own deployment" }],
     tags: [...new Map(Object.values(TAGS).map((tag) => [tag.name, tag])).values()],
-    security: [{ ApiKey: [] }],
+    security: [{ ApiKey: [] }, { MachineToken: [] }],
     paths,
     components: {
       securitySchemes: {
@@ -256,6 +256,12 @@ export function buildOpenApiDocument(options: OpenApiOptions = {}): Json {
           scheme: "bearer",
           bearerFormat: "uniora_sk_…",
           description: "An API key created in Studio or with `uniora server keys create`. Each key belongs to a client that has scopes and a list of organizations; a call outside them is refused.",
+        },
+        MachineToken: {
+          type: "http",
+          scheme: "bearer",
+          bearerFormat: "JWT",
+          description: "An OAuth 2.0 `client_credentials` access token from the deployment's own identity provider, when the server is configured with `machineTokens`. It stands for one API client (the one the token's subject is mapped to): that client's scopes and organizations are the ceiling, and the token's `scope` claim can only narrow them.",
         },
       },
       headers: { RequestId: { schema: { type: "string" }, description: "Identifies this request in the server's log." } },

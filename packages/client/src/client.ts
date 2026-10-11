@@ -21,11 +21,25 @@ export interface VerifiedActor {
 /** Who a delegated call speaks for: prefer the verified form, which a leaked API key cannot forge. */
 export type Actor = AssertedActor | VerifiedActor;
 
-export interface UnioraClientOptions {
+/** How the client proves who it is: an API key, or an access token from the deployment's own OAuth 2.0 server (when it has `machineTokens`). */
+export type UnioraCredential =
+  | {
+      /** The API key (`uniora_sk_…`). A secret: keep it on your server, never in a browser, a repository or a log. */
+      readonly apiKey: string;
+      readonly accessToken?: never;
+    }
+  | {
+      /**
+       * An OAuth 2.0 `client_credentials` access token (a JWT), or a function that returns the current one: it is called for every
+       * attempt, so it should cache the token and renew it before it expires. Needs a server configured with `machineTokens`.
+       */
+      readonly accessToken: string | (() => string | Promise<string>);
+      readonly apiKey?: never;
+    };
+
+export type UnioraClientOptions = UnioraCredential & {
   /** Where your UNIORA server is: `https://uniora.internal.example.com`. */
   readonly baseUrl: string;
-  /** The API key (`uniora_sk_…`). A secret: keep it on your server, never in a browser, a repository or a log. */
-  readonly apiKey: string;
   /** Milliseconds before a call is given up. Default 10 000. */
   readonly timeoutMs?: number;
   /** How many times a call that is safe to repeat is retried. Default 2. `0` turns retries off. */
@@ -38,7 +52,7 @@ export interface UnioraClientOptions {
   readonly fetch?: typeof fetch;
   /** Replace the wait between retries (tests). */
   readonly sleep?: (milliseconds: number) => Promise<void>;
-}
+};
 
 /** Options every call accepts. */
 export interface CallOptions {
@@ -106,7 +120,10 @@ function validate(options: UnioraClientOptions): { base: string; fetchImpl: type
   if (browser && options.dangerouslyAllowBrowser !== true) {
     throw new Error("@uniora/client holds an API key and must run on your server, never in a browser: the key would be public. Call your own backend from the browser instead.");
   }
-  if (typeof options.apiKey !== "string" || !KEY_SHAPE.test(options.apiKey)) throw new TypeError('`apiKey` must be an API key ("uniora_sk_…").');
+  if ((options.apiKey === undefined) === (options.accessToken === undefined)) throw new TypeError("Pass exactly one of `apiKey` and `accessToken`.");
+  if (options.apiKey !== undefined && (typeof options.apiKey !== "string" || !KEY_SHAPE.test(options.apiKey))) throw new TypeError('`apiKey` must be an API key ("uniora_sk_…").');
+  if (options.accessToken !== undefined && typeof options.accessToken !== "string" && typeof options.accessToken !== "function") throw new TypeError("`accessToken` must be a token or a function that returns one.");
+  if (typeof options.accessToken === "string") assertAccessToken(options.accessToken);
   let url: URL;
   try {
     url = new URL(options.baseUrl);
@@ -121,6 +138,11 @@ function validate(options: UnioraClientOptions): { base: string; fetchImpl: type
   const fetchImpl = options.fetch ?? globalThis.fetch;
   if (typeof fetchImpl !== "function") throw new Error("No fetch available: use Node 20 or newer, or pass `fetch`.");
   return { base: url.origin + url.pathname.replace(/\/+$/, ""), fetchImpl };
+}
+
+const ACCESS_TOKEN = /^[A-Za-z0-9._~+/-]+=*$/;
+function assertAccessToken(value: unknown): asserts value is string {
+  if (typeof value !== "string" || value.length < 10 || value.length > 8192 || !ACCESS_TOKEN.test(value)) throw new TypeError("The access token must be the token itself (a JWT), without a `Bearer ` prefix.");
 }
 
 /** `timeoutMs` and `retries`, as given to the client or to one call: whole numbers in range, never `Infinity` (a retry loop that does not end). */
@@ -180,6 +202,12 @@ function parseProblem(status: number, body: unknown, headers: Headers): UnioraAp
 export function createUnioraClient(options: UnioraClientOptions): UnioraClient {
   const { base, fetchImpl } = validate(options);
   const sleep = options.sleep ?? defaultSleep;
+  const credential = async (): Promise<string> => {
+    if (options.apiKey !== undefined) return options.apiKey;
+    const token = typeof options.accessToken === "function" ? await options.accessToken() : options.accessToken;
+    assertAccessToken(token);
+    return token;
+  };
   const defaults = { timeoutMs: options.timeoutMs ?? 10_000, retries: options.retries ?? 2 };
 
   async function call(operationId: OperationId, input: unknown, callOptions: Record<string, unknown> = {}): Promise<unknown> {
@@ -203,7 +231,7 @@ export function createUnioraClient(options: UnioraClientOptions): UnioraClient {
       const value = values[name];
       if (value !== undefined) query.set(name, String(value));
     }
-    const headers: Record<string, string> = { authorization: `Bearer ${options.apiKey}`, accept: "application/json", "user-agent": "uniora-client" };
+    const headers: Record<string, string> = { accept: "application/json", "user-agent": "uniora-client" };
     let body: string | undefined;
     if (operation.hasBody) {
       const payload: Record<string, unknown> = {};
@@ -263,6 +291,8 @@ export function createUnioraClient(options: UnioraClientOptions): UnioraClient {
     const outer = callOptions.signal as AbortSignal | undefined;
 
     for (let attempt = 0; ; attempt++) {
+      // The credential is read for every attempt: a token function can hand out a renewed one. A failure to get it is the caller's, never retried.
+      headers.authorization = `Bearer ${await credential()}`;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(new Error("timeout")), timeoutMs);
       const onAbort = () => controller.abort(outer?.reason);
