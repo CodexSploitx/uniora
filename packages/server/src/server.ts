@@ -18,6 +18,8 @@ import { actorFromHeaders, completeIdentity } from "./identity.js";
 import { ConcurrencyGate, FailureThrottle, RateLimiter } from "./limits.js";
 import type { RateLimitDecision } from "./limits.js";
 import { SharedRateLimiter } from "./shared-limit.js";
+import { createWebhookDispatcher } from "./webhooks/dispatcher.js";
+import type { WebhookDispatcher } from "./webhooks/dispatcher.js";
 import { matchRoute } from "./route.js";
 import type { ApplicationContext, DelegatedContext, PlatformContext, Route, RouteContext } from "./route.js";
 import { allRoutes } from "./routes/index.js";
@@ -52,6 +54,8 @@ export interface UnioraServer {
   listen(options?: ListenOptions): Promise<RunningServer>;
   /** The routes, for documentation and tests. */
   readonly routes: readonly Route[];
+  /** The webhook dispatcher when `webhooks` is configured. `listen()` starts and stops it; with `handler` alone, start it yourself. */
+  readonly webhooks: WebhookDispatcher | undefined;
 }
 
 const EMPTY_OBJECT = s.object({});
@@ -145,6 +149,21 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
       : localRate;
   const concurrency = new ConcurrencyGate({ perKey: limits.maxConcurrencyPerKey, global: Number.POSITIVE_INFINITY });
   const verifier = config.actorProviders.length > 0 ? createActorTokenVerifier(config.actorProviders, { now: config.now, onWarning: (message, detail) => log({ level: "warn", msg: message, ...detail }) }) : undefined;
+  const webhookDispatcher = config.webhooks
+    ? createWebhookDispatcher({
+        webhooks: config.webhooks.storage,
+        outbox: config.webhooks.outbox!,
+        logger: log,
+        now: config.now,
+        ...(config.webhooks.urlPolicy ? { urlPolicy: config.webhooks.urlPolicy } : {}),
+        ...(config.webhooks.concurrency !== undefined ? { concurrency: config.webhooks.concurrency } : {}),
+        ...(config.webhooks.timeoutMs !== undefined ? { timeoutMs: config.webhooks.timeoutMs } : {}),
+        ...(config.webhooks.maxAttempts !== undefined ? { maxAttempts: config.webhooks.maxAttempts } : {}),
+        ...(config.webhooks.disableAfterFailures !== undefined ? { disableAfterFailures: config.webhooks.disableAfterFailures } : {}),
+        ...(config.webhooks.pollIntervalMs !== undefined ? { pollIntervalMs: config.webhooks.pollIntervalMs } : {}),
+        ...(config.webhooks.retainDeliveredDays !== undefined ? { retainDeliveredDays: config.webhooks.retainDeliveredDays } : {}),
+      })
+    : undefined;
   const failures = new FailureThrottle({ maxFailures: limits.authFailuresPerMinute, windowMs: 60_000 });
   let inFlight = 0;
   let closing = false;
@@ -483,6 +502,7 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
         resolve();
       });
     });
+    if (config.webhooks?.run !== false) webhookDispatcher?.start();
     const address = server.address() as AddressInfo;
     const shownHost = host.includes(":") ? `[${host}]` : host;
     const scheme = listenOptions.tls ? "https" : "http";
@@ -498,12 +518,13 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
           server.close(() => {
             clearTimeout(force);
             clearInterval(sweep);
-            resolve();
+            // Requests are done: let the attempts in flight finish, then stop sending.
+            void (webhookDispatcher?.stop() ?? Promise.resolve()).finally(resolve);
           });
           server.closeIdleConnections();
         }),
     };
   }
 
-  return { handler, listen, routes };
+  return { handler, listen, routes, webhooks: webhookDispatcher };
 }

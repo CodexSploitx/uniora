@@ -1,8 +1,9 @@
 import { beforeEach } from "vitest";
-import { createMemoryApiCredentialStorage, createMemoryStorage } from "@uniora/core";
-import type { ApiCredentialStorage, UnioraStorage } from "@uniora/core";
+import { createMemoryApiCredentialStorage, createMemoryStorage, createMemoryWebhookStorage } from "@uniora/core";
+import type { ApiCredentialStorage, UnioraStorage, WebhookStorage } from "@uniora/core";
 import { defineAccessScenarios } from "./access-suite.js";
 import { defineApiCredentialConformance } from "./api-suite.js";
+import { defineWebhookConformance } from "./webhook-suite.js";
 
 let storage: UnioraStorage;
 beforeEach(() => {
@@ -22,4 +23,22 @@ defineApiCredentialConformance({
     apiStorage = createMemoryApiCredentialStorage();
   },
   storage: () => apiStorage,
+});
+
+let webhookStorage: WebhookStorage;
+defineWebhookConformance({
+  name: "memory",
+  async setup() {},
+  async teardown() {},
+  async reset() {
+    webhookStorage = createMemoryWebhookStorage();
+  },
+  storage: () => webhookStorage,
+  probe: {
+    async dumpWebhookText() {
+      // The in-memory backend keeps the secret next to the endpoint; there is no table to dump, so the secret is read through the worker's door.
+      const [endpoint] = await webhookStorage.endpoints.search();
+      return (await webhookStorage.endpoints.signingSecrets(endpoint!.id)).join("\n");
+    },
+  },
 });

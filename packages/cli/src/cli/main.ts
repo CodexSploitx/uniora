@@ -6,6 +6,7 @@ import { runMigrate } from "../commands/migrate.js";
 import { runPlatform } from "../commands/platform.js";
 import { runServer, SERVER_SPEC, serverOptionsFromFlags } from "../commands/server.js";
 import { runStudio, STUDIO_SPEC, studioArgsFromFlags } from "../commands/studio.js";
+import { runWebhooks, WEBHOOKS_SPEC, webhooksOptionsFromFlags } from "../commands/webhooks.js";
 import { parseArgs, UsageError, type OptionSpec } from "./args.js";
 import { commonFromFlags, JSON_SPEC } from "./common.js";
 
@@ -75,6 +76,19 @@ const COMMANDS: Record<string, CommandDef> = {
                 Levanta la API (127.0.0.1:8787 por defecto). Fuera de loopback exige TLS o un proxy TLS declarado.`,
     spec: SERVER_SPEC,
     positionals: 3,
+  },
+  webhooks: {
+    summary: "Webhooks: a dónde manda UNIORA los eventos (firmados, con reintentos) y el worker que los envía",
+    usage: "uniora webhooks <create|list|show|update|enable|disable|rotate-secret|delete|deliveries|requeue|test|run> [opciones]",
+    details: `  create --url https://... --events 'membership.*,role.*'|'*' [--orgs '*'|id1,id2] [--description T]   Crea un endpoint; el secreto de firma se imprime UNA vez
+  list [--status enabled|disabled] | show <id> | update <id> [--url ...] [--events ...] [--orgs ...] [--description ...]
+  enable <id> | disable <id> [--reason T] | delete <id>
+  rotate-secret <id> [--grace-seconds N]   Secreto nuevo; el anterior sigue firmando N segundos (24 h por defecto, 0 = se corta ya)
+  deliveries [--endpoint ID] [--status pending|delivered|dead] [--limit N] | requeue <idEntrega>
+  test <id>        Envía un evento de prueba firmado a ese endpoint
+  run [--once]     El worker: convierte los eventos del outbox en entregas y las envía (todo el tiempo, o una ronda con --once)`,
+    spec: WEBHOOKS_SPEC,
+    positionals: 2,
   },
   studio: {
     summary: "Abre UNIORA Studio en local (solo 127.0.0.1, con token por ejecución)",
@@ -176,6 +190,9 @@ export async function runCli(argv: readonly string[], cwd: string = process.cwd(
         return;
       case "server":
         await runServer(positionals, cwd, serverOptionsFromFlags(flags, commonFromFlags(flags)));
+        return;
+      case "webhooks":
+        await runWebhooks(positionals, cwd, webhooksOptionsFromFlags(flags, commonFromFlags(flags)));
         return;
       case "studio":
         await runStudio(studioArgsFromFlags(flags), cwd, commonFromFlags(flags));

@@ -67,6 +67,8 @@ export interface InvitationAccessOptions {
 
 export interface InvitationServiceOptions {
   storage: UnioraStorage;
+  /** Also enqueue an outbox event for each invitation change (created, resent, revoked, accepted...), in the same transaction, e.g. for webhooks. The payload names the invitation and a fingerprint of the address, never the address, the token or the link. Off by default. */
+  outbox?: boolean;
   /**
    * Builds the link the invitee opens, from the raw token — typically
    * `` (token) => `https://app.example.com/invite/${token}` ``. The token is
@@ -288,21 +290,32 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
   }
 
   async function auditEvent(
-    tx: Pick<UnioraStorage, "auditLogs">,
+    tx: Pick<UnioraStorage, "auditLogs"> & Partial<Pick<UnioraStorage, "outbox">>,
     actor: Identity,
     action: string,
     invitation: Invitation,
     metadata: Record<string, unknown> = {},
   ): Promise<void> {
     // Never the token, never the URL: audit history is append-only and long-lived.
-    await tx.auditLogs.record({
+    const entry = {
       id: generateId(),
       organizationId: invitation.organizationId,
       actor,
       action,
       target: { type: "invitation", id: invitation.id },
       metadata: { emailFingerprint: await emailFingerprint(invitation), ...metadata },
-    });
+    };
+    await tx.auditLogs.record(entry);
+    if (options.outbox) {
+      const txOutbox = (tx as Partial<Pick<UnioraStorage, "outbox">>).outbox;
+      if (!txOutbox) throw new InvitationError("The invitation service was asked to emit outbox events but its storage has no outbox.", "bad_request");
+      await txOutbox.enqueue({
+        id: `evt:${generateId()}`,
+        type: action,
+        organizationId: invitation.organizationId,
+        payload: { actor: { provider: actor.provider, subject: actor.subject }, target: entry.target, metadata: entry.metadata },
+      });
+    }
   }
 
   async function assertInvitableRoles(organizationId: string, roleIds: string[]) {

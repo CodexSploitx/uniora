@@ -4,13 +4,14 @@ import {
   createApiCredentialService,
   createMemoryApiCredentialStorage,
   createMemoryPlatformStorage,
+  createMemoryWebhookStorage,
   createMemoryStorage,
   createOrganizationWithOwner,
 } from "@uniora/core";
-import type { ApiCredentialStorage, ApiScope, PlatformStorage, UnioraStorage } from "@uniora/core";
+import type { ApiCredentialStorage, ApiScope, PlatformStorage, UnioraStorage, WebhookStorage } from "@uniora/core";
 import { Pool } from "pg";
-import { applyMigrations as applyPostgresMigrations, createPostgresApiCredentialStorage, createPostgresPlatformStorage, createPostgresStorage } from "@uniora/postgres";
-import { applyMigrations, createSqliteApiCredentialStorage, createSqlitePlatformStorage, createSqliteStorage } from "@uniora/sqlite";
+import { applyMigrations as applyPostgresMigrations, createPostgresApiCredentialStorage, createPostgresPlatformStorage, createPostgresStorage, createPostgresWebhookStorage } from "@uniora/postgres";
+import { applyMigrations, createSqliteApiCredentialStorage, createSqlitePlatformStorage, createSqliteStorage, createSqliteWebhookStorage } from "@uniora/sqlite";
 import { createJsonLogger, createUnioraServer, silentLogger } from "../index.js";
 import type { LogEntry, RunningServer, UnioraServerOptions } from "../index.js";
 import { nowSeconds, signJwt, testKey } from "./jwt.js";
@@ -49,6 +50,7 @@ export interface Backend {
   readonly storage: UnioraStorage;
   readonly credentials: ApiCredentialStorage;
   readonly platform: PlatformStorage;
+  readonly webhooks: WebhookStorage;
   close(): void;
 }
 
@@ -60,18 +62,18 @@ export async function createBackend(name: BackendName): Promise<Backend> {
       migrated = true;
     }
     const tables = await pool.query<{ name: string }>(
-      "select format('%I.%I', schemaname, tablename) as name from pg_tables where schemaname in ('uniora', 'uniora_api', 'uniora_platform') and tablename <> 'schema_migrations'",
+      "select format('%I.%I', schemaname, tablename) as name from pg_tables where schemaname in ('uniora', 'uniora_api', 'uniora_platform', 'uniora_webhooks') and tablename <> 'schema_migrations'",
     );
     if (tables.rows.length > 0) await pool.query(`truncate table ${tables.rows.map((row) => row.name).join(", ")} cascade`);
-    return { storage: createPostgresStorage(pool), credentials: createPostgresApiCredentialStorage(pool), platform: createPostgresPlatformStorage(pool), close() {} };
+    return { storage: createPostgresStorage(pool), credentials: createPostgresApiCredentialStorage(pool), platform: createPostgresPlatformStorage(pool), webhooks: createPostgresWebhookStorage(pool), close() {} };
   }
   if (name === "memory") {
     const storage = createMemoryStorage();
-    return { storage, credentials: createMemoryApiCredentialStorage(), platform: createMemoryPlatformStorage({ auditLogs: storage.auditLogs }), close() {} };
+    return { storage, credentials: createMemoryApiCredentialStorage(), platform: createMemoryPlatformStorage({ auditLogs: storage.auditLogs }), webhooks: createMemoryWebhookStorage({ auditLogs: storage.auditLogs }), close() {} };
   }
   const db = new Database(":memory:");
   applyMigrations(db);
-  return { storage: createSqliteStorage(db), credentials: createSqliteApiCredentialStorage(db), platform: createSqlitePlatformStorage(db), close: () => db.close() };
+  return { storage: createSqliteStorage(db), credentials: createSqliteApiCredentialStorage(db), platform: createSqlitePlatformStorage(db), webhooks: createSqliteWebhookStorage(db), close: () => db.close() };
 }
 
 /** An organization "acme" with an owner, a viewer role with `reports.read` and two members, and one more organization "globex". */

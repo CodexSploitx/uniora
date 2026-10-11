@@ -382,14 +382,31 @@ export async function runServerStart(cwd: string, options: ServerOptions): Promi
   }
 
   let running: RunningServer | undefined;
+  let enabled: string[] = [];
   try {
+    const section = config.server ?? {};
+    const defaultProvider = options.defaultProvider ?? section.defaultProvider;
+    const trustedProxyHops = hops ?? section.trustedProxyHops;
     const server = createUnioraServer({
       storage: driver.storage(),
       credentials: driver.apiCredentials(),
-      ...(options.defaultProvider !== undefined ? { defaultProvider: options.defaultProvider } : {}),
-      ...(hops !== undefined ? { trustedProxyHops: hops } : {}),
-      readOnly: options.readOnly === true,
+      ...(defaultProvider !== undefined ? { defaultProvider } : {}),
+      ...(trustedProxyHops !== undefined ? { trustedProxyHops } : {}),
+      ...(section.limits ? { limits: section.limits } : {}),
+      ...(section.actorTokens ? { actorTokens: section.actorTokens } : {}),
+      ...(section.requireVerifiedActors !== undefined ? { requireVerifiedActors: section.requireVerifiedActors } : {}),
+      ...(section.sharedRateLimit !== undefined ? { sharedRateLimit: section.sharedRateLimit } : {}),
+      ...(section.invitations ? { invitations: section.invitations } : {}),
+      ...(section.platform ? { platform: { ...section.platform, storage: driver.platformStorage() } } : {}),
+      ...(section.webhooks ? { webhooks: { ...section.webhooks, storage: driver.webhookStorage() } } : {}),
+      readOnly: options.readOnly === true || section.readOnly === true,
     });
+    enabled = [
+      ...(section.actorTokens ? [`tokens de usuario (${section.actorTokens.length} proveedor(es)${section.requireVerifiedActors ? ", obligatorios" : ""})`] : []),
+      ...(section.platform ? ["plataforma"] : []),
+      ...(section.webhooks ? [section.webhooks.run === false ? "webhooks (el worker corre aparte)" : "webhooks"] : []),
+      ...(section.sharedRateLimit ? ["límite de tasa compartido"] : []),
+    ];
     running = await server.listen({
       host: options.host ?? "127.0.0.1",
       port: port ?? 8787,
@@ -404,7 +421,7 @@ export async function runServerStart(cwd: string, options: ServerOptions): Promi
     return;
   }
 
-  const started: Report = { command, checks: [{ name: "Servidor", severity: "ok", message: `escuchando en ${running.url}${options.readOnly ? " (solo lectura)" : ""}` }], data: { url: running.url, target: driver.target } };
+  const started: Report = { command, checks: [{ name: "Servidor", severity: "ok", message: `escuchando en ${running.url}${options.readOnly || config.server?.readOnly ? " (solo lectura)" : ""}${enabled.length > 0 ? ` · ${enabled.join(" · ")}` : ""}` }], data: { url: running.url, target: driver.target } };
   emit(started, json);
   options.onStarted?.(running);
 

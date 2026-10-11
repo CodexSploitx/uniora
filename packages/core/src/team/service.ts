@@ -35,6 +35,8 @@ export interface TeamServiceOptions {
   engine?: AuthorizationEngineOptions;
   /** Replace any of the default permission keys. */
   permissions?: Partial<TeamPermissionKeys>;
+  /** Also enqueue an outbox event for each change, in the same transaction (see `createAuditedStorage`), e.g. for webhooks. Off by default. */
+  outbox?: boolean;
 }
 
 /** Everything the service does on someone's behalf names that someone. It is the identity the engine is asked about. */
@@ -100,7 +102,7 @@ export function createTeamService(options: TeamServiceOptions): TeamService {
 
   /** Runs `work` in one transaction with an engine bound to that same transaction and an audited view that records the actor. */
   function run<T>(actor: Identity, work: (ctx: Context) => Promise<T>): Promise<T> {
-    const audited = createAuditedStorage(options.storage, { actor });
+    const audited = createAuditedStorage(options.storage, { actor, ...(options.outbox ? { outbox: true } : {}) });
     return audited.transaction(async (tx) => {
       // The engine reads through the transaction, so what it decides and what is written see the same data.
       const engine = createAuthorizationEngine({ ...tx, transaction: options.storage.transaction.bind(options.storage) } as UnioraStorage, options.engine);

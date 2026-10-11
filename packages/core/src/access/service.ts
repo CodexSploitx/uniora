@@ -32,6 +32,8 @@ export interface AccessAdminServiceOptions {
    * any other code that holds the storage can still hand out power without them. Off by default (`access_storage_not_guarded`).
    */
   allowUnguardedStorage?: boolean;
+  /** Also enqueue an outbox event for each change, in the same transaction (see `createAuditedStorage`), e.g. for webhooks. Off by default. */
+  outbox?: boolean;
 }
 
 /** Everything the service does on someone's behalf names that someone (from YOUR authentication, never from a request body). */
@@ -139,7 +141,7 @@ export function createAccessAdminService(options: AccessAdminServiceOptions): Ac
 
   /** One transaction: the engine reads through it, and the audited view records the actor, so decision, change and audit agree. */
   function run<T>(actor: Identity, organizationId: string, work: (ctx: Context) => Promise<T>): Promise<T> {
-    const audited = createAuditedStorage(options.storage, { actor });
+    const audited = createAuditedStorage(options.storage, { actor, ...(options.outbox ? { outbox: true } : {}) });
     return audited.transaction(async (tx) => {
       // Changes of power in one organization queue up: what is decided below is still true when it is written.
       await tx.lock?.(accessLockKey(organizationId));

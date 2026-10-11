@@ -548,3 +548,44 @@ export { MAX_RATE_KEY_LENGTH, assertRateLease, leaseFromBucket } from "./api/rat
 export type { RateLeaseInput, RateLimitRepository } from "./api/rate-limit.js";
 export { API_KEY_TOUCH_INTERVAL_MS, authenticateApiKey, clientMayAccessOrganization } from "./api/authenticate.js";
 export type { AuthenticateApiKeyOptions } from "./api/authenticate.js";
+
+export { WebhookError } from "./webhook/errors.js";
+export type { WebhookErrorCode } from "./webhook/errors.js";
+export type { WebhookDelivery, WebhookDeliveryStatus, WebhookEndpoint, WebhookEndpointStatus } from "./webhook/types.js";
+export { WEBHOOK_DELIVERY_STATUSES, WEBHOOK_ENDPOINT_STATUSES } from "./webhook/types.js";
+export type {
+  ClaimWebhookDeliveriesOptions,
+  CompleteWebhookDeliveryInput,
+  CreateWebhookEndpointInput,
+  EnqueueWebhookDeliveryInput,
+  FailWebhookDeliveryInput,
+  SearchWebhookDeliveriesOptions,
+  SearchWebhookEndpointsOptions,
+  UpdateWebhookEndpointInput,
+  WebhookDeliveryRepository,
+  WebhookEndpointRepository,
+  WebhookStorage,
+  WebhookTransaction,
+} from "./webhook/repository.js";
+export {
+  MAX_WEBHOOK_ENDPOINTS,
+  MAX_WEBHOOK_SECRET_GRACE_SECONDS,
+  assertValidCreateWebhookEndpoint,
+  assertValidUpdateWebhookEndpoint,
+  assertWebhookDelivery,
+  assertWebhookId,
+  assertWebhookSecret,
+  assertWebhookVersion,
+  endpointWants,
+  normalizeWebhookReason,
+  resolveWebhookClaim,
+  webhookBackoffMs,
+} from "./webhook/repository.js";
+export { MAX_WEBHOOK_URL_LENGTH, isPublicIp, parseWebhookUrl } from "./webhook/network.js";
+export type { WebhookUrlPolicy } from "./webhook/network.js";
+export { WEBHOOK_SECRET_PREFIX, generateWebhookSecret, isWebhookSecret, signWebhook, verifyWebhook, webhookBody } from "./webhook/signature.js";
+export type { VerifyWebhookInput } from "./webhook/signature.js";
+export { createMemoryWebhookStorage } from "./webhook/memory.js";
+export type { MemoryWebhookStorageOptions } from "./webhook/memory.js";
+export { createWebhookService } from "./webhook/service.js";
+export type { CreatedWebhookEndpoint, WebhookService, WebhookServiceOptions } from "./webhook/service.js";

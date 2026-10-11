@@ -71,6 +71,19 @@ export const provisioningRoutes = [
             target: { type: "organization", id: created.organization.id },
             metadata: { name: created.organization.name, slug: created.organization.slug, owner },
           });
+          // The same moment, the same transaction: a webhook endpoint hears about the organization only if it really exists.
+          if (ctx.config.webhooks) {
+            await tx.outbox.enqueue({
+              id: `evt:${randomUUID()}`,
+              type: "organization.created",
+              organizationId: created.organization.id,
+              payload: {
+                actor: { provider: app.principal.provider, subject: app.principal.subject },
+                target: { type: "organization", id: created.organization.id },
+                metadata: { name: created.organization.name, slug: created.organization.slug, owner },
+              },
+            });
+          }
           return created;
         })) as never;
       } catch (error) {

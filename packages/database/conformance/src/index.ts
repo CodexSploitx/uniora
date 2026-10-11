@@ -9,3 +9,5 @@ export type { AccessHarness } from "./access-suite.js";
 export type { PolicyProbe } from "./policy-suite.js";
 export { defineApiCredentialConformance } from "./api-suite.js";
 export type { ApiHarness } from "./api-suite.js";
+export { defineWebhookConformance } from "./webhook-suite.js";
+export type { WebhookHarness } from "./webhook-suite.js";

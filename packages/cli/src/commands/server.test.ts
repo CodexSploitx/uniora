@@ -128,6 +128,58 @@ describe("uniora server (SQLite)", () => {
     }
   });
 
+  it("start takes tokens, the platform and webhooks from the config file", async () => {
+    writeFileSync(
+      join(dir, "full.config.mjs"),
+      `export default {
+        database: { provider: "sqlite", url: "sqlite:./data/uniora.db" },
+        server: {
+          defaultProvider: "main",
+          actorTokens: [{ provider: "staff", issuer: "https://staff.example.com/", audience: "uniora", algorithms: ["HS256"], secret: "0123456789abcdef0123456789abcdef-secret" }],
+          platform: { providers: ["staff"], stepUp: { maxAgeSeconds: 120 } },
+          webhooks: { run: false },
+          sharedRateLimit: true,
+        },
+      };\n`,
+    );
+    await run("clients", "create", "--name", "panel", "--scopes", "platform:admin", "--orgs", "*");
+    const { token } = await run("keys", "create", "--client", "panel");
+    const abort = new AbortController();
+    const running = new Promise<RunningServer>((resolve, reject) => {
+      runServer(["start"], dir, { json: true, port: "0", configPath: "full.config.mjs", onStarted: resolve, stop: abort.signal }).catch(reject);
+    });
+    const server = await running;
+    try {
+      expect(lines.join("\n")).toContain("plataforma");
+      expect(lines.join("\n")).toContain("webhooks");
+      // The platform routes exist and want the operator's own token; the key alone is not enough.
+      const keyAlone = await fetch(`${server.url}/v1/platform/roles`, { headers: { authorization: `Bearer ${token}` } });
+      expect(keyAlone.status).toBe(403);
+      expect(((await keyAlone.json()) as { code: string }).code).toBe("actor_token_required");
+      const bad = await fetch(`${server.url}/v1/platform/roles`, { headers: { authorization: `Bearer ${token}`, "uniora-actor-token": "nope" } });
+      expect(bad.status).toBe(401);
+    } finally {
+      abort.abort();
+    }
+  });
+
+  it("start refuses a server section that makes no sense, naming the option", async () => {
+    writeFileSync(
+      join(dir, "bad.config.mjs"),
+      `export default { database: { provider: "sqlite", url: "sqlite:./data/uniora.db" }, server: { platform: { providers: ["nobody"] } } };\n`,
+    );
+    lines.length = 0;
+    process.exitCode = undefined;
+    await runCli(["server", "start", "--port", "0", "--config", "bad.config.mjs", "--json"], dir);
+    const report = JSON.parse(lines.join("\n"));
+    expect(report.ok).toBe(false);
+    expect(JSON.stringify(report)).toMatch(/platform|actorTokens/);
+    writeFileSync(join(dir, "typo.config.mjs"), `export default { database: { provider: "sqlite", url: "sqlite:./data/uniora.db" }, server: { platfrom: {} } };\n`);
+    lines.length = 0;
+    await runCli(["server", "start", "--port", "0", "--config", "typo.config.mjs", "--json"], dir);
+    expect(JSON.stringify(JSON.parse(lines.join("\n")))).toContain("server.platfrom");
+  });
+
   it("start refuses a public interface without TLS", async () => {
     lines.length = 0;
     process.exitCode = undefined;

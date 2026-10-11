@@ -6,6 +6,7 @@ import {
   createSqliteApiCredentialStorage,
   createSqlitePlatformStorage,
   createSqliteStorage,
+  createSqliteWebhookStorage,
   getMigrationStatus,
   listMigrationIds,
   openSqliteDatabase,
@@ -154,6 +155,8 @@ export function createSqliteDriver(url: string, cwd: string, intent: DatabaseInt
 
     apiCredentials: () => createSqliteApiCredentialStorage(requireDatabase()),
     storage: () => createSqliteStorage(requireDatabase()),
+    platformStorage: () => createSqlitePlatformStorage(requireDatabase()),
+    webhookStorage: () => createSqliteWebhookStorage(requireDatabase()),
 
     async close() {
       db?.close();

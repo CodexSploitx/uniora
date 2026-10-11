@@ -6,3 +6,4 @@ export { hasUnioraSchema, openSqliteDatabase, SqliteUrlError, sqlitePathFromUrl 
 export type { OpenSqliteOptions } from "./connection.js";
 export { createSqliteApiCredentialStorage } from "./api-credential-storage.js";
 export { createSqlitePlatformStorage } from "./platform-storage.js";
+export { createSqliteWebhookStorage } from "./webhook-storage.js";

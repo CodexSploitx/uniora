@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import type { ApiCredentialStorage, AuthorizationEngineOptions, InvitationServiceOptions, PlatformEngineOptions, PlatformStorage, PolicyServiceOptions, UnioraStorage } from "@uniora/core";
+import type { ApiCredentialStorage, AuthorizationEngineOptions, InvitationServiceOptions, OutboxRepository, PlatformEngineOptions, PlatformStorage, PolicyServiceOptions, UnioraStorage, WebhookStorage, WebhookUrlPolicy } from "@uniora/core";
 import { isReservedIdentityProvider } from "@uniora/core";
 import { resolveActorTokenProviders } from "./actor-token.js";
 import type { ActorTokenProvider, ResolvedProvider } from "./actor-token.js";
@@ -97,6 +97,23 @@ export interface ResolvedPlatform {
   readonly engine: PlatformEngineOptions | undefined;
 }
 
+export interface WebhooksConfig {
+  /** The webhook endpoints and deliveries (their own scope: the endpoint rows hold the signing secrets). */
+  storage: WebhookStorage;
+  /** The events to send. Defaults to the outbox of `storage` (the organization storage), which must have been wrapped with `createAuditedStorage(..., { outbox: true })` for changes to produce events. The dispatcher is its consumer. */
+  outbox?: OutboxRepository;
+  /** Development receivers only: `allowInsecureHttp` and `allowPrivateNetworks`. Never both on in production. */
+  urlPolicy?: WebhookUrlPolicy;
+  /** Run the dispatcher inside `listen()` (default `true`). Turn it off to run it somewhere else (`uniora webhooks run`) and keep this process for requests. */
+  run?: boolean;
+  concurrency?: number;
+  timeoutMs?: number;
+  maxAttempts?: number;
+  disableAfterFailures?: number;
+  pollIntervalMs?: number;
+  retainDeliveredDays?: number;
+}
+
 export interface UnioraServerOptions {
   /** The organization data. Reads and decisions go through it. */
   storage: UnioraStorage;
@@ -142,6 +159,11 @@ export interface UnioraServerOptions {
    * verified token and a recent second factor; without this option they answer 501 `platform_not_configured`.
    */
   platform?: PlatformConfig;
+  /**
+   * Sends the events of the outbox to webhook endpoints (signed, retried, with an SSRF guard). Managed from Studio and the CLI, never
+   * from an API route: an endpoint receives the events of EVERY organization.
+   */
+  webhooks?: WebhooksConfig;
   /** Refuse every write with 503 `read_only` (during a migration or an incident). */
   readOnly?: boolean;
   /**
@@ -166,6 +188,7 @@ export interface ResolvedConfig {
   readonly policies: Omit<PolicyServiceOptions, "storage" | "engine"> | undefined;
   readonly sharedRateLimit: boolean;
   readonly platform: ResolvedPlatform | undefined;
+  readonly webhooks: WebhooksConfig | undefined;
   readonly readOnly: boolean;
   readonly trustedProxyHops: number;
   readonly logger: Logger;
@@ -242,6 +265,7 @@ export function resolveConfig(options: UnioraServerOptions): ResolvedConfig {
     policies: options.policies,
     sharedRateLimit: options.sharedRateLimit === true,
     platform,
+    webhooks: resolveWebhooks(options.webhooks, options.storage),
     readOnly: options.readOnly === true,
     trustedProxyHops: hops,
     logger: options.logger ?? createJsonLogger(),
@@ -287,4 +311,16 @@ function resolvePlatform(input: PlatformConfig | undefined, actorProviders: read
     supportGrantablePermissions: input.supportGrantablePermissions,
     engine: input.engine,
   });
+}
+
+function resolveWebhooks(input: WebhooksConfig | undefined, storage: UnioraStorage): WebhooksConfig | undefined {
+  if (input === undefined) return undefined;
+  if (typeof input !== "object" || input === null || !input.storage?.endpoints || !input.storage.deliveries) throw new ServerConfigError("`webhooks.storage` is required.");
+  const known = new Set(["storage", "outbox", "urlPolicy", "run", "concurrency", "timeoutMs", "maxAttempts", "disableAfterFailures", "pollIntervalMs", "retainDeliveredDays"]);
+  for (const key of Object.keys(input)) if (!known.has(key)) throw new ServerConfigError(`webhooks: unknown option "${key}".`);
+  if (!input.outbox && !storage.outbox) throw new ServerConfigError("`webhooks` needs an outbox: pass `webhooks.outbox`, or use an organization storage that has one.");
+  if (input.urlPolicy?.allowInsecureHttp === true && input.urlPolicy.allowPrivateNetworks === true && process.env.NODE_ENV === "production") {
+    throw new ServerConfigError("`webhooks.urlPolicy` allows plain http and private networks together in production: that lets a registered endpoint reach your internal services.");
+  }
+  return Object.freeze({ ...input, outbox: input.outbox ?? storage.outbox });
 }

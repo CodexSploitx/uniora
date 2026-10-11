@@ -29,7 +29,7 @@ export function createApplicationContext(config: ResolvedConfig, principal: ApiP
   return {
     principal: { provider: "uniora-api", subject: principal.client.id },
     storage,
-    invitations: config.invitations ? createInvitationService({ storage, ...(engine ? { engine } : {}), ...invitationOptions(config) }) : undefined,
+    invitations: config.invitations ? createInvitationService({ storage, ...(engine ? { engine } : {}), ...(config.webhooks ? { outbox: true } : {}), ...invitationOptions(config) }) : undefined,
   };
 }
 
@@ -41,9 +41,9 @@ export function createDelegatedContext(config: ResolvedConfig, principal: ApiPri
   return {
     ...application,
     actor,
-    access: createAccessAdminService({ storage, ...(engine ? { engine } : {}) }),
-    teams: createTeamService({ storage, ...(engine ? { engine } : {}) }),
-    policies: createPolicyService({ storage, ...(engine ? { engine } : {}), ...config.policies }),
+    access: createAccessAdminService({ storage, ...(engine ? { engine } : {}), ...(config.webhooks ? { outbox: true } : {}) }),
+    teams: createTeamService({ storage, ...(engine ? { engine } : {}), ...(config.webhooks ? { outbox: true } : {}) }),
+    policies: createPolicyService({ storage, ...(engine ? { engine } : {}), ...(config.webhooks ? { outbox: true } : {}), ...config.policies }),
   };
 }
 
