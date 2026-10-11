@@ -289,6 +289,12 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
     return (await hashInvitationToken(`${invitation.organizationId}:${invitation.email}`)).slice(0, 32);
   }
 
+  /** What a sender may echo about the address in a refusal ("550 <ana@example.com>: rejected"): the address and its local part. */
+  function addressSecrets(email: string): string[] {
+    const local = email.split("@")[0] ?? "";
+    return [email, ...(local.length >= 3 ? [local] : [])];
+  }
+
   async function auditEvent(
     tx: Pick<UnioraStorage, "auditLogs"> & Partial<Pick<UnioraStorage, "outbox">>,
     actor: Identity,
@@ -313,7 +319,8 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
         id: `evt:${generateId()}`,
         type: action,
         organizationId: invitation.organizationId,
-        payload: { actor: { provider: actor.provider, subject: actor.subject }, target: entry.target, metadata: entry.metadata },
+        // Without the fingerprint: it is derived from the address and the (public) organization id, so a receiver could test guessed addresses against it.
+        payload: { actor: { provider: actor.provider, subject: actor.subject }, target: entry.target, metadata: Object.fromEntries(Object.entries(entry.metadata).filter(([key]) => key !== "emailFingerprint")) },
       });
     }
   }
@@ -439,7 +446,7 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
         expiresAt: invitation.expiresAt,
         locale,
       },
-      { retry: options.retry, secrets: [token, acceptUrl], sleep: options.sleep, random: options.random },
+      { retry: options.retry, secrets: [token, acceptUrl, ...addressSecrets(invitation.email)], sleep: options.sleep, random: options.random },
     );
 
     await storage.invitations.recordDelivery(invitation.id, {

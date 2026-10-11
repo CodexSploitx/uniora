@@ -91,13 +91,23 @@ export async function sendWebhook(input: SendWebhookInput): Promise<SendWebhookR
   const elapsed = () => Date.now() - started;
   let address: string;
   try {
-    address = await destinationOf(url.hostname, policy, input.resolve ?? defaultResolve);
+    // The lookup is inside the deadline too: a name server that never answers must not hold a delivery (and the worker) for ever.
+    let timer: NodeJS.Timeout | undefined;
+    const late = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("the name does not resolve")), input.timeoutMs);
+    });
+    try {
+      address = await Promise.race([destinationOf(url.hostname, policy, input.resolve ?? defaultResolve), late]);
+    } finally {
+      clearTimeout(timer);
+    }
   } catch (error) {
     return { ok: false, durationMs: elapsed(), error: describe(error) };
   }
 
   return new Promise<SendWebhookResult>((resolve) => {
     let settled = false;
+    let deadline: NodeJS.Timeout | undefined;
     const finish = (result: Omit<SendWebhookResult, "durationMs">) => {
       if (settled) return;
       settled = true;
@@ -105,7 +115,9 @@ export async function sendWebhook(input: SendWebhookInput): Promise<SendWebhookR
       resolve({ ...result, durationMs: elapsed() });
     };
     const secure = url.protocol === "https:";
-    const request = (secure ? httpsRequest : httpRequest)(
+    let request: ReturnType<typeof httpRequest>;
+    try {
+      request = (secure ? httpsRequest : httpRequest)(
       {
         host: address,
         port: url.port === "" ? (secure ? 443 : 80) : Number(url.port),
@@ -117,6 +129,12 @@ export async function sendWebhook(input: SendWebhookInput): Promise<SendWebhookR
         ...(secure ? { minVersion: "TLSv1.2" as const, ...(isIP(url.hostname.replace(/^\[|\]$/g, "")) === 0 ? { servername: url.hostname } : {}) } : {}),
       },
       (response) => {
+        // A 2xx is the answer: whatever the receiver streams after it is not read (nor waited for: a delivery that was accepted is not retried).
+        if ((response.statusCode ?? 0) >= 200 && (response.statusCode ?? 0) < 300) {
+          finish({ ok: true, status: response.statusCode ?? 200 });
+          response.destroy();
+          return;
+        }
         let read = 0;
         response.on("data", (chunk: Buffer) => {
           read += chunk.length;
@@ -138,7 +156,12 @@ export async function sendWebhook(input: SendWebhookInput): Promise<SendWebhookR
         response.on("error", done);
       },
     );
-    const deadline = setTimeout(() => {
+    } catch {
+      // The HTTP client refused what it was given (a header it cannot send): a failed attempt, never an exception that stops the worker.
+      finish({ ok: false, error: "the request could not be sent" });
+      return;
+    }
+    deadline = setTimeout(() => {
       request.destroy();
       finish({ ok: false, error: `timeout after ${input.timeoutMs} ms` });
     }, input.timeoutMs);

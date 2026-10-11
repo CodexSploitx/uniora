@@ -19,6 +19,7 @@ const PRIVATE_V4: readonly (readonly [string, number])[] = [
   ["192.88.99.0", 24],
   ["192.168.0.0", 16],
   ["198.18.0.0", 15], // benchmarking
+  ["168.63.129.16", 32], // the Azure platform endpoint (WireServer), a metadata-class target
   ["198.51.100.0", 24], // documentation
   ["203.0.113.0", 24], // documentation
   ["224.0.0.0", 4], // multicast
@@ -72,6 +73,8 @@ export function isPublicIp(address: string): boolean {
   if (bytes.slice(0, 10).every((byte) => byte === 0) && bytes[10] === 0xff && bytes[11] === 0xff) return !privateV4(embedded(12)); // ::ffff:a.b.c.d
   if (bytes.slice(0, 12).every((byte) => byte === 0)) return false; // deprecated IPv4-compatible ::a.b.c.d
   if (bytes[0] === 0 && bytes[1] === 0x64 && bytes[2] === 0xff && bytes[3] === 0x9b && bytes.slice(4, 12).every((byte) => byte === 0)) return !privateV4(embedded(12)); // NAT64
+  if (bytes.slice(0, 8).every((byte) => byte === 0) && bytes[8] === 0xff && bytes[9] === 0xff && bytes[10] === 0 && bytes[11] === 0) return false; // SIIT ::ffff:0:a.b.c.d
+  if (bytes[0] === 0 && bytes[1] === 0x64 && bytes[2] === 0xff && bytes[3] === 0x9b && bytes[4] === 0 && bytes[5] === 1) return false; // local-use NAT64 64:ff9b:1::/48
   if (bytes[0] === 0x20 && bytes[1] === 0x02) return !privateV4(embedded(2)); // 6to4
   if (bytes[0] === 0x20 && bytes[1] === 0x01 && bytes[2] === 0x00 && bytes[3] === 0x00) return false; // Teredo
   if (bytes[0] === 0x20 && bytes[1] === 0x01 && bytes[2] === 0x0d && bytes[3] === 0xb8) return false; // documentation
@@ -114,7 +117,8 @@ export function parseWebhookUrl(value: unknown, policy: WebhookUrlPolicy = {}): 
   if (url.protocol !== "https:" && !(url.protocol === "http:" && policy.allowInsecureHttp === true)) throw invalid(policy.allowInsecureHttp === true ? "must be http or https" : "must be https");
   if (url.username !== "" || url.password !== "") throw invalid("cannot carry credentials: put a secret in the path or sign the body instead");
   if (url.hash !== "") throw invalid("cannot have a fragment");
-  const host = url.hostname.startsWith("[") ? url.hostname.slice(1, -1) : url.hostname;
+  // `localhost.` is the same name as `localhost`: a trailing dot must not get past the name checks.
+  const host = (url.hostname.startsWith("[") ? url.hostname.slice(1, -1) : url.hostname).replace(/\.+$/, "");
   if (host === "") throw invalid("needs a host");
   if (policy.allowPrivateNetworks !== true) {
     const literal = isIPv4(host) || isIPv6(host);

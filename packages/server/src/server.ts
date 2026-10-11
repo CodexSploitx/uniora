@@ -161,6 +161,7 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
         ...(config.webhooks.timeoutMs !== undefined ? { timeoutMs: config.webhooks.timeoutMs } : {}),
         ...(config.webhooks.maxAttempts !== undefined ? { maxAttempts: config.webhooks.maxAttempts } : {}),
         ...(config.webhooks.disableAfterFailures !== undefined ? { disableAfterFailures: config.webhooks.disableAfterFailures } : {}),
+        ...(config.webhooks.disableAfterMinutes !== undefined ? { disableAfterMinutes: config.webhooks.disableAfterMinutes } : {}),
         ...(config.webhooks.pollIntervalMs !== undefined ? { pollIntervalMs: config.webhooks.pollIntervalMs } : {}),
         ...(config.webhooks.retainDeliveredDays !== undefined ? { retainDeliveredDays: config.webhooks.retainDeliveredDays } : {}),
       })
@@ -515,7 +516,8 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
         resolve();
       });
     });
-    if (config.webhooks?.run !== false) webhookDispatcher?.start();
+    // Read-only is for a migration or an incident: it must not keep writing deliveries or calling other systems either.
+    if (config.webhooks?.run !== false && !config.readOnly) webhookDispatcher?.start();
     const address = server.address() as AddressInfo;
     const shownHost = host.includes(":") ? `[${host}]` : host;
     const scheme = listenOptions.tls ? "https" : "http";

@@ -333,7 +333,12 @@ createUnioraServer({
 
 - The API **client** (created with `uniora server clients create`) is still where the power lives: its scopes and its organization list are the
   **ceiling**. A token may carry a `scope` (space-separated) or `scp` (list) claim that **narrows** them, never widens them; a token that names no
-  UNIORA scope at all can call nothing. A subject that is not in `clients` is refused.
+  UNIORA scope at all can call nothing, and **a token with no `scope`/`scp` claim at all gets no scopes** either (an explicit `null` refuses the token).
+  If your provider narrows with a claim UNIORA does not read (Auth0's `permissions`, Azure's `roles`), set `allowUnscopedTokens: true` on that provider to
+  give such tokens the client's whole scope set: the ceiling is then the only limit, so keep the client narrow. A subject that is not in `clients` is refused.
+- **`subjectClaim` other than `sub`** (Azure AD and Okta put the application id in `azp` or `client_id`, and the tokens users get from the same application
+  carry it too): the config then **requires** `requireClaims`, the claims that tell a machine token from a user's, for example `{ gty: "client-credentials" }`
+  (Auth0) or `{ idtyp: "app" }` (Azure AD). `{}` is the explicit "I accept the risk".
 - Everything else about verification is the same as for [end-user tokens](#verified-end-users-the-list-of-providers): pinned algorithms, keys only from the
   configuration, `exp` required, audience required. Every refusal is the same `401` as a bad key; `503 unavailable` when the keys cannot be fetched.
 - **Disabling the API client cuts the machine off on its next request**, whatever the token's own expiry. Keep tokens short-lived anyway.
@@ -370,12 +375,13 @@ createUnioraServer({
     storage: createPostgresPlatformStorage(pool),
     providers: ["staff"],
     stepUp: { maxAgeSeconds: 300, requireMfa: true },
-    supportGrantablePermissions: ["reports.read", "members.block"], // strongly recommended: the organization permissions support access may open
+    supportGrantablePermissions: ["reports.read", "members.block"], // required: the organization permissions support access may open ([] = none)
   },
 });
 ```
 
-The first administrator is created once, with direct access to the database: `uniora platform init --admin staff:ana-staff`. The routes cover platform roles
+`supportGrantablePermissions` has no default (an unlimited support grant is close to full access to every organization for 30 days); with `readOnly` on, platform
+changes are refused too, including revoking a grant or suspending an operator, so for an incident use the CLI or the database. The first administrator is created once, with direct access to the database: `uniora platform init --admin staff:ana-staff`. The routes cover platform roles
 and members, listing organizations, suspending/archiving/reactivating them, and opening or ending support access (the [reference](server-api.md#platform) has
 every one, with executed examples). Platform audit entries carry the same `via` as everything else (`apiClientId`, `keyId`, `requestId`, `actorMode: "verified"`).
 The client library takes `{ operatorToken }` on these calls.
@@ -428,8 +434,11 @@ const ok = verifyWebhook({
 ```
 
 **Delivery**: any `2xx` is success; anything else (including redirects, which are never followed) is retried after 30 s, 1 min, 2 min... up to 1 h (a `Retry-After` on
-`429`/`503` is honoured), and after 8 attempts the delivery is parked as `dead` for an operator to look at and `requeue`. An endpoint that fails 50 attempts in a row is
-disabled (`too_many_failures`); its queued deliveries wait, and it sends them when enabled again (events that happen while it is disabled are not queued for it).
+`429`/`503` is honoured and does not count against the endpoint), and after 8 attempts the delivery is parked as `dead` for an operator to look at and `requeue`. An endpoint is
+switched off (`too_many_failures`) only when it has failed 50 attempts in a row **and** gone an hour (`disableAfterMinutes`) without a delivery: a burst against a receiver that
+blinked does not switch a feed off. An endpoint that did get switched off keeps collecting its events (up to 5000), and sends them when an operator enables it again.
+The dispatcher does not run with `readOnly`. An event id that cannot be an HTTP header (non-ASCII, a line break) is sent under a stable stand-in `webhook-id` (`evt_<hash>`), and
+the real id stays in the body.
 Each attempt has a 10 s deadline, 10 deliveries run at once, and a delivered row is kept 7 days. All of it is configurable.
 
 **The SSRF defense.** A webhook makes the server call a URL somebody typed, so it is treated as a request to a stranger's server: the URL must be `https`, carry no
@@ -439,6 +448,10 @@ resolves to** (every one must be public, and the connection goes to the address 
 followed, the answer is read for at most a few KB, and nothing about the answer or the URL is put in an error (the URL may carry a secret in its path). For a
 development receiver on this machine, `urlPolicy: { allowInsecureHttp: true, allowPrivateNetworks: true }`; the server refuses to start with both on and
 `NODE_ENV=production`.
+
+Rotating a second time inside a grace period ends the grace of the secret before it (only the previous one is kept). `uniora server start` and the CLI build the
+webhook storage over the same database connection as everything else: to keep the signing secrets away from the role that serves organizations, run `createUnioraServer` with a
+separate pool for `webhooks.storage`.
 
 The signing secrets live in their own scope (`uniora_webhooks` schema in Postgres, `uniora_webhook_*` tables in SQLite), outside the organization tables, because the
 worker must read them to sign: give the role that serves organizations no access to it ([`least-privilege-roles.sql`](sql/least-privilege-roles.sql)).

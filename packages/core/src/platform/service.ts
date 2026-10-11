@@ -456,9 +456,16 @@ export function createPlatformService(options: PlatformServiceOptions): Platform
         permissions,
         expiresAt,
       });
-      await run(actor, true, (ctx) =>
-        record(ctx, "platform.support_access_granted", { type: "support_grant", id: created.id }, { organizationId, permissions: created.permissions, expiresAt: created.expiresAt.toISOString() }),
-      );
+      try {
+        // Under the platform lock, and asking again: an operator suspended or demoted between the first check and the grant must not keep it.
+        await run(actor, true, async (ctx) => {
+          await need(ctx, PLATFORM_PERMISSIONS.supportGrant, "open support access");
+          return record(ctx, "platform.support_access_granted", { type: "support_grant", id: created.id }, { organizationId, permissions: created.permissions, expiresAt: created.expiresAt.toISOString() });
+        });
+      } catch (error) {
+        await audited.supportGrants.revoke(created.id, { by: actor }).catch(() => undefined);
+        throw error;
+      }
       return created;
     },
 

@@ -136,7 +136,7 @@ describe("uniora server (SQLite)", () => {
         server: {
           defaultProvider: "main",
           actorTokens: [{ provider: "staff", issuer: "https://staff.example.com/", audience: "uniora", algorithms: ["HS256"], secret: "0123456789abcdef0123456789abcdef-secret" }],
-          platform: { providers: ["staff"], stepUp: { maxAgeSeconds: 120 } },
+          platform: { providers: ["staff"], stepUp: { maxAgeSeconds: 120 }, supportGrantablePermissions: [] },
           webhooks: { run: false },
           sharedRateLimit: true,
         },

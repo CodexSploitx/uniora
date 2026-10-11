@@ -66,6 +66,8 @@ export interface VerifiedActor {
   readonly expiresAt: Date;
   /** The scopes the token states (`scope`, space-separated, or `scp`, a list), or `undefined` when it states none. Used to NARROW a machine token, never to widen it. */
   readonly scopes?: readonly string[];
+  /** Every claim of the verified token, as parsed. For the code that decides what a machine token may be (never put it in a response or a log). */
+  readonly claims: Readonly<Record<string, unknown>>;
 }
 
 /** `invalid`: the token is not acceptable (always the same answer to the caller). `unavailable`: it could not be checked right now. */
@@ -480,7 +482,7 @@ export function createActorTokenVerifier(providers: readonly ResolvedProvider[],
       if (typeof subject !== "string" || subject.length < 1 || subject.length > 500 || CONTROL.test(subject)) throw new ActorTokenError("invalid", "subject");
 
       const scopes = scopesOf(claims);
-      return { identity: { provider: provider.provider, subject }, session: sessionOf(provider, claims, seconds, tolerance), expiresAt: new Date(exp * 1000), ...(scopes ? { scopes } : {}) };
+      return { identity: { provider: provider.provider, subject }, session: sessionOf(provider, claims, seconds, tolerance), expiresAt: new Date(exp * 1000), claims, ...(scopes ? { scopes } : {}) };
     },
   };
 }
@@ -489,7 +491,8 @@ const SCOPE_TOKEN = /^[\x21\x23-\x5b\x5d-\x7e]{1,200}$/;
 
 /** `scope` (RFC 6749: space-separated) or `scp` (a list): what the token says it may do. A malformed claim refuses the token. */
 function scopesOf(claims: Record<string, unknown>): string[] | undefined {
-  const raw = claims.scope ?? claims.scp;
+  // An explicit null is a malformed claim, not an absent one.
+  const raw = claims.scope !== undefined ? claims.scope : claims.scp;
   if (raw === undefined) return undefined;
   const items = typeof raw === "string" ? raw.split(" ").filter((item) => item !== "") : raw;
   if (!Array.isArray(items) || items.length > 50 || items.some((item) => typeof item !== "string" || !SCOPE_TOKEN.test(item))) throw new ActorTokenError("invalid", "scope");

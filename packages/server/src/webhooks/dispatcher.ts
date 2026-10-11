@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { endpointWants, signWebhook, webhookBackoffMs, webhookBody } from "@uniora/core";
 import type { OutboxEvent, OutboxRepository, WebhookDelivery, WebhookEndpoint, WebhookStorage, WebhookUrlPolicy } from "@uniora/core";
 import type { Logger } from "../logger.js";
@@ -21,6 +22,8 @@ export interface WebhookDispatcherOptions {
   maxAttempts?: number;
   /** Consecutive failed attempts that disable an endpoint. Default 50. */
   disableAfterFailures?: number;
+  /** ...and the endpoint must also have gone this long without a delivery (a burst against a receiver that blinks does not switch a feed off). Default 60 minutes. */
+  disableAfterMinutes?: number;
   /** How long to wait when there was nothing to do. Default 1000 ms. */
   pollIntervalMs?: number;
   /** Delivered rows older than this are deleted, from the deliveries and the outbox. Default 7 days. */
@@ -48,6 +51,7 @@ export interface WebhookDispatcher {
 }
 
 const SUCCESS_HEADERS = "uniora-webhooks/1";
+const SAFE_HEADER_ID = /^[\x21-\x7e]{1,200}$/;
 const HOUR_MS = 3_600_000;
 
 function bounded(name: string, value: number | undefined, fallback: number, min: number, max: number): number {
@@ -65,9 +69,13 @@ export function createWebhookDispatcher(options: WebhookDispatcherOptions): Webh
   const timeoutMs = bounded("timeoutMs", options.timeoutMs, 10_000, 1000, 60_000);
   const maxAttempts = bounded("maxAttempts", options.maxAttempts, 8, 1, 50);
   const disableAfter = bounded("disableAfterFailures", options.disableAfterFailures, 50, 1, 10_000);
+  const disableAfterMs = bounded("disableAfterMinutes", options.disableAfterMinutes, 60, 0, 10_080) * 60_000;
   const pollIntervalMs = bounded("pollIntervalMs", options.pollIntervalMs, 1000, 10, 60_000);
   const retainMs = bounded("retainDeliveredDays", options.retainDeliveredDays, 7, 1, 365) * 24 * HOUR_MS;
   const FAN_OUT_BATCH = 50;
+  /** Events kept for an endpoint that switched itself off, waiting for the operator: more than this and they are not queued. */
+  const MAX_QUEUED_FOR_PAUSED = 5000;
+  const CLAIM_BATCH = Math.min(100, concurrency * 4);
 
   let running = false;
   let loop: Promise<void> | undefined;
@@ -77,11 +85,17 @@ export function createWebhookDispatcher(options: WebhookDispatcherOptions): Webh
   async function fanOut(): Promise<number> {
     const events = await outbox.claim({ limit: FAN_OUT_BATCH, leaseSeconds: 60, now: now() });
     if (events.length === 0) return 0;
-    const endpoints = await webhooks.endpoints.search({ status: "enabled", limit: 200 });
+    // An endpoint the worker itself switched off keeps collecting events (up to a bound), so a feed is not lost while the operator looks into it.
+    const all = await webhooks.endpoints.search({ limit: 200 });
+    const open: WebhookEndpoint[] = [];
+    for (const endpoint of all) {
+      if (endpoint.status === "enabled") open.push(endpoint);
+      else if (endpoint.disabledReason === "too_many_failures" && (await webhooks.deliveries.count({ endpointId: endpoint.id, status: "pending" })) < MAX_QUEUED_FOR_PAUSED) open.push(endpoint);
+    }
     const done: string[] = [];
     for (const event of events) {
       try {
-        await fanOutOne(event, endpoints);
+        await fanOutOne(event, open);
         done.push(event.id);
       } catch (error) {
         log({ level: "error", msg: "webhook fan-out failed", eventId: event.id, error });
@@ -115,6 +129,8 @@ export function createWebhookDispatcher(options: WebhookDispatcherOptions): Webh
     if (secrets.length === 0) return { ok: false, durationMs: 0, error: "the endpoint has no secret" };
     const body = webhookBody({ id: delivery.eventId, type: delivery.eventType, organizationId: delivery.organizationId, createdAt: delivery.eventCreatedAt, payload: delivery.payload });
     const timestamp = Math.floor(now().getTime() / 1000);
+    // An event id is any text a host's own event chose; a header is not. The body still carries the real id, the header a stable stand-in.
+    const headerId = SAFE_HEADER_ID.test(delivery.eventId) ? delivery.eventId : `evt_${createHash("sha256").update(delivery.eventId).digest("hex").slice(0, 32)}`;
     return send({
       url: endpoint.url,
       body,
@@ -123,18 +139,29 @@ export function createWebhookDispatcher(options: WebhookDispatcherOptions): Webh
       headers: {
         "content-type": "application/json",
         "user-agent": SUCCESS_HEADERS,
-        "webhook-id": delivery.eventId,
+        "webhook-id": headerId,
         "webhook-timestamp": String(timestamp),
-        "webhook-signature": signWebhook(secrets, delivery.eventId, timestamp, body),
+        "webhook-signature": signWebhook(secrets, headerId, timestamp, body),
       },
     });
   }
 
   async function deliverOne(delivery: WebhookDelivery, endpoints: Map<string, WebhookEndpoint | null>): Promise<boolean> {
-    if (!endpoints.has(delivery.endpointId)) endpoints.set(delivery.endpointId, await webhooks.endpoints.findById(delivery.endpointId));
-    const endpoint = endpoints.get(delivery.endpointId);
+    // Read again for every delivery: an operator who disabled the endpoint or changed its URL meanwhile is obeyed by what is already claimed too.
+    const endpoint = await webhooks.endpoints.findById(delivery.endpointId);
+    endpoints.set(delivery.endpointId, endpoint);
     if (!endpoint) return false; // deleted while queued: its deliveries go with it
-    const result = await attempt(delivery, endpoint);
+    if (endpoint.status !== "enabled") return false; // the claim expires and it waits for the endpoint to be enabled
+    let result: SendWebhookResult;
+    try {
+      // Nothing that goes wrong in one attempt (a header the HTTP client refuses, a lookup that never answers) may stop the delivery from being failed and retried.
+      result = await Promise.race([
+        attempt(delivery, endpoint),
+        new Promise<SendWebhookResult>((resolve) => setTimeout(() => resolve({ ok: false, durationMs: timeoutMs, error: `timeout after ${timeoutMs} ms` }), timeoutMs + 2000).unref()),
+      ]);
+    } catch {
+      result = { ok: false, durationMs: 0, error: "the request could not be sent" };
+    }
     if (result.ok) {
       await webhooks.deliveries.complete(delivery.id, { httpStatus: result.status ?? 200, durationMs: result.durationMs, at: now() });
       await webhooks.endpoints.recordAttempt(endpoint.id, { success: true, at: now() });
@@ -148,7 +175,8 @@ export function createWebhookDispatcher(options: WebhookDispatcherOptions): Webh
       retryAt: new Date(now().getTime() + wait),
       maxAttempts,
     });
-    const after = await webhooks.endpoints.recordAttempt(endpoint.id, { success: false, at: now(), disableAfter });
+    // A receiver that asks us to slow down (429/503 with Retry-After) is not a receiver that is down: it does not count towards switching the feed off.
+    const after = await webhooks.endpoints.recordAttempt(endpoint.id, { success: false, at: now(), ...(result.retryAfterSeconds === undefined ? { disableAfter, disableAfterMs } : {}) });
     // Hosts and ids only: the URL can carry a secret in its path, and the body is the organization's data.
     if (state === "dead") log({ level: "warn", msg: "webhook delivery gave up", endpointId: endpoint.id, eventId: delivery.eventId, attempts: delivery.attempts, error: result.error });
     if (after && after.status === "disabled" && endpoint.status === "enabled") log({ level: "warn", msg: "webhook endpoint disabled after repeated failures", endpointId: endpoint.id, consecutiveFailures: after.consecutiveFailures });
@@ -157,7 +185,9 @@ export function createWebhookDispatcher(options: WebhookDispatcherOptions): Webh
   }
 
   async function deliverDue(): Promise<{ delivered: number; failed: number }> {
-    const due = await webhooks.deliveries.claim({ limit: Math.min(100, concurrency * 4), leaseSeconds: Math.ceil(timeoutMs / 1000) + 30, now: now() });
+    // The lease covers the slowest batch: every worker may run `CLAIM_BATCH / concurrency` attempts one after the other.
+    const lease = Math.min(3600, Math.ceil(CLAIM_BATCH / concurrency) * (Math.ceil(timeoutMs / 1000) + 2) + 30);
+    const due = await webhooks.deliveries.claim({ limit: CLAIM_BATCH, leaseSeconds: lease, now: now() });
     if (due.length === 0) return { delivered: 0, failed: 0 };
     const endpoints = new Map<string, WebhookEndpoint | null>();
     let delivered = 0;
@@ -229,7 +259,8 @@ export function createWebhookDispatcher(options: WebhookDispatcherOptions): Webh
     async stop() {
       running = false;
       wake?.();
-      await loop;
+      // Bounded: one receiver that never answers must not keep a shutdown waiting.
+      if (loop) await Promise.race([loop, new Promise<void>((resolve) => setTimeout(resolve, timeoutMs + 5000).unref())]);
       loop = undefined;
     },
     tick,

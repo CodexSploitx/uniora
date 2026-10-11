@@ -6,7 +6,7 @@ import { createWebhookService, verifyWebhook } from "@uniora/core";
 import type { OutboxRepository, WebhookService, WebhookStorage } from "@uniora/core";
 import { createWebhookDispatcher, sendWebhook } from "./index.js";
 import type { WebhookDispatcher } from "./index.js";
-import { BACKENDS, createBackend } from "./test-support/harness.js";
+import { BACKENDS, createBackend, startFixture } from "./test-support/harness.js";
 import type { Backend, BackendName } from "./test-support/harness.js";
 
 interface Received {
@@ -105,6 +105,23 @@ describe("sendWebhook", () => {
     expect(await sendWebhook(input(`http://metadata.example.com:${target.port}/`, { ...strict, resolve: async () => ["169.254.169.254"] }))).toMatchObject({ ok: false, error: "the name resolves to a private address" });
     expect(await sendWebhook(input(`http://gone.example.com:${target.port}/`, { ...strict, resolve: async () => [] }))).toMatchObject({ ok: false, error: "the name does not resolve" });
     expect(target.received).toHaveLength(0);
+  });
+
+  it("gives up on a name server that never answers, and on an accepted answer that never ends", async () => {
+    const started = Date.now();
+    const hung = await sendWebhook(input("http://hung.example.com/", { timeoutMs: 400, resolve: () => new Promise<never[]>(() => undefined) }));
+    expect(hung.ok).toBe(false);
+    expect(Date.now() - started).toBeLessThan(1500);
+    const endless = track(await receiver(() => ({ status: 200, flood: true })));
+    const accepted = await sendWebhook(input(endless.url));
+    expect(accepted).toMatchObject({ ok: true, status: 200 });
+    expect(accepted.durationMs).toBeLessThan(1000);
+  });
+
+  it("reports, instead of throwing, a request the HTTP client refuses", async () => {
+    const target = track(await receiver());
+    const result = await sendWebhook(input(target.url, { headers: { "webhook-id": "bad\nid" } }));
+    expect(result).toMatchObject({ ok: false, error: "the request could not be sent" });
   });
 
   it("connects to the address it checked, with the name as the Host header", async () => {
@@ -217,7 +234,7 @@ describe.each(BACKENDS)("webhook dispatcher over %s", (name: BackendName) => {
   });
 
   it("disables an endpoint after too many failures in a row, keeps its queue, and resumes when enabled", async () => {
-    const { clock, service, dispatcher, publish, storage } = await boot({ disableAfterFailures: 2, maxAttempts: 10 });
+    const { clock, service, dispatcher, publish, storage } = await boot({ disableAfterFailures: 2, disableAfterMinutes: 0, maxAttempts: 10 });
     let healthy = false;
     const target = track(await receiver(() => ({ status: healthy ? 200 : 500 })));
     const { endpoint } = await service.createEndpoint({ actor: operator, url: target.url, events: ["*"] });
@@ -226,16 +243,65 @@ describe.each(BACKENDS)("webhook dispatcher over %s", (name: BackendName) => {
     clock.now = new Date(clock.now.getTime() + 120_000);
     await dispatcher.tick();
     expect(await storage.endpoints.findById(endpoint.id)).toMatchObject({ status: "disabled", disabledReason: "too_many_failures", consecutiveFailures: 2 });
-    // Nothing is sent, and new events are not queued for it, while it is disabled.
+    // Nothing is sent while it is switched off, but the events that happen meanwhile are kept for it (up to a bound): the feed is not lost.
     await publish("evt_2", "a.b");
     clock.now = new Date(clock.now.getTime() + 3_600_000);
     expect(await dispatcher.tick()).toMatchObject({ delivered: 0, failed: 0 });
     expect(target.received).toHaveLength(2);
-    expect(await storage.deliveries.findById(`${endpoint.id}:evt_2`)).toBeNull();
+    expect(await storage.deliveries.findById(`${endpoint.id}:evt_2`)).toMatchObject({ status: "pending" });
     healthy = true;
     await service.enableEndpoint({ actor: operator, endpointId: endpoint.id });
-    expect(await dispatcher.tick()).toMatchObject({ delivered: 1 });
-    expect(JSON.parse(target.received.at(-1)!.body).id).toBe("evt_1");
+    expect(await dispatcher.tick()).toMatchObject({ delivered: 2 });
+    expect(target.received.slice(-2).map((item) => JSON.parse(item.body).id).sort()).toEqual(["evt_1", "evt_2"]);
+  });
+
+  it("does not switch a feed off because of a burst against a receiver that blinked, nor because it asked to slow down", async () => {
+    const { clock, service, dispatcher, publish, storage } = await boot({ disableAfterFailures: 3, maxAttempts: 10 });
+    const down = track(await receiver((_r, index): Reply => (index < 12 ? { status: 503 } : { status: 204 })));
+    const { endpoint } = await service.createEndpoint({ actor: operator, url: down.url, events: ["*"] });
+    for (let index = 0; index < 12; index++) await publish(`evt_${index}`, "a.b");
+    await dispatcher.tick();
+    expect(await storage.endpoints.findById(endpoint.id)).toMatchObject({ status: "enabled", consecutiveFailures: 12 });
+    // Recovered: everything is delivered, nothing was lost.
+    clock.now = new Date(clock.now.getTime() + 120_000);
+    expect(await dispatcher.tick()).toMatchObject({ delivered: 12 });
+
+    const slow = track(await receiver(() => ({ status: 429, headers: { "retry-after": "5" } })));
+    const second = await service.createEndpoint({ actor: operator, url: slow.url, events: ["*"] });
+    clock.now = new Date(clock.now.getTime() + 2 * 3_600_000);
+    for (let index = 0; index < 8; index++) await publish(`late_${index}`, "a.b");
+    await dispatcher.tick();
+    expect(await storage.endpoints.findById(second.endpoint.id)).toMatchObject({ status: "enabled" });
+  });
+
+  it("delivers an event whose id cannot be a header, under a stable stand-in that verifies", async () => {
+    const { service, dispatcher, publish } = await boot();
+    const target = track(await receiver());
+    const { secret } = await service.createEndpoint({ actor: operator, url: target.url, events: ["*"] });
+    await publish("pedido-日本", "a.b");
+    await publish("line\nbreak", "a.b");
+    expect(await dispatcher.tick()).toMatchObject({ delivered: 2, failed: 0 });
+    expect(target.received.map((item) => JSON.parse(item.body).id).sort()).toEqual(["line\nbreak", "pedido-日本"].sort());
+    for (const item of target.received) {
+      expect(item.headers["webhook-id"]).toMatch(/^evt_[0-9a-f]{32}$/);
+      expect(verifyWebhook({ body: item.body, headers: { id: item.headers["webhook-id"] as string, timestamp: item.headers["webhook-timestamp"] as string, signature: item.headers["webhook-signature"] as string }, secrets: secret })).toBe(true);
+    }
+  });
+
+  it("does not send what an operator switched off while it was already claimed", async () => {
+    const { service, dispatcher, publish, storage } = await boot({ concurrency: 1 });
+    const target = track(await receiver());
+    const { endpoint } = await service.createEndpoint({ actor: operator, url: target.url, events: ["*"] });
+    for (let index = 0; index < 4; index++) await publish(`evt_${index}`, "a.b");
+    const original = storage.endpoints.findById.bind(storage.endpoints);
+    let reads = 0;
+    // The operator disables it right after the first delivery of the batch.
+    storage.endpoints.findById = async (id: string) => {
+      if (++reads === 2) await service.disableEndpoint({ actor: operator, endpointId: endpoint.id });
+      return original(id);
+    };
+    await dispatcher.tick();
+    expect(target.received.length).toBeLessThan(4);
   });
 
   it("signs with both secrets during a rotation and only the new one afterwards", async () => {
@@ -329,9 +395,20 @@ describe.each(BACKENDS)("webhook dispatcher over %s", (name: BackendName) => {
     expect(target.received).toHaveLength(1);
   });
 
+  it("is not started in read-only mode, which must not write deliveries or call other systems", async () => {
+    const f = await startFixture(name, async (b) => ({ readOnly: true, webhooks: { storage: b.webhooks, urlPolicy: LOCAL, pollIntervalMs: 20 } }));
+    closers.push(() => f.stop());
+    const target = track(await receiver());
+    await createWebhookService({ storage: f.backend.webhooks, urlPolicy: LOCAL }).createEndpoint({ actor: operator, url: target.url, events: ["*"] });
+    await f.backend.storage.outbox.enqueue({ id: "evt_1", type: "a.b" });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(target.received).toHaveLength(0);
+    expect((await f.backend.storage.outbox.findById("evt_1"))?.status).toBe("pending");
+  });
+
   it("refuses nonsense settings", () => {
     const base = { webhooks: {} as WebhookStorage, outbox: {} as OutboxRepository };
-    for (const bad of [{ concurrency: 0 }, { timeoutMs: 10 }, { maxAttempts: 0 }, { pollIntervalMs: 1 }, { retainDeliveredDays: 0 }, { disableAfterFailures: 0 }]) {
+    for (const bad of [{ concurrency: 0 }, { disableAfterMinutes: -1 }, { timeoutMs: 10 }, { maxAttempts: 0 }, { pollIntervalMs: 1 }, { retainDeliveredDays: 0 }, { disableAfterFailures: 0 }]) {
       expect(() => createWebhookDispatcher({ ...base, ...bad }), JSON.stringify(bad)).toThrow(RangeError);
     }
   });

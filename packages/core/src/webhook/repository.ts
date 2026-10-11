@@ -56,9 +56,11 @@ export interface WebhookEndpointRepository {
   signingSecrets(id: string, now?: Date): Promise<string[]>;
   /**
    * What one delivery attempt did, atomically: a success resets the failure count; a failure adds one and, at `disableAfter`
-   * consecutive failures, disables the endpoint (`too_many_failures`). `null` when the endpoint is gone.
+   * consecutive failures, disables the endpoint (`too_many_failures`), but only when it has also gone `disableAfterMs` without a success (counted from
+   * its last success, or from its creation): a burst of events against a receiver that blinks for a moment must not switch a feed off.
+   * `null` when the endpoint is gone.
    */
-  recordAttempt(id: string, input: { success: boolean; at?: Date; disableAfter?: number }): Promise<WebhookEndpoint | null>;
+  recordAttempt(id: string, input: { success: boolean; at?: Date; disableAfter?: number; disableAfterMs?: number }): Promise<WebhookEndpoint | null>;
   findById(id: string): Promise<WebhookEndpoint | null>;
   search(options?: SearchWebhookEndpointsOptions): Promise<WebhookEndpoint[]>;
   count(options?: Pick<SearchWebhookEndpointsOptions, "status">): Promise<number>;

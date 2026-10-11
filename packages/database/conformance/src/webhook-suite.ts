@@ -150,6 +150,25 @@ export function defineWebhookConformance(harness: WebhookHarness): void {
         expect(await endpoints.recordAttempt("whe_missing", { success: true })).toBeNull();
       });
 
+      it("disables only after the failures have also lasted: a burst against a receiver that blinked keeps the endpoint on", async () => {
+        const { endpoints } = harness.storage();
+        await endpoints.create(endpointInput("whe_a"));
+        const created = (await endpoints.findById("whe_a"))!.createdAt;
+        const later = (minutes: number) => new Date(created.getTime() + minutes * 60_000);
+        let state = null;
+        for (let attempt = 0; attempt < 10; attempt++) state = await endpoints.recordAttempt("whe_a", { success: false, at: later(1), disableAfter: 3, disableAfterMs: 30 * 60_000 });
+        expect(state).toMatchObject({ consecutiveFailures: 10, status: "enabled" });
+        state = await endpoints.recordAttempt("whe_a", { success: false, at: later(31), disableAfter: 3, disableAfterMs: 30 * 60_000 });
+        expect(state).toMatchObject({ status: "disabled", disabledReason: "too_many_failures" });
+        // A success restarts the clock.
+        await endpoints.setStatus("whe_a", "enabled");
+        await endpoints.recordAttempt("whe_a", { success: true, at: later(40) });
+        state = await endpoints.recordAttempt("whe_a", { success: false, at: later(41), disableAfter: 1, disableAfterMs: 30 * 60_000 });
+        expect(state!.status).toBe("enabled");
+        state = await endpoints.recordAttempt("whe_a", { success: false, at: later(71), disableAfter: 1, disableAfterMs: 30 * 60_000 });
+        expect(state!.status).toBe("disabled");
+      });
+
       it("lists by id with a keyset cursor and filters by status", async () => {
         const { endpoints } = harness.storage();
         for (const id of ["whe_c", "whe_a", "whe_b"]) await endpoints.create(endpointInput(id));

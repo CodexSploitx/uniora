@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import type { IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { createWebhookService, verifyWebhook } from "@uniora/core";
+import { InvitationDeliveryError, createWebhookService, verifyWebhook } from "@uniora/core";
 import { ServerConfigError, createUnioraServer, silentLogger } from "./index.js";
 import { createMemoryApiCredentialStorage, createMemoryStorage, createMemoryWebhookStorage } from "@uniora/core";
 import { BACKENDS, startFixture } from "./test-support/harness.js";
@@ -72,6 +72,28 @@ describe.each(BACKENDS)("webhooks of the server over %s", (backend: BackendName)
     const everything = target.received.map((item) => item.body).join("\n");
     expect(everything).not.toContain("someone@example.com");
     expect(everything).not.toMatch(/uinv_|app\.test\/invite/);
+  });
+
+  it("never puts the invitee's address in an event, not even through the error of a sender that echoes it", async () => {
+    const f = await startFixture(backend, async (b) => ({
+      webhooks: { storage: b.webhooks, urlPolicy: LOCAL, pollIntervalMs: 20 },
+      invitations: {
+        acceptUrl: (token: string) => `https://app.test/invite/${token}`,
+        sender: { send: async (message) => { throw new InvitationDeliveryError(`550 5.1.1 <${message.to}>: Recipient address rejected: User ${message.to.split("@")[0]} unknown`, true); } },
+        retry: { maxAttempts: 1 },
+      },
+    }));
+    open.push(() => f.stop());
+    const target = await receiver();
+    await createWebhookService({ storage: f.backend.webhooks, urlPolicy: LOCAL }).createEndpoint({ actor: operator, url: target.url, events: ["invitation.*"] });
+    const { token } = await f.issue();
+    const invited = await f.call("POST", "/v1/organizations/org_acme/invitations", { token, actor: "mgr", body: { email: "victim.person@example.com", roleIds: ["role_viewer"] } });
+    expect(invited.status).toBe(201);
+    await waitFor(() => target.received.some((item) => JSON.parse(item.body).type === "invitation.delivery_failed"), "the failure event");
+    const everything = target.received.map((item) => item.body).join("\n");
+    expect(everything).not.toContain("victim.person");
+    expect(everything).not.toContain("emailFingerprint");
+    expect(JSON.stringify(invited.body)).not.toMatch(/550 5\.1\.1 <victim/);
   });
 
   it("filters by organization and by event, and the server keeps serving when the receiver is down", async () => {

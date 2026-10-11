@@ -20,7 +20,7 @@ beforeAll(async () => {
     storage: createMemoryStorage(),
     credentials,
     logger: silentLogger,
-    machineTokens: [{ provider: "machines", issuer: "https://idp.test/", audience: "uniora-api", algorithms: ["RS256"], jwks: { keys: [{ ...publicKey.export({ format: "jwk" }), kid: "k1" } as never] }, clients: { "billing-app": "apc_billingapp0001" } }],
+    machineTokens: [{ provider: "machines", issuer: "https://idp.test/", audience: "uniora-api", algorithms: ["RS256"], jwks: { keys: [{ ...publicKey.export({ format: "jwk" }), kid: "k1" } as never] }, clients: { "billing-app": "apc_billingapp0001" }, allowUnscopedTokens: true }],
   }).listen({ port: 0 });
 });
 afterAll(async () => {

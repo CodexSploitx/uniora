@@ -66,7 +66,7 @@ export function createPlatformContext(config: ResolvedConfig, principal: ApiPrin
     platform: createPlatformAuditContext(platform.storage, via),
     storage: createAuditContextStorage(config.storage, via),
     ...(platform.engine ? { engine: platform.engine } : {}),
-    ...(platform.supportGrantablePermissions ? { supportGrantablePermissions: platform.supportGrantablePermissions } : {}),
+    supportGrantablePermissions: platform.supportGrantablePermissions,
     stepUp: () => {
       const session = operator.session;
       if (!session.authenticatedAt) return false;

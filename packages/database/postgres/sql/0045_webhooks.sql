@@ -48,7 +48,7 @@ create table if not exists uniora_webhooks.deliveries (
   event_type text not null check (length(event_type) between 1 and 120),
   organization_id text check (organization_id is null or length(organization_id) <= 200),
   event_created_at timestamptz(3) not null,
-  payload jsonb check (payload is null or pg_column_size(payload) <= 20000),
+  payload jsonb check (payload is null or length(payload::text) <= 16384),
   status text not null default 'pending' check (status in ('pending', 'delivered', 'dead')),
   attempts integer not null default 0 check (attempts >= 0),
   created_at timestamptz(3) not null default date_trunc('milliseconds', now()),

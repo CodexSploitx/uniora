@@ -174,6 +174,33 @@ describe.each(BACKENDS)("platform routes over %s", (backend) => {
     const strong = await strict.call("POST", "/v1/platform/roles", { token, operator: { subject: "root", claims: { acr: "urn:mfa" } }, body });
     expect(strong.status).toBe(201);
   });
+
+  it("pages through every organization, whatever the page size", async () => {
+    const f = await start(backend);
+    const { token } = await f.issue();
+    for (const name of ["Initech", "Umbrella", "Hooli"]) await f.call("POST", "/v1/organizations", { token, body: { name, owner: { subject: `owner-${name}` } } });
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let guard = 0; guard < 10; guard++) {
+      const page = await f.call("GET", `/v1/platform/organizations?limit=2${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { token, operator: "root" });
+      expect(page.status).toBe(200);
+      seen.push(...page.body.items.map((item: { id: string }) => item.id));
+      cursor = page.body.nextCursor ?? undefined;
+      if (!cursor) break;
+    }
+    expect(seen).toHaveLength(5);
+    expect(new Set(seen).size).toBe(5);
+  });
+
+  it("makes a change of status work with minAssuranceLevel 0 configured as no minimum", async () => {
+    const f = await startFixture(backend, async (b) => {
+      const options = await platformOptions(b);
+      return { ...options, platform: { ...options.platform!, stepUp: { minAssuranceLevel: 0 } } };
+    });
+    open.push(f);
+    const { token } = await f.issue();
+    expect((await f.call("POST", "/v1/platform/roles", { token, operator: "root", body: { key: "support", name: "Support", permissions: [] } })).status).toBe(201);
+  });
 });
 
 describe("platform configuration", () => {
@@ -182,14 +209,18 @@ describe("platform configuration", () => {
   const storage = () => createMemoryPlatformStorage();
 
   it("needs providers that exist, a sane step-up and no unknown option", () => {
-    expect(() => createUnioraServer({ ...base(), actorTokens: tokens, platform: { storage: storage(), providers: [] } })).toThrow(ServerConfigError);
-    expect(() => createUnioraServer({ ...base(), actorTokens: tokens, platform: { storage: storage(), providers: ["nope"] } })).toThrow(/platform.providers/);
-    expect(() => createUnioraServer({ ...base(), platform: { storage: storage(), providers: ["staff"] } })).toThrow(ServerConfigError);
-    expect(() => createUnioraServer({ ...base(), actorTokens: tokens, platform: { storage: storage(), providers: ["staff"], stepUp: { maxAgeSeconds: 0 } } })).toThrow(/maxAgeSeconds/);
-    expect(() => createUnioraServer({ ...base(), actorTokens: tokens, platform: { storage: storage(), providers: ["staff"], stepUp: { maxAgeSeconds: 7200 } } })).toThrow(/maxAgeSeconds/);
-    expect(() => createUnioraServer({ ...base(), actorTokens: tokens, platform: { storage: storage(), providers: ["staff"], stepUp: { minAssuranceLevel: 2 } } })).toThrow(/acrLevels/);
-    expect(() => createUnioraServer({ ...base(), actorTokens: tokens, platform: { storage: storage(), providers: ["staff"], stepUp: { nope: 1 } as never } })).toThrow(/unknown option/);
-    expect(() => createUnioraServer({ ...base(), actorTokens: tokens, platform: { storage: undefined as never, providers: ["staff"] } })).toThrow(/platform.storage/);
-    expect(() => createUnioraServer({ ...base(), actorTokens: tokens, platform: { storage: storage(), providers: ["staff"] } })).not.toThrow();
+    expect(() => createUnioraServer({ ...base(), actorTokens: tokens, platform: { storage: storage(), providers: [], supportGrantablePermissions: [] } })).toThrow(ServerConfigError);
+    expect(() => createUnioraServer({ ...base(), actorTokens: tokens, platform: { storage: storage(), providers: ["nope"], supportGrantablePermissions: [] } })).toThrow(/platform.providers/);
+    expect(() => createUnioraServer({ ...base(), platform: { storage: storage(), providers: ["staff"], supportGrantablePermissions: [] } })).toThrow(ServerConfigError);
+    expect(() => createUnioraServer({ ...base(), actorTokens: tokens, platform: { storage: storage(), providers: ["staff"], supportGrantablePermissions: [], stepUp: { maxAgeSeconds: 0 } } })).toThrow(/maxAgeSeconds/);
+    expect(() => createUnioraServer({ ...base(), actorTokens: tokens, platform: { storage: storage(), providers: ["staff"], supportGrantablePermissions: [], stepUp: { maxAgeSeconds: 7200 } } })).toThrow(/maxAgeSeconds/);
+    expect(() => createUnioraServer({ ...base(), actorTokens: tokens, platform: { storage: storage(), providers: ["staff"], supportGrantablePermissions: [], stepUp: { minAssuranceLevel: 2 } } })).toThrow(/acrLevels/);
+    expect(() => createUnioraServer({ ...base(), actorTokens: tokens, platform: { storage: storage(), providers: ["staff"], supportGrantablePermissions: [], stepUp: { nope: 1 } as never } })).toThrow(/unknown option/);
+    expect(() => createUnioraServer({ ...base(), actorTokens: tokens, platform: { storage: undefined as never, providers: ["staff"], supportGrantablePermissions: [] } })).toThrow(/platform.storage/);
+    expect(() => createUnioraServer({ ...base(), actorTokens: tokens, platform: { storage: storage(), providers: ["staff"], supportGrantablePermissions: [] } })).not.toThrow();
+    // No "any permission" default for support access: the list is required (an empty one means none).
+    expect(() => createUnioraServer({ ...base(), actorTokens: tokens, platform: { storage: storage(), providers: ["staff"] } as never })).toThrow(/supportGrantablePermissions/);
+    // `minAssuranceLevel: 0` means no minimum, it does not make every change impossible.
+    expect(() => createUnioraServer({ ...base(), actorTokens: tokens, platform: { storage: storage(), providers: ["staff"], supportGrantablePermissions: [], stepUp: { minAssuranceLevel: 0 } } })).not.toThrow();
   });
 });

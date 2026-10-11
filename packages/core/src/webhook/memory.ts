@@ -138,7 +138,7 @@ export function createMemoryWebhookStorage(options: MemoryWebhookStorageOptions 
       } else {
         row.consecutiveFailures += 1;
         row.lastFailureAt = at;
-        if (input.disableAfter !== undefined && row.status === "enabled" && row.consecutiveFailures >= input.disableAfter) {
+        if (input.disableAfter !== undefined && row.status === "enabled" && row.consecutiveFailures >= input.disableAfter && at.getTime() - (row.lastSuccessAt ?? row.createdAt).getTime() >= (input.disableAfterMs ?? 0)) {
           row.status = "disabled";
           row.disabledReason = "too_many_failures";
           row.disabledAt = at;

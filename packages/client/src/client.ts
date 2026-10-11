@@ -141,6 +141,10 @@ function validate(options: UnioraClientOptions): { base: string; fetchImpl: type
 }
 
 const ACCESS_TOKEN = /^[A-Za-z0-9._~+/-]+=*$/;
+/** A token that goes into a header: the same shape as an access token, so a stray CR/LF cannot become a header or an error message. */
+function assertHeaderToken(value: unknown, what: string, operationId: string): asserts value is string {
+  if (typeof value !== "string" || value === "" || value.length > 8192 || !ACCESS_TOKEN.test(value)) throw new TypeError(`${operationId}: ${what} is not a token (a JWT: letters, digits and . _ ~ + / -).`);
+}
 function assertAccessToken(value: unknown): asserts value is string {
   if (typeof value !== "string" || value.length < 10 || value.length > 8192 || !ACCESS_TOKEN.test(value)) throw new TypeError("The access token must be the token itself (a JWT), without a `Bearer ` prefix.");
 }
@@ -246,6 +250,7 @@ export function createUnioraClient(options: UnioraClientOptions): UnioraClient {
       const asserted = actor !== undefined && typeof actor.subject === "string" && actor.subject !== "";
       if (verified === asserted) throw new TypeError(`${operationId}: this call speaks for an end user: pass { actor: { token } } (their token from your identity provider) or { actor: { subject } }, not both.`);
       if (verified) {
+        assertHeaderToken((actor as VerifiedActor).token, "`actor.token`", operationId);
         headers["uniora-actor-token"] = (actor as VerifiedActor).token;
       } else {
         headers["uniora-actor-subject"] = encodeURIComponent((actor as AssertedActor).subject);
@@ -261,6 +266,7 @@ export function createUnioraClient(options: UnioraClientOptions): UnioraClient {
     const operatorToken = callOptions.operatorToken as string | undefined;
     if (operation.platform) {
       if (typeof operatorToken !== "string" || operatorToken === "") throw new TypeError(`${operationId}: a platform call speaks for a platform operator: pass { operatorToken } (their own token from your staff identity provider).`);
+      assertHeaderToken(operatorToken, "`operatorToken`", operationId);
       headers["uniora-actor-token"] = operatorToken;
     } else if (operatorToken !== undefined) {
       throw new TypeError(`${operationId}: this is not a platform call, so it takes no operator token.`);
@@ -268,6 +274,7 @@ export function createUnioraClient(options: UnioraClientOptions): UnioraClient {
     if (actorToken !== undefined) {
       if (!operation.actorToken) throw new TypeError(`${operationId}: this call takes no actor token.`);
       if (typeof actorToken !== "string" || actorToken === "") throw new TypeError(`${operationId}: \`actorToken\` must be the end user's token.`);
+      assertHeaderToken(actorToken, "`actorToken`", operationId);
       headers["uniora-actor-token"] = actorToken;
     }
     if (callOptions.ifMatch !== undefined) {

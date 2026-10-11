@@ -197,13 +197,13 @@ export function createWebhookEndpointRepository(db: SqliteExecutor): WebhookEndp
            consecutive_failures = case when ?2 then 0 else consecutive_failures + 1 end,
            last_success_at = case when ?2 then ?3 else last_success_at end,
            last_failure_at = case when ?2 then last_failure_at else ?3 end,
-           status = case when not ?2 and status = 'enabled' and ?4 is not null and consecutive_failures + 1 >= ?4 then 'disabled' else status end,
-           disabled_reason = case when not ?2 and status = 'enabled' and ?4 is not null and consecutive_failures + 1 >= ?4 then 'too_many_failures' else disabled_reason end,
-           disabled_at = case when not ?2 and status = 'enabled' and ?4 is not null and consecutive_failures + 1 >= ?4 then ?3 else disabled_at end,
-           version = case when not ?2 and status = 'enabled' and ?4 is not null and consecutive_failures + 1 >= ?4 then version + 1 else version end,
+           status = case when not ?2 and status = 'enabled' and ?4 is not null and consecutive_failures + 1 >= ?4 and (julianday(?3) - julianday(coalesce(last_success_at, created_at))) * 86400000 >= ?5 then 'disabled' else status end,
+           disabled_reason = case when not ?2 and status = 'enabled' and ?4 is not null and consecutive_failures + 1 >= ?4 and (julianday(?3) - julianday(coalesce(last_success_at, created_at))) * 86400000 >= ?5 then 'too_many_failures' else disabled_reason end,
+           disabled_at = case when not ?2 and status = 'enabled' and ?4 is not null and consecutive_failures + 1 >= ?4 and (julianday(?3) - julianday(coalesce(last_success_at, created_at))) * 86400000 >= ?5 then ?3 else disabled_at end,
+           version = case when not ?2 and status = 'enabled' and ?4 is not null and consecutive_failures + 1 >= ?4 and (julianday(?3) - julianday(coalesce(last_success_at, created_at))) * 86400000 >= ?5 then version + 1 else version end,
            updated_at = ?3
          where id = ?1 returning ${ENDPOINT_COLUMNS}`,
-        [id, input.success, at, input.disableAfter ?? null],
+        [id, input.success, at, input.disableAfter ?? null, input.disableAfterMs ?? 0],
       );
       const row = result.rows[0];
       return row ? toEndpoint(row) : null;

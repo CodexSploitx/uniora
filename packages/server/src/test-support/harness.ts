@@ -236,6 +236,7 @@ export function machineOptions(extra: Partial<UnioraServerOptions> = {}): Partia
         algorithms: ["RS256"],
         jwks: { keys: [IDP.machine.key.publicJwk as never] },
         clients: { [MACHINE_SUBJECT]: MACHINE_CLIENT_ID },
+        allowUnscopedTokens: true,
       },
     ],
     ...extra,

@@ -100,7 +100,8 @@ const hostOf = (url: string): string => {
 function describeEndpoint(endpoint: WebhookEndpoint): Record<string, unknown> {
   return {
     id: endpoint.id,
-    url: endpoint.url,
+    // The path and query may carry a secret: reports (kept in CI logs) show the origin only.
+    url: maskedUrl(endpoint.url),
     ...(endpoint.description !== undefined ? { description: endpoint.description } : {}),
     events: endpoint.events,
     organizations: endpoint.organizations,
@@ -129,6 +130,16 @@ function describeDelivery(delivery: WebhookDelivery): Record<string, unknown> {
     ...(delivery.lastError !== undefined ? { lastError: delivery.lastError } : {}),
     ...(delivery.lastHttpStatus !== undefined ? { lastHttpStatus: delivery.lastHttpStatus } : {}),
   };
+}
+
+/** `https://hooks.example.com/…`: enough to recognise the receiver, never the part that can be a secret. */
+function maskedUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname === "/" && parsed.search === "" ? "/" : "/…"}`;
+  } catch {
+    return "(URL inválida)";
+  }
 }
 
 const orgsText = (endpoint: WebhookEndpoint): string => (endpoint.organizations === "*" ? "todas" : `${endpoint.organizations.length} organización(es)`);
@@ -191,6 +202,11 @@ export async function runWebhooks(args: readonly string[], cwd: string = process
     return;
   }
   const urlPolicy = config.server?.webhooks?.urlPolicy;
+  if (urlPolicy?.allowInsecureHttp === true && urlPolicy.allowPrivateNetworks === true && process.env.NODE_ENV === "production") {
+    // The same refusal as the server's: http to private networks together lets a registered endpoint reach internal services.
+    emit(failReport(command, "Configuración", new Error("server.webhooks.urlPolicy permite http y redes privadas a la vez con NODE_ENV=production: un endpoint registrado podría llegar a tus servicios internos.")), json);
+    return;
+  }
 
   const mutating = !["list", "show", "deliveries", "test"].includes(act);
   let driver: DatabaseDriver;
@@ -365,7 +381,7 @@ async function perform(service: WebhookService, driver: DatabaseDriver, command:
   }
 }
 
-async function runWorker(driver: DatabaseDriver, section: { urlPolicy?: { allowInsecureHttp?: boolean; allowPrivateNetworks?: boolean }; concurrency?: number; timeoutMs?: number; maxAttempts?: number; disableAfterFailures?: number; pollIntervalMs?: number; retainDeliveredDays?: number } | undefined, options: WebhooksOptions): Promise<void> {
+async function runWorker(driver: DatabaseDriver, section: { urlPolicy?: { allowInsecureHttp?: boolean; allowPrivateNetworks?: boolean }; concurrency?: number; timeoutMs?: number; maxAttempts?: number; disableAfterFailures?: number; disableAfterMinutes?: number; pollIntervalMs?: number; retainDeliveredDays?: number } | undefined, options: WebhooksOptions): Promise<void> {
   const json = options.json === true;
   const dispatcher = createWebhookDispatcher({
     webhooks: driver.webhookStorage(),
@@ -376,6 +392,7 @@ async function runWorker(driver: DatabaseDriver, section: { urlPolicy?: { allowI
     ...(section?.timeoutMs !== undefined ? { timeoutMs: section.timeoutMs } : {}),
     ...(section?.maxAttempts !== undefined ? { maxAttempts: section.maxAttempts } : {}),
     ...(section?.disableAfterFailures !== undefined ? { disableAfterFailures: section.disableAfterFailures } : {}),
+    ...(section?.disableAfterMinutes !== undefined ? { disableAfterMinutes: section.disableAfterMinutes } : {}),
     ...(section?.pollIntervalMs !== undefined ? { pollIntervalMs: section.pollIntervalMs } : {}),
     ...(section?.retainDeliveredDays !== undefined ? { retainDeliveredDays: section.retainDeliveredDays } : {}),
   });

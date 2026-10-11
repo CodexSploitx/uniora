@@ -86,8 +86,8 @@ export interface PlatformConfig {
     /** The least assurance level (`acrLevels` of the provider) the sign-in reached. Default none. */
     minAssuranceLevel?: number;
   };
-  /** The organization permission keys support access may open (see `PlatformServiceOptions`). Strongly recommended. */
-  supportGrantablePermissions?: readonly string[];
+  /** The organization permission keys support access may open (see `PlatformServiceOptions`). REQUIRED: there is no "any permission" default; an empty list means support access can open none. */
+  supportGrantablePermissions: readonly string[];
   engine?: PlatformEngineOptions;
 }
 
@@ -95,7 +95,7 @@ export interface ResolvedPlatform {
   readonly storage: PlatformStorage;
   readonly providers: ReadonlySet<string>;
   readonly stepUp: { readonly maxAgeSeconds: number; readonly requireMfa: boolean; readonly minAssuranceLevel: number | undefined };
-  readonly supportGrantablePermissions: readonly string[] | undefined;
+  readonly supportGrantablePermissions: readonly string[];
   readonly engine: PlatformEngineOptions | undefined;
 }
 
@@ -112,6 +112,8 @@ export interface WebhooksConfig {
   timeoutMs?: number;
   maxAttempts?: number;
   disableAfterFailures?: number;
+  /** ...and at least this long without a delivery (default 60). */
+  disableAfterMinutes?: number;
   pollIntervalMs?: number;
   retainDeliveredDays?: number;
 }
@@ -318,13 +320,14 @@ function resolvePlatform(input: PlatformConfig | undefined, actorProviders: read
   if (step.minAssuranceLevel !== undefined && step.minAssuranceLevel > 0 && !actorProviders.some((provider) => input.providers.includes(provider.provider) && provider.acrLevels !== undefined)) {
     throw new ServerConfigError("`platform.stepUp.minAssuranceLevel` needs `acrLevels` on a platform provider, or no sign-in could ever reach it.");
   }
-  if (input.supportGrantablePermissions !== undefined && (!Array.isArray(input.supportGrantablePermissions) || input.supportGrantablePermissions.some((key) => typeof key !== "string"))) {
-    throw new ServerConfigError("`platform.supportGrantablePermissions` must be a list of permission keys.");
+  if (!Array.isArray(input.supportGrantablePermissions) || input.supportGrantablePermissions.some((key) => typeof key !== "string")) {
+    // No default: "any registered permission" is close to full access to every organization for 30 days. An empty list means none.
+    throw new ServerConfigError("`platform.supportGrantablePermissions` is required: the organization permission keys support access may open (an empty list: none).");
   }
   return Object.freeze({
     storage: input.storage,
     providers: new Set(input.providers),
-    stepUp: Object.freeze({ maxAgeSeconds, requireMfa: step.requireMfa !== false, minAssuranceLevel: step.minAssuranceLevel }),
+    stepUp: Object.freeze({ maxAgeSeconds, requireMfa: step.requireMfa !== false, minAssuranceLevel: step.minAssuranceLevel === 0 ? undefined : step.minAssuranceLevel }),
     supportGrantablePermissions: input.supportGrantablePermissions,
     engine: input.engine,
   });
@@ -333,7 +336,7 @@ function resolvePlatform(input: PlatformConfig | undefined, actorProviders: read
 function resolveWebhooks(input: WebhooksConfig | undefined, storage: UnioraStorage): WebhooksConfig | undefined {
   if (input === undefined) return undefined;
   if (typeof input !== "object" || input === null || !input.storage?.endpoints || !input.storage.deliveries) throw new ServerConfigError("`webhooks.storage` is required.");
-  const known = new Set(["storage", "outbox", "urlPolicy", "run", "concurrency", "timeoutMs", "maxAttempts", "disableAfterFailures", "pollIntervalMs", "retainDeliveredDays"]);
+  const known = new Set(["storage", "outbox", "urlPolicy", "run", "concurrency", "timeoutMs", "maxAttempts", "disableAfterFailures", "disableAfterMinutes", "pollIntervalMs", "retainDeliveredDays"]);
   for (const key of Object.keys(input)) if (!known.has(key)) throw new ServerConfigError(`webhooks: unknown option "${key}".`);
   if (!input.outbox && !storage.outbox) throw new ServerConfigError("`webhooks` needs an outbox: pass `webhooks.outbox`, or use an organization storage that has one.");
   if (input.urlPolicy?.allowInsecureHttp === true && input.urlPolicy.allowPrivateNetworks === true && process.env.NODE_ENV === "production") {

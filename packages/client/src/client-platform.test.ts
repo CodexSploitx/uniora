@@ -29,7 +29,7 @@ beforeAll(async () => {
     credentials,
     logger: silentLogger,
     actorTokens: [{ provider: "staff", issuer: "https://staff.test/", audience: "uniora", algorithms: ["RS256"], jwks: { keys: [{ ...publicKey.export({ format: "jwk" }), kid: "k1" } as never] } }],
-    platform: { storage: platform, providers: ["staff"] },
+    platform: { storage: platform, providers: ["staff"], supportGrantablePermissions: [] },
   }).listen({ port: 0 });
   uniora = createUnioraClient({ baseUrl: server.url, apiKey: token });
 });
@@ -58,6 +58,9 @@ describe("platform calls from the client", () => {
     await expect(uniora.platformRoles.list({}, {})).rejects.toThrow(/platform operator/);
     // @ts-expect-error and has no asserted form
     await expect(uniora.platformRoles.list({}, { actor: { subject: "root" } })).rejects.toThrow();
+    // A stray line break can never become part of a header or of an error message.
+    await expect(uniora.platformRoles.list({}, { operatorToken: "abc.def\r\nX-Evil: 1" })).rejects.toThrow(/is not a token/);
+    await expect(uniora.platformRoles.list({}, { operatorToken: "abc.def\r\nX-Evil: 1" })).rejects.not.toThrow(/X-Evil/);
     // @ts-expect-error other calls take no operator token
     await expect(uniora.organizations.list({}, { operatorToken: "x" })).rejects.toThrow(/not a platform call/);
   });

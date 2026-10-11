@@ -323,7 +323,7 @@ export const platformRoutes = [
       const after = decodeCursor(query.cursor, momentCursor);
       const rows = (await run(ctx, "listOrganizations", {
         limit: limit + 1,
-        ...(after ? { after: after } : {}),
+        ...(after ? { afterCreatedAt: after.createdAt.toISOString(), afterId: after.id } : {}),
         ...(query.q !== undefined ? { query: query.q } : {}),
         ...(query.status !== undefined ? { status: query.status as OrganizationStatus } : {}),
       })) as Organization[];

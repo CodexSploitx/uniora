@@ -29,6 +29,31 @@ describe.each(BACKENDS)("machine tokens over %s", (backend: BackendName) => {
     expect((await f.call("POST", "/v1/organizations", { token: jwt(), body: { name: "X", owner: { subject: "x" } } })).status).toBe(403);
   });
 
+  it("gives a token with no scope claim nothing unless the provider says so, and refuses a null claim", async () => {
+    const strict = await startFixture(backend, machineOptions({ machineTokens: [{ provider: "machines", issuer: IDP.machine.issuer, audience: "uniora-api", algorithms: ["RS256"], jwks: { keys: [IDP.machine.key.publicJwk as never] }, clients: { [MACHINE_SUBJECT]: MACHINE_CLIENT_ID } }] }));
+    open.push(strict);
+    await strict.issue({ id: MACHINE_CLIENT_ID, name: "billing-app", scopes: ["check", "organizations:read"] });
+    const bare = strict.sign(MACHINE_SUBJECT, { provider: "machine" });
+    expect((await strict.call("GET", "/v1/organizations", { token: bare })).status).toBe(403);
+    expect((await strict.call("GET", "/v1/organizations", { token: strict.sign(MACHINE_SUBJECT, { provider: "machine", claims: { scope: "organizations:read" } }) })).status).toBe(200);
+    for (const claims of [{ scope: null }, { scp: null }, { scope: null, scp: ["check"] }]) {
+      expect((await strict.call("GET", "/v1/organizations", { token: strict.sign(MACHINE_SUBJECT, { provider: "machine", claims }) })).status, JSON.stringify(claims)).toBe(401);
+    }
+  });
+
+  it("can tell a machine token from a user token of the same application by a required claim", async () => {
+    const f = await startFixture(backend, machineOptions({
+      machineTokens: [{ provider: "machines", issuer: IDP.machine.issuer, audience: "uniora-api", algorithms: ["RS256"], jwks: { keys: [IDP.machine.key.publicJwk as never] }, subjectClaim: "azp", requireClaims: { idtyp: "app" }, clients: { [MACHINE_SUBJECT]: MACHINE_CLIENT_ID }, allowUnscopedTokens: true }],
+    }));
+    open.push(f);
+    await f.issue({ id: MACHINE_CLIENT_ID, name: "billing-app", scopes: ["check", "organizations:read"] });
+    const make = (claims: Record<string, unknown>) => f.sign("whoever", { provider: "machine", claims: { azp: MACHINE_SUBJECT, ...claims } });
+    expect((await f.call("GET", "/v1/organizations", { token: make({ idtyp: "app" }) })).status).toBe(200);
+    expect((await f.call("GET", "/v1/organizations", { token: make({}) })).status).toBe(401); // a user's token of the same application
+    expect((await f.call("GET", "/v1/organizations", { token: make({ idtyp: "user" }) })).status).toBe(401);
+    expect((await f.call("GET", "/v1/organizations", { token: make({ idtyp: ["app"] }) })).status).toBe(401);
+  });
+
   it("keeps the client's organization allowlist", async () => {
     const { f, jwt } = await start({}, { organizations: ["org_acme"] });
     expect((await f.call("GET", "/v1/organizations/org_acme", { token: jwt() })).status).toBe(200);
@@ -136,6 +161,12 @@ describe("machine token configuration", () => {
     expect(() => createUnioraServer({ ...base(), machineTokens: [provider({ clients: { app: 7 } })] })).toThrow(/API client id/);
     expect(() => createUnioraServer({ ...base(), machineTokens: [provider({ audience: undefined })] })).toThrow(/audience/);
     expect(() => createUnioraServer({ ...base(), machineTokens: [provider({ algorithms: ["none"] })] })).toThrow(/algorithms/);
+    // A subject claim other than `sub` (azp, client_id) also names users' tokens: the config must say how to tell them apart.
+    expect(() => createUnioraServer({ ...base(), machineTokens: [provider({ subjectClaim: "azp" })] })).toThrow(/requireClaims/);
+    expect(() => createUnioraServer({ ...base(), machineTokens: [provider({ subjectClaim: "azp", requireClaims: { idtyp: "app" } })] })).not.toThrow();
+    expect(() => createUnioraServer({ ...base(), machineTokens: [provider({ subjectClaim: "client_id", requireClaims: {} })] })).not.toThrow();
+    expect(() => createUnioraServer({ ...base(), machineTokens: [provider({ requireClaims: { gty: [] } })] })).toThrow(/requireClaims/);
+    expect(() => createUnioraServer({ ...base(), machineTokens: [provider({ allowUnscopedTokens: "yes" })] })).toThrow(/allowUnscopedTokens/);
     const user = { provider: "main", issuer: "https://m.example.com/", audience: "uniora-api", algorithms: ["RS256"] as const, jwks: { keys: [IDP.main.key.publicJwk as never] } };
     expect(() => createUnioraServer({ ...base(), actorTokens: [user], machineTokens: [provider()] })).toThrow(/audience of their own/);
     expect(() => createUnioraServer({ ...base(), actorTokens: [{ ...user, audience: "uniora" }], machineTokens: [provider()] })).not.toThrow();

@@ -51,7 +51,9 @@ export function verifyWebhook(input: VerifyWebhookInput): boolean {
   if (!/^\d{1,12}$/.test(timestamp) || id === "" || id.length > 200) return false;
   const seconds = Number(timestamp);
   const nowSeconds = Math.floor((input.now ?? new Date()).getTime() / 1000);
-  if (Math.abs(nowSeconds - seconds) > (input.toleranceSeconds ?? 300)) return false;
+  const tolerance = input.toleranceSeconds ?? 300;
+  // Written so that NaN (an unset environment variable turned into a number) refuses instead of accepting everything.
+  if (typeof tolerance !== "number" || !(Math.abs(nowSeconds - seconds) <= tolerance)) return false;
   const secrets = typeof input.secrets === "string" ? [input.secrets] : input.secrets;
   const given = signature.split(" ").filter((part) => part.startsWith("v1,")).map((part) => Buffer.from(part.slice(3), "base64"));
   let ok = false;
