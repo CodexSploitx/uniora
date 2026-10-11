@@ -40,6 +40,8 @@ const FEATS = [
   { key: "advanced_reports", label: "advanced_reports" },
 ];
 
+import { sparks } from "./extras.js";
+
 const L = {
   who: { en: "Identity resolved", es: "Identidad resuelta" },
   wellformed: { en: "Permission key is well-formed", es: "La clave de permiso está bien formada" },
@@ -164,6 +166,7 @@ export function initPlayground({ getLang }) {
     v.querySelector(".vb-word").textContent = r.verdict.allowed ? "ALLOW" : "DENY";
     v.querySelector(".vb-reason").textContent = `reason: ${r.verdict.reason}`;
     if (was.includes("deny") && !r.verdict.allowed) { v.style.animation = "none"; void v.offsetWidth; v.style.animation = ""; }
+    if (r.verdict.allowed && !was.includes("allow")) sparks(v);
   }
 
   $("swOrg").addEventListener("change", (e) => { sel.suspended = e.target.checked; draw(); });

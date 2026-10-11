@@ -1,5 +1,7 @@
 import { ES, RT } from "./i18n.js";
 import { initPlayground } from "./engine-demo.js";
+import { initSavings } from "./savings.js";
+import { initFlow, initArt, initModes, initSpots, showSpots, drawSpots, decoratePaths, splitHeadings, initDots } from "./extras.js";
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -179,7 +181,7 @@ let curPkg = "core";
 function showPkg(id) {
   curPkg = id; const p = PKG[id];
   $$(".node").forEach((n) => n.classList.toggle("active", n.dataset.pkg === id));
-  $$("#archLines path").forEach((l) => l.classList.toggle("on", l.dataset.pkg === id));
+  $$("#archLines [data-pkg]").forEach((l) => l.classList.toggle("on", l.dataset.pkg === id));
   $("#pkgName").textContent = p.n; $("#pkgDesc").textContent = pick(p.d); $("#pkgInstall").textContent = p.i;
 }
 $$(".node").forEach((n) => n.addEventListener("click", () => showPkg(n.dataset.pkg)));
@@ -201,6 +203,7 @@ function drawLines() {
     }
     const p = document.createElementNS("http://www.w3.org/2000/svg", "path"); p.setAttribute("d", d); p.dataset.pkg = n.dataset.pkg; svg.appendChild(p);
   });
+  decoratePaths(svg);
   showPkg(curPkg);
 }
 addEventListener("resize", () => requestAnimationFrame(drawLines));
@@ -212,6 +215,7 @@ $("#studioTabs").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-shot]"); if (!b) return;
   $$("#studioTabs button").forEach((x) => x.classList.toggle("active", x === b));
   $$(".shot").forEach((s) => s.classList.toggle("active", s.dataset.shot === b.dataset.shot));
+  showSpots(b.dataset.shot);
   const d = $("#device"); d.classList.remove("swap"); void d.offsetWidth; d.classList.add("swap");
 });
 const lb = $("#lightbox");
@@ -317,17 +321,17 @@ onLang.push(() => showCode(curCode)); showCode("core");
 /* ───────────────── license checker ───────────────── */
 const LIC = {
   yes: [
-    ["commercial", { en: "Use it in a commercial product", es: "Usarlo en un producto comercial" }, { en: "Yes. Personal, internal or commercial use is allowed — for free.", es: "Sí. El uso personal, interno o comercial está permitido — gratis." }],
-    ["saas", { en: "Build a paid SaaS that depends on it", es: "Crear un SaaS de pago que dependa de él" }, { en: "Yes. A paid SaaS or product that depends on UNIORA is fine. You just can't sell UNIORA itself.", es: "Sí. Un SaaS o producto de pago que dependa de UNIORA está bien. Solo no puedes vender UNIORA en sí." }],
-    ["internal", { en: "Run it inside my company", es: "Ejecutarlo dentro de mi empresa" }, { en: "Yes. Internal tools and back-office systems are a permitted purpose.", es: "Sí. Herramientas internas y sistemas de back-office son un propósito permitido." }],
-    ["modify", { en: "Read and modify the source", es: "Leer y modificar el código" }, { en: "Yes. You can make changes and new works based on the software for any permitted purpose.", es: "Sí. Puedes hacer cambios y obras nuevas basadas en el software para cualquier propósito permitido." }],
-    ["redistribute", { en: "Redistribute it, keeping the license", es: "Redistribuirlo conservando la licencia" }, { en: "Yes — as long as recipients also get the license terms and the Required Notice line.", es: "Sí — siempre que quien lo reciba también obtenga los términos de la licencia y la línea Required Notice." }],
+    ["commercial", { en: "Commercial product", es: "Producto comercial" }, { en: "Permitted. Personal, internal and commercial use is allowed at no cost.", es: "Permitido. El uso personal, interno y comercial está permitido sin costo." }],
+    ["saas", { en: "Paid SaaS built on UNIORA", es: "SaaS de pago construido sobre UNIORA" }, { en: "Permitted. A paid SaaS or product that depends on UNIORA is within the license. UNIORA itself cannot be sold.", es: "Permitido. Un SaaS o producto de pago que dependa de UNIORA está dentro de la licencia. UNIORA en sí no puede venderse." }],
+    ["internal", { en: "Internal company system", es: "Sistema interno de una empresa" }, { en: "Permitted. Internal tools and back-office systems are a permitted purpose.", es: "Permitido. Las herramientas internas y los sistemas de back-office son un propósito permitido." }],
+    ["modify", { en: "Modifying the source", es: "Modificar el código" }, { en: "Permitted. You may make changes and new works for any permitted purpose.", es: "Permitido. Puedes hacer cambios y obras derivadas para cualquier propósito permitido." }],
+    ["redistribute", { en: "Redistribution", es: "Redistribución" }, { en: "Permitted, provided recipients also receive the license terms and the Required Notice line.", es: "Permitido, siempre que quienes lo reciban obtengan también los términos de la licencia y la línea Required Notice." }],
   ],
   no: [
-    ["resell", { en: "Resell UNIORA", es: "Revender UNIORA" }, { en: "No. Reselling it is providing a product that competes with UNIORA.", es: "No. Revenderlo es ofrecer un producto que compite con UNIORA." }],
-    ["repackage", { en: "Repackage it as my own product", es: "Reempaquetarlo como producto propio" }, { en: "No. Repackaging or offering it — or a substitute for it — as your own paid or free product or service is not allowed.", es: "No. Reempaquetarlo u ofrecerlo — o un sustituto — como producto o servicio propio, de pago o gratuito, no está permitido." }],
-    ["competing", { en: "Launch a competing authorization service", es: "Lanzar un servicio de autorización competidor" }, { en: "No. Goods and services compete even through different interfaces, platforms or free of charge — a practical substitute for UNIORA is out.", es: "No. Los productos y servicios compiten incluso con interfaces o plataformas distintas, o gratis — un sustituto práctico de UNIORA queda fuera." }],
-    ["strip", { en: "Remove the license or Required Notice", es: "Quitar la licencia o el Required Notice" }, { en: "No. Anyone who gets a copy from you must also get the license terms and the Required Notice lines.", es: "No. Quien reciba una copia tuya debe recibir también los términos de la licencia y las líneas Required Notice." }],
+    ["resell", { en: "Reselling UNIORA", es: "Revender UNIORA" }, { en: "Not permitted. Reselling UNIORA is providing a product that competes with it.", es: "No permitido. Revender UNIORA es ofrecer un producto que compite con él." }],
+    ["repackage", { en: "Repackaging it as your own product", es: "Reempaquetarlo como producto propio" }, { en: "Not permitted. Offering UNIORA, or a substitute for it, as your own product or service, paid or free.", es: "No permitido. Ofrecer UNIORA, o un sustituto, como producto o servicio propio, de pago o gratuito." }],
+    ["competing", { en: "A competing authorization service", es: "Un servicio de autorización competidor" }, { en: "Not permitted. Products compete even through different interfaces or platforms, or free of charge.", es: "No permitido. Los productos compiten incluso con interfaces o plataformas distintas, o de forma gratuita." }],
+    ["strip", { en: "Removing the license or notice", es: "Quitar la licencia o el aviso" }, { en: "Not permitted. Anyone who receives a copy from you must also receive the license terms and the Required Notice lines.", es: "No permitido. Quien reciba una copia tuya debe recibir también los términos de la licencia y las líneas Required Notice." }],
   ],
 };
 let licSel = null;
@@ -343,7 +347,7 @@ function drawLic() {
   v.className = "lic-verdict" + (found ? " " + found[0] : "");
   $(".lv-mark", v).textContent = found ? (found[0] === "yes" ? "✓" : "✕") : "?";
   if (found) { $("b", v).removeAttribute("data-i18n"); $("b", v).textContent = pick(found[2]); $("p", v).textContent = pick(found[3]); }
-  else { $("b", v).setAttribute("data-i18n", "lic.pick"); $("b", v).innerHTML = lang === "es" ? ES["lic.pick"] : "Pick a use case above."; $("p", v).textContent = ""; }
+  else { $("b", v).setAttribute("data-i18n", "lic.pick"); $("b", v).innerHTML = lang === "es" ? ES["lic.pick"] : "Select a use to check it against the license."; $("p", v).textContent = ""; }
 }
 onLang.push(drawLic); drawLic();
 
@@ -421,6 +425,15 @@ async function loadRepo() {
   if (repo.status === "rejected") console.warn(pick(RT.apiFail));
 }
 onLang.push(() => { if (state.stars !== null) { $("#starCta").textContent = state.stars === 0 ? pick(RT.starFirst) : pick(RT.starThanks); drawGazers(); if (repoData) $("#stPush").textContent = relTime(repoData.pushed_at); } });
+
+/* ───────────────── motion graphics / extras ───────────────── */
+const savings = initSavings({ getLang, reduced }); onLang.push(() => savings.redraw());
+const flow = initFlow({ getLang }); onLang.push(() => flow.redraw());
+const modes = initModes({ getLang }); onLang.push(() => modes.redraw());
+initArt();
+initSpots({ getLang }); onLang.push(() => drawSpots());
+const dots = initDots(); onLang.push(() => dots.redraw());
+onLang.push(splitHeadings);
 
 /* ───────────────── boot ───────────────── */
 applyLang();
