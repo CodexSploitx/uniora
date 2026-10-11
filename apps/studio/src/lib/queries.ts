@@ -1,9 +1,15 @@
 import "server-only";
-import type { AuditLogEntry, Organization } from "@uniora/core";
-import { databaseSchemaExists, getStorage } from "@/lib/db";
+import type { AuditLogEntry, Organization, Policy } from "@uniora/core";
+import { createApiCredentialService } from "@uniora/core";
+import { databaseSchemaExists, getApiCredentialStorage, getPlatformStorage, getStorage, getWebhookStorage } from "@/lib/db";
+import { countLimit } from "@/lib/limits";
 import { requireSession } from "@/lib/session";
+import { cachedTotal } from "@/lib/totals-cache";
 import type {
   ActivityItem,
+  ApiClientsPage,
+  WebhookEndpointRow,
+  WebhooksPage,
   FeatureView,
   InvitationRow,
   MemberHeader,
@@ -13,10 +19,16 @@ import type {
   OrgHeader,
   OrgSummary,
   OverviewData,
+  PlatformMemberRow,
+  PolicyRevisionRow,
+  PolicyRow,
+  PlatformRoleRow,
   PermissionView,
   RolePermissionRow,
   RoleRef,
   RoleRow,
+  TeamMemberRow,
+  TeamRow,
 } from "@/lib/types";
 
 /** Data Access Layer: every read verifies the Studio session itself. */
@@ -33,6 +45,17 @@ export async function isSchemaReady(): Promise<boolean> {
   schemaKnownReady = await databaseSchemaExists();
   return schemaKnownReady;
 }
+
+/** Whole-table totals are cached for a few seconds (see `cachedTotal`): a count of millions of rows is never on the request path twice. */
+const TOTALS_TTL_MS = 120_000;
+const totalOrganizations = (): Promise<number> =>
+  cachedTotal("organizations", TOTALS_TTL_MS, () => getStorage().organizations.count(), {
+    fallback: () => getStorage().organizations.count({ limit: countLimit() }),
+  });
+const totalMembers = (): Promise<number> =>
+  cachedTotal("memberships", TOTALS_TTL_MS, () => getStorage().memberships.count(), {
+    fallback: () => getStorage().memberships.count({ limit: countLimit() }),
+  });
 
 function toActivity(entry: AuditLogEntry, organizationName: string | undefined): ActivityItem {
   return {
@@ -72,8 +95,8 @@ async function summarizeMany(organizations: Organization[]): Promise<OrgSummary[
   const storage = getStorage();
   const ids = organizations.map((organization) => organization.id);
   const [members, roles, enabledFeatures] = await Promise.all([
-    storage.memberships.countByOrganization(ids),
-    storage.roles.countByOrganization(ids),
+    storage.memberships.countByOrganization(ids, { limit: countLimit() }),
+    storage.roles.countByOrganization(ids, { limit: countLimit() }),
     storage.features.countEnabledByOrganization(ids),
   ]);
   return organizations.map((organization) => ({
@@ -81,6 +104,7 @@ async function summarizeMany(organizations: Organization[]): Promise<OrgSummary[
     slug: organization.slug,
     name: organization.name,
     createdAt: organization.createdAt.toISOString(),
+    status: organization.status,
     memberCount: members[organization.id] ?? 0,
     roleCount: roles[organization.id] ?? 0,
     enabledFeatureCount: enabledFeatures[organization.id] ?? 0,
@@ -118,15 +142,16 @@ function decodeOrganizationCursor(cursor: string): { createdAt: Date; id: string
  * (members/roles/features counts), but only for this page's rows, not the
  * whole table.
  */
-export async function getOrganizationsPage(options?: { query?: string; cursor?: string }): Promise<OrganizationsPage> {
+export async function getOrganizationsPage(options?: { query?: string; cursor?: string; status?: OrgSummary["status"] }): Promise<OrganizationsPage> {
   await requireSession();
   const storage = getStorage();
   const query = options?.query?.trim() || undefined;
   const after = options?.cursor ? decodeOrganizationCursor(options.cursor) : undefined;
+  const status = options?.status;
 
   const [rows, total] = await Promise.all([
-    storage.organizations.search({ limit: ORGANIZATIONS_PAGE_SIZE + 1, after, query }),
-    storage.organizations.count({ query }),
+    storage.organizations.search({ limit: ORGANIZATIONS_PAGE_SIZE + 1, after, query, status }),
+    storage.organizations.count({ query, status, limit: countLimit(Boolean(query || status)) }),
   ]);
   const hasMore = rows.length > ORGANIZATIONS_PAGE_SIZE;
   const page = hasMore ? rows.slice(0, ORGANIZATIONS_PAGE_SIZE) : rows;
@@ -146,7 +171,7 @@ export async function getOrganizationsPage(options?: { query?: string; cursor?: 
 export async function getSidebarOrganizations(): Promise<{ items: { id: string; name: string }[]; total: number }> {
   await requireSession();
   const storage = getStorage();
-  const [rows, total] = await Promise.all([storage.organizations.search({ limit: 12 }), storage.organizations.count()]);
+  const [rows, total] = await Promise.all([storage.organizations.search({ limit: 12 }), totalOrganizations()]);
   return { items: rows.map(({ id, name }) => ({ id, name })), total };
 }
 
@@ -162,11 +187,11 @@ export async function getOverview(organizationLimit: number): Promise<OverviewDa
   const [organizationRows, organizationCount, memberCount, roleCount, permissionCount, featureCount, recentEntries] =
     await Promise.all([
       storage.organizations.search({ limit: organizationLimit }),
-      storage.organizations.count(),
-      storage.memberships.count(),
-      storage.roles.count(),
-      storage.permissions.count(),
-      storage.features.count(),
+      totalOrganizations(),
+      totalMembers(),
+      cachedTotal("roles", TOTALS_TTL_MS, () => storage.roles.count()),
+      cachedTotal("permissions", TOTALS_TTL_MS, () => storage.permissions.count()),
+      cachedTotal("features", TOTALS_TTL_MS, () => storage.features.count()),
       storage.auditLogs.listRecent({ limit: 8 }),
     ]);
 
@@ -209,7 +234,7 @@ export async function getOrgHeader(id: string): Promise<OrgHeader | null> {
   if (!organization) return null;
 
   const [memberCount, roleCount, featuresEnabled, featuresTotal] = await Promise.all([
-    storage.memberships.count({ organizationId: id }),
+    storage.memberships.count({ organizationId: id, limit: countLimit() }),
     storage.roles.count({ organizationId: id }),
     storage.features.count({ enabledIn: id }),
     storage.features.count(),
@@ -220,6 +245,8 @@ export async function getOrgHeader(id: string): Promise<OrgHeader | null> {
       slug: organization.slug,
       name: organization.name,
       createdAt: organization.createdAt.toISOString(),
+      status: organization.status,
+      statusReason: organization.statusChange?.reason,
     },
     memberCount,
     roleCount,
@@ -236,8 +263,14 @@ const toMemberRow = (listing: {
   identity: { provider: string; subject: string };
   roleCount: number;
   roles: { id: string; name: string; isOwnerRole: boolean }[];
+  status: MemberRow["status"];
+  createdAt: Date;
+  lastActiveAt?: Date;
 }): MemberRow => ({
   id: listing.id,
+  status: listing.status,
+  createdAt: listing.createdAt.toISOString(),
+  lastActiveAt: listing.lastActiveAt?.toISOString(),
   identity: { provider: listing.identity.provider, subject: listing.identity.subject },
   roleCount: listing.roleCount,
   roles: listing.roles.map((role) => ({ id: role.id, name: role.name, isOwnerRole: role.isOwnerRole })),
@@ -254,20 +287,22 @@ export interface OrgMembersPage {
 
 export async function getOrgMembersPage(
   organizationId: string,
-  options?: { query?: string; cursor?: string },
+  options?: { query?: string; cursor?: string; status?: MemberRow["status"] },
 ): Promise<OrgMembersPage> {
   await requireSession();
   const storage = getStorage();
   const query = cleanQuery(options?.query);
+  const status = options?.status;
   const [rows, total] = await Promise.all([
     storage.memberships.searchListing({
       organizationId,
       limit: MEMBERS_PAGE_SIZE + 1,
       after: cleanCursor(options?.cursor),
       query,
+      status,
       rolesPerMember: ROLES_PREVIEW,
     }),
-    storage.memberships.count({ organizationId, query }),
+    storage.memberships.count({ organizationId, query, status, limit: countLimit(Boolean(query || status)) }),
   ]);
   const { page, hasMore } = splitPage(rows, MEMBERS_PAGE_SIZE);
   // The Owner role always sorts first in a member's preview, so it is visible whenever they hold it.
@@ -290,18 +325,20 @@ export interface MembersPage {
 }
 
 /** Members across EVERY organization (the global `/members` page): one bounded, keyset-paged, searchable page. */
-export async function getMembersPage(options?: { query?: string; cursor?: string }): Promise<MembersPage> {
+export async function getMembersPage(options?: { query?: string; cursor?: string; status?: MemberRow["status"] }): Promise<MembersPage> {
   await requireSession();
   const storage = getStorage();
   const query = cleanQuery(options?.query);
+  const status = options?.status;
   const [rows, total] = await Promise.all([
     storage.memberships.searchListing({
       limit: MEMBERS_PAGE_SIZE + 1,
       after: cleanCursor(options?.cursor),
       query,
+      status,
       rolesPerMember: ROLES_PREVIEW,
     }),
-    storage.memberships.count({ query }),
+    query || status ? storage.memberships.count({ query, status, limit: countLimit(true) }) : totalMembers(),
   ]);
   const { page, hasMore } = splitPage(rows, MEMBERS_PAGE_SIZE);
   const organizations = await storage.organizations.findByIds([...new Set(page.map((membership) => membership.organizationId))]);
@@ -473,7 +510,7 @@ export async function getMemberHeader(membershipId: string): Promise<MemberHeade
     storage.roles.count({ organizationId, heldBy: membershipId, isOwnerRole: true }),
     storage.features.count({ enabledIn: organizationId }),
     storage.memberships.search({ identity: member.identity, limit: OTHER_ORGANIZATIONS_PREVIEW + 1 }),
-    storage.memberships.count({ identity: member.identity }),
+    storage.memberships.count({ identity: member.identity, limit: countLimit() }),
   ]);
   if (!organization) return null;
 
@@ -747,10 +784,10 @@ export async function getFeaturesPage(options?: { query?: string; cursor?: strin
   const query = options?.query?.trim() || undefined;
   const after = options?.cursor && options.cursor.length <= MAX_CURSOR_LENGTH ? options.cursor : undefined;
 
-  const [rows, total, totalOrganizations] = await Promise.all([
+  const [rows, total, organizationTotal] = await Promise.all([
     storage.features.search({ limit: FEATURES_PAGE_SIZE + 1, after, query }),
     storage.features.count({ query }),
-    storage.organizations.count(),
+    totalOrganizations(),
   ]);
   const hasMore = rows.length > FEATURES_PAGE_SIZE;
   const page = hasMore ? rows.slice(0, FEATURES_PAGE_SIZE) : rows;
@@ -769,6 +806,7 @@ export async function getFeaturesPage(options?: { query?: string; cursor?: strin
         key: definition.key,
         name: definition.name,
         description: definition.description,
+        defaultEnabled: definition.defaultEnabled,
         enabledCount: entry?.enabledCount ?? 0,
         sampleOrganizations: (entry?.sampleOrganizationIds ?? []).flatMap((id) => {
           const name = nameById.get(id);
@@ -778,7 +816,7 @@ export async function getFeaturesPage(options?: { query?: string; cursor?: strin
     }),
     nextCursor: hasMore ? page[page.length - 1]!.key : null,
     total,
-    totalOrganizations,
+    totalOrganizations: organizationTotal,
   };
 }
 
@@ -798,10 +836,15 @@ export async function getOrgInvitationsPage(organizationId: string, options?: { 
   const { page, hasMore } = splitPage(rows, INVITATIONS_PAGE_SIZE);
   const roles = await storage.roles.findSummariesByIds([...new Set(page.flatMap((invitation) => invitation.roleIds))]);
   const roleById = new Map(roles.map((role) => [role.id, { id: role.id, name: role.name, isOwnerRole: role.isOwnerRole }]));
+  const teamIds = [...new Set(page.flatMap((invitation) => invitation.teamIds))];
+  const teamById = new Map(
+    (await Promise.all(teamIds.map((id) => storage.teams.findById(organizationId, id)))).flatMap((team) => (team ? [[team.id, team.name] as const] : [])),
+  );
   const now = Date.now();
   return {
     items: page.map((invitation) => ({
       id: invitation.id,
+      teams: invitation.teamIds.flatMap((id) => (teamById.has(id) ? [{ id, name: teamById.get(id)! }] : [])),
       email: invitation.email,
       status: invitation.status === "pending" && invitation.expiresAt.getTime() <= now ? "expired" : invitation.status,
       roles: invitation.roleIds.flatMap((id) => roleById.get(id) ?? []),
@@ -812,4 +855,364 @@ export async function getOrgInvitationsPage(organizationId: string, options?: { 
     })),
     nextCursor: hasMore ? page[page.length - 1]!.id : null,
   };
+}
+
+const TEAMS_PAGE_SIZE = 20;
+const TEAM_MEMBERS_PAGE_SIZE = 25;
+const TEAM_CHILDREN_PREVIEW = 12;
+
+export interface OrgTeamsPage {
+  items: TeamRow[];
+  nextCursor: string | null;
+  total: number;
+}
+
+/** A bounded, searchable page of an organization's top-level teams (or every team matching a search) with member counts. */
+export async function getOrgTeamsPage(organizationId: string, options?: { query?: string; cursor?: string }): Promise<OrgTeamsPage> {
+  await requireSession();
+  const storage = getStorage();
+  const query = cleanQuery(options?.query);
+  // Without a search the list is the top of the tree (a team's sub-teams open from its detail); a search looks at every team.
+  const topLevel = query ? {} : { parentId: null };
+  const [rows, total] = await Promise.all([
+    storage.teams.search({ organizationId, limit: TEAMS_PAGE_SIZE + 1, after: cleanCursor(options?.cursor), query, ...topLevel }),
+    storage.teams.count({ organizationId, query, ...topLevel }),
+  ]);
+  const { page, hasMore } = splitPage(rows, TEAMS_PAGE_SIZE);
+  const parentIds = [...new Set(page.flatMap((team) => (team.parentId ? [team.parentId] : [])))];
+  const [parents, memberCounts, childCounts] = await Promise.all([
+    Promise.all(parentIds.map((id) => storage.teams.findById(organizationId, id))),
+    Promise.all(page.map((team) => storage.teamMemberships.count({ organizationId, teamId: team.id, status: "active" }))),
+    Promise.all(page.map((team) => storage.teams.count({ organizationId, parentId: team.id }))),
+  ]);
+  const parentName = new Map(parents.flatMap((team) => (team ? [[team.id, team.name] as const] : [])));
+  return {
+    items: page.map((team, index) => ({
+      id: team.id,
+      name: team.name,
+      slug: team.slug,
+      status: team.status,
+      ...(team.externalId !== undefined ? { externalId: team.externalId } : {}),
+      ...(team.parentId !== undefined ? { parent: { id: team.parentId, name: parentName.get(team.parentId) ?? team.parentId } } : {}),
+      memberCount: memberCounts[index] ?? 0,
+      childCount: childCounts[index] ?? 0,
+    })),
+    nextCursor: hasMore ? page[page.length - 1]!.id : null,
+    total,
+  };
+}
+
+export interface TeamDetailPage {
+  team: TeamRow;
+  /** Top-level team first, the team itself excluded. */
+  ancestors: { id: string; name: string }[];
+  /** The first direct sub-teams (a page-sized preview; `team.childCount` is the total). */
+  children: { id: string; name: string; status: "active" | "archived" }[];
+  members: TeamMemberRow[];
+  membersTotal: number;
+  membersNextCursor: string | null;
+}
+
+export async function getTeamDetail(organizationId: string, teamId: string, options?: { cursor?: string }): Promise<TeamDetailPage | null> {
+  await requireSession();
+  const storage = getStorage();
+  const team = await storage.teams.findById(organizationId, teamId);
+  if (!team) return null;
+  const [ancestors, rows, membersTotal, activeMembers, children, childRows] = await Promise.all([
+    storage.teams.ancestors(organizationId, teamId),
+    storage.teamMemberships.search({ organizationId, teamId, limit: TEAM_MEMBERS_PAGE_SIZE + 1, after: cleanCursor(options?.cursor) }),
+    storage.teamMemberships.count({ organizationId, teamId }),
+    storage.teamMemberships.count({ organizationId, teamId, status: "active" }),
+    storage.teams.count({ organizationId, parentId: teamId }),
+    storage.teams.search({ organizationId, parentId: teamId, limit: TEAM_CHILDREN_PREVIEW }),
+  ]);
+  const { page, hasMore } = splitPage(rows, TEAM_MEMBERS_PAGE_SIZE);
+  const memberships = await Promise.all(page.map((row) => storage.memberships.findById(row.membershipId)));
+  const roleIds = [...new Set(page.flatMap((row) => row.roleIds))];
+  const roleSummaries = roleIds.length > 0 ? await storage.roles.findSummariesByIds(roleIds) : [];
+  const roleById = new Map(roleSummaries.map((role) => [role.id, role]));
+  const members: TeamMemberRow[] = page.flatMap((row, index) => {
+    const membership = memberships[index];
+    if (!membership) return [];
+    return [
+      {
+        id: row.id,
+        membershipId: row.membershipId,
+        identity: { provider: membership.identity.provider, subject: membership.identity.subject },
+        status: row.status,
+        responsibility: row.responsibility,
+        roles: row.roleIds.flatMap((id) => {
+          const role = roleById.get(id);
+          return role ? [{ id: role.id, name: role.name, isOwnerRole: role.isOwnerRole }] : [];
+        }),
+      },
+    ];
+  });
+  return {
+    team: {
+      id: team.id,
+      name: team.name,
+      slug: team.slug,
+      status: team.status,
+      ...(team.externalId !== undefined ? { externalId: team.externalId } : {}),
+      ...(ancestors.length > 0 ? { parent: { id: ancestors[ancestors.length - 1]!.id, name: ancestors[ancestors.length - 1]!.name } } : {}),
+      memberCount: activeMembers,
+      childCount: children,
+    },
+    ancestors: ancestors.map((ancestor) => ({ id: ancestor.id, name: ancestor.name })),
+    children: childRows.map((child) => ({ id: child.id, name: child.name, status: child.status })),
+    members,
+    membersTotal,
+    membersNextCursor: hasMore ? page[page.length - 1]!.id : null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Policies (read only). A policy is authored through the policy service of the host application (Studio is an operator
+// tool without that application's roles); here an operator can see what is enforced in an organization and why.
+// ---------------------------------------------------------------------------
+
+const POLICIES_PAGE_SIZE = 20;
+const POLICY_REVISIONS_PAGE_SIZE = 10;
+
+const toPolicyRow = (policy: Policy): PolicyRow => ({
+  id: policy.id,
+  key: policy.key,
+  name: policy.name,
+  kind: policy.kind,
+  effect: policy.effect,
+  status: policy.status,
+  revision: policy.revision,
+  updatedAt: policy.updatedAt.toISOString(),
+});
+
+export interface OrgPoliciesPage {
+  items: PolicyRow[];
+  nextCursor: string | null;
+  /** An organization has at most 1000 policies, so this is exact. */
+  total: number;
+}
+
+export async function getOrgPoliciesPage(
+  organizationId: string,
+  options?: { query?: string; cursor?: string; status?: PolicyRow["status"] },
+): Promise<OrgPoliciesPage> {
+  await requireSession();
+  const storage = getStorage();
+  const query = cleanQuery(options?.query);
+  const filter = { organizationId, query, ...(options?.status ? { status: options.status } : {}) };
+  const [rows, total] = await Promise.all([
+    storage.policies.search({ ...filter, limit: POLICIES_PAGE_SIZE + 1, after: cleanCursor(options?.cursor) }),
+    storage.policies.count(filter),
+  ]);
+  const { page, hasMore } = splitPage(rows, POLICIES_PAGE_SIZE);
+  return { items: page.map(toPolicyRow), nextCursor: hasMore ? page[page.length - 1]!.id : null, total };
+}
+
+export interface PolicyDetailPage {
+  policy: PolicyRow & {
+    description?: string;
+    version: number;
+    hash: string;
+    createdAt: string;
+    createdBy: { provider: string; subject: string };
+    activatedAt?: string;
+    statusChange?: { at: string; by: { provider: string; subject: string }; reason?: string };
+    definition: unknown;
+  };
+  revisions: PolicyRevisionRow[];
+  revisionsNextBefore: number | null;
+}
+
+export async function getPolicyDetail(organizationId: string, policyId: string, options?: { before?: number }): Promise<PolicyDetailPage | null> {
+  await requireSession();
+  const storage = getStorage();
+  const policy = await storage.policies.findById(organizationId, policyId);
+  if (!policy) return null;
+  const before = options?.before !== undefined && Number.isInteger(options.before) && options.before > 0 ? options.before : undefined;
+  const rows = await storage.policies.revisions(organizationId, policyId, { limit: POLICY_REVISIONS_PAGE_SIZE + 1, ...(before !== undefined ? { before } : {}) });
+  const { page, hasMore } = splitPage(rows, POLICY_REVISIONS_PAGE_SIZE);
+  return {
+    policy: {
+      ...toPolicyRow(policy),
+      ...(policy.description !== undefined ? { description: policy.description } : {}),
+      version: policy.version,
+      hash: policy.definitionHash,
+      createdAt: policy.createdAt.toISOString(),
+      createdBy: { provider: policy.createdBy.provider, subject: policy.createdBy.subject },
+      ...(policy.activatedAt ? { activatedAt: policy.activatedAt.toISOString() } : {}),
+      ...(policy.statusChange
+        ? {
+            statusChange: {
+              at: policy.statusChange.at.toISOString(),
+              by: { provider: policy.statusChange.by.provider, subject: policy.statusChange.by.subject },
+              ...(policy.statusChange.reason ? { reason: policy.statusChange.reason } : {}),
+            },
+          }
+        : {}),
+      definition: policy.definition,
+    },
+    revisions: page.map((row) => ({
+      revision: row.revision,
+      createdAt: row.createdAt.toISOString(),
+      createdBy: { provider: row.createdBy.provider, subject: row.createdBy.subject },
+      ...(row.note ? { note: row.note } : {}),
+      hash: row.definitionHash.slice(0, 12),
+    })),
+    revisionsNextBefore: hasMore ? page[page.length - 1]!.revision : null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Platform scope (read only). Its tables are separate from the organizations'; Studio lists who administers the platform
+// and with which roles, as bounded keyset pages. Changing any of it needs a platform actor, so Studio never writes here.
+// ---------------------------------------------------------------------------
+
+const PLATFORM_MEMBERS_PAGE_SIZE = 25;
+const PLATFORM_ROLES_LIMIT = 50;
+
+export interface PlatformPage {
+  /** False when the platform tables do not exist yet (database not migrated far enough). */
+  available: boolean;
+  members: PlatformMemberRow[];
+  membersNextCursor: string | null;
+  membersTotal: number;
+  roles: PlatformRoleRow[];
+  rolesTruncated: boolean;
+}
+
+export async function getPlatformPage(options?: { cursor?: string; status?: PlatformMemberRow["status"] }): Promise<PlatformPage> {
+  await requireSession();
+  const platform = getPlatformStorage();
+  const status = options?.status;
+  try {
+    const [rows, membersTotal, roleRows] = await Promise.all([
+      platform.platformMembers.search({ status, limit: PLATFORM_MEMBERS_PAGE_SIZE + 1, after: cleanCursor(options?.cursor) }),
+      platform.platformMembers.count({ status }),
+      platform.platformRoles.search({ limit: PLATFORM_ROLES_LIMIT + 1 }),
+    ]);
+    const { page, hasMore } = splitPage(rows, PLATFORM_MEMBERS_PAGE_SIZE);
+    const roleIds = [...new Set(page.flatMap((member) => member.roleIds))];
+    const memberRoles = roleIds.length > 0 ? await platform.platformRoles.findByIds(roleIds) : [];
+    const roleById = new Map(memberRoles.map((role) => [role.id, role]));
+    const { page: rolePage, hasMore: rolesTruncated } = splitPage(roleRows, PLATFORM_ROLES_LIMIT);
+    return {
+      available: true,
+      members: page.map((member) => ({
+        id: member.id,
+        identity: { provider: member.identity.provider, subject: member.identity.subject },
+        status: member.status,
+        roles: member.roleIds.flatMap((id) => {
+          const role = roleById.get(id);
+          return role ? [{ id: role.id, name: role.name, isSystem: role.isSystem }] : [];
+        }),
+        createdAt: member.createdAt.toISOString(),
+        statusReason: member.statusChange?.reason,
+      })),
+      membersNextCursor: hasMore ? page[page.length - 1]!.id : null,
+      membersTotal,
+      roles: rolePage.map((role) => ({
+        id: role.id,
+        key: role.key,
+        name: role.name,
+        description: role.description,
+        isSystem: role.isSystem,
+        permissions: role.permissions,
+      })),
+      rolesTruncated,
+    };
+  } catch (error) {
+    // A database that predates the platform scope has no such tables: say so instead of failing the page. Anything else is a real error.
+    if (!(error instanceof Error) || !/no such table|does not exist|no such schema/i.test(error.message)) throw error;
+    return { available: false, members: [], membersNextCursor: null, membersTotal: 0, roles: [], rolesTruncated: false };
+  }
+}
+
+const API_CLIENTS_PAGE_SIZE = 25;
+
+export async function getApiClientsPage(options?: { cursor?: string }): Promise<ApiClientsPage> {
+  await requireSession();
+  try {
+    const service = createApiCredentialService({ storage: getApiCredentialStorage() });
+    const rows = await service.listClients({ limit: API_CLIENTS_PAGE_SIZE + 1, after: cleanCursor(options?.cursor) });
+    const { page, hasMore } = splitPage(rows, API_CLIENTS_PAGE_SIZE);
+    const now = Date.now();
+    return {
+      available: true,
+      clients: page.map((client) => ({
+        id: client.id,
+        name: client.name,
+        status: client.status,
+        scopes: client.scopes,
+        organizations: client.organizations,
+        createdAt: client.createdAt.toISOString(),
+        version: client.version,
+        // Only what an operator needs to tell keys apart: never the digest, which the listing does not even load.
+        keys: client.keys.map((key) => ({
+          id: key.id,
+          hint: key.hint,
+          status: key.revokedAt ? "revoked" : key.expiresAt && key.expiresAt.getTime() <= now ? "expired" : "active",
+          createdAt: key.createdAt.toISOString(),
+          ...(key.expiresAt ? { expiresAt: key.expiresAt.toISOString() } : {}),
+          ...(key.lastUsedAt ? { lastUsedAt: key.lastUsedAt.toISOString() } : {}),
+        })),
+      })),
+      nextCursor: hasMore ? page[page.length - 1]!.id : null,
+    };
+  } catch (error) {
+    // A database that predates the API server has no such tables: say so instead of failing the page. Anything else is a real error.
+    if (!(error instanceof Error) || !/no such table|does not exist|no such schema/i.test(error.message)) throw error;
+    return { available: false, clients: [], nextCursor: null };
+  }
+}
+
+const WEBHOOKS_PAGE_SIZE = 25;
+
+export async function getWebhooksPage(options?: { cursor?: string }): Promise<WebhooksPage> {
+  await requireSession();
+  try {
+    const storage = getWebhookStorage();
+    const rows = await storage.endpoints.search({ limit: WEBHOOKS_PAGE_SIZE + 1, ...(cleanCursor(options?.cursor) ? { after: cleanCursor(options?.cursor)! } : {}) });
+    const { page, hasMore } = splitPage(rows, WEBHOOKS_PAGE_SIZE);
+    const endpoints = await Promise.all(
+      page.map(async (endpoint): Promise<WebhookEndpointRow> => {
+        const [pending, dead, recent] = await Promise.all([
+          storage.deliveries.count({ endpointId: endpoint.id, status: "pending" }),
+          storage.deliveries.count({ endpointId: endpoint.id, status: "dead" }),
+          storage.deliveries.search({ endpointId: endpoint.id, limit: 5 }),
+        ]);
+        return {
+          id: endpoint.id,
+          url: endpoint.url,
+          ...(endpoint.description !== undefined ? { description: endpoint.description } : {}),
+          events: [...endpoint.events],
+          organizations: endpoint.organizations === "*" ? "*" : [...endpoint.organizations],
+          status: endpoint.status,
+          ...(endpoint.disabledReason !== undefined ? { disabledReason: endpoint.disabledReason } : {}),
+          consecutiveFailures: endpoint.consecutiveFailures,
+          ...(endpoint.lastSuccessAt ? { lastSuccessAt: endpoint.lastSuccessAt.toISOString() } : {}),
+          ...(endpoint.lastFailureAt ? { lastFailureAt: endpoint.lastFailureAt.toISOString() } : {}),
+          createdAt: endpoint.createdAt.toISOString(),
+          version: endpoint.version,
+          pending,
+          dead,
+          recent: recent.map((delivery) => ({
+            id: delivery.id,
+            eventType: delivery.eventType,
+            ...(delivery.organizationId !== undefined ? { organizationId: delivery.organizationId } : {}),
+            status: delivery.status,
+            attempts: delivery.attempts,
+            createdAt: delivery.createdAt.toISOString(),
+            ...(delivery.lastError !== undefined ? { lastError: delivery.lastError } : {}),
+            ...(delivery.lastHttpStatus !== undefined ? { lastHttpStatus: delivery.lastHttpStatus } : {}),
+          })),
+        };
+      }),
+    );
+    return { available: true, endpoints, nextCursor: hasMore ? page[page.length - 1]!.id : null };
+  } catch (error) {
+    // A database that predates webhooks has no such tables: say so instead of failing the page. Anything else is a real error.
+    if (!(error instanceof Error) || !/no such table|does not exist|no such schema/i.test(error.message)) throw error;
+    return { available: false, endpoints: [], nextCursor: null };
+  }
 }

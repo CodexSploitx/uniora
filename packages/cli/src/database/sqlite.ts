@@ -1,8 +1,12 @@
 import { existsSync, statSync } from "node:fs";
 import type { Database } from "better-sqlite3";
+import { bootstrapPlatform } from "@uniora/core";
 import {
   applyMigrations,
+  createSqliteApiCredentialStorage,
+  createSqlitePlatformStorage,
   createSqliteStorage,
+  createSqliteWebhookStorage,
   getMigrationStatus,
   listMigrationIds,
   openSqliteDatabase,
@@ -123,6 +127,36 @@ export function createSqliteDriver(url: string, cwd: string, intent: DatabaseInt
     async auditIntegrity(): Promise<CheckResult> {
       return auditIntegrityResult(await createSqliteStorage(requireDatabase()).auditLogs.verifyIntegrity());
     },
+
+    async platformStatus() {
+      if (!db) return { migrated: false, initialised: false, members: 0, activeAdmins: 0 };
+      try {
+        const row = db
+          .prepare(
+            `select count(*) as members,
+                    coalesce(sum(m.status = 'active' and exists (
+                      select 1 from uniora_platform_member_roles mr
+                      join uniora_platform_roles r on r.id = mr.role_id and r.is_system = 1 and r.key = 'platform_admin'
+                      where mr.member_id = m.id)), 0) as admins
+               from uniora_platform_members m`,
+          )
+          .get() as { members: number; admins: number };
+        return { migrated: true, initialised: row.members > 0, members: row.members, activeAdmins: row.admins };
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("no such table")) return { migrated: false, initialised: false, members: 0, activeAdmins: 0 };
+        throw error;
+      }
+    },
+
+    async platformInit(admin, actor) {
+      const { role, member } = await bootstrapPlatform({ platform: createSqlitePlatformStorage(requireDatabase()), admin, actor });
+      return { memberId: member.id, roleId: role.id };
+    },
+
+    apiCredentials: () => createSqliteApiCredentialStorage(requireDatabase()),
+    storage: () => createSqliteStorage(requireDatabase()),
+    platformStorage: () => createSqlitePlatformStorage(requireDatabase()),
+    webhookStorage: () => createSqliteWebhookStorage(requireDatabase()),
 
     async close() {
       db?.close();

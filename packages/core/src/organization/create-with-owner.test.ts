@@ -38,7 +38,7 @@ describe("createOrganizationWithOwner", () => {
     );
   });
 
-  it("nunca produce un segundo Owner role para la misma organización (falla en el paso de rol, no en el de la org)", async () => {
+  it("nunca produce un segundo Owner role para la misma organización (falla ya en el paso de la organización)", async () => {
     const storage = createMemoryStorage();
     await createOrganizationWithOwner(storage, {
       organizationId: "org-1",
@@ -48,16 +48,10 @@ describe("createOrganizationWithOwner", () => {
       ownerIdentity,
     });
 
-    // Reintentar sobre el mismo organizationId debe fallar en el paso de
-    // `createOwnerRole` (ya existe un Owner role para "org-1") en vez de
-    // dejar un segundo Owner role colgando. Se usa un nombre distinto para
-    // que el paso de creación de la organización en sí no falle antes por
-    // colisión de slug (`organizations.create` overwrites por id en
-    // memoria, así que sí llega a intentar `createOwnerRole`). El rollback
-    // real de la transacción está cubierto contra Postgres en
-    // @uniora/postgres (storage.test.ts), donde `storage.transaction` sí
-    // ofrece atomicidad real — la memoria la documenta como no-op (ver
-    // storage/memory.ts).
+    // Reintentar sobre el mismo organizationId debe fallar (como en las bases de datos, donde lo hace la clave primaria) en vez de
+    // reemplazar la organización o dejar un segundo Owner role colgando. Se usa un nombre distinto para que la colisión sea la del id y
+    // no la del slug. El rollback real de la transacción está cubierto contra Postgres en @uniora/postgres (storage.test.ts), donde
+    // `storage.transaction` sí ofrece atomicidad real — la memoria la documenta como no-op (ver storage/memory.ts).
     await expect(
       createOrganizationWithOwner(storage, {
         organizationId: "org-1",
@@ -66,7 +60,7 @@ describe("createOrganizationWithOwner", () => {
         membershipId: "m-2",
         ownerIdentity,
       }),
-    ).rejects.toThrow(/already has an Owner role/);
+    ).rejects.toThrow(/organization with id "org-1" already exists/);
 
     const ownerRoles = (await storage.roles.listByOrganization("org-1")).filter((r) => r.isOwnerRole);
     expect(ownerRoles).toHaveLength(1);

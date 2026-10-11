@@ -6,6 +6,7 @@ import { assertOrganizationStatus, sanitizeStatusReason } from "../organization/
 import type { CreateOrganizationInput, OrganizationRepository } from "../organization/repository.js";
 import { OrganizationError, assertValidSlug, resolveOrganizationSlug, sanitizeOrganizationName } from "../organization/slug.js";
 import type { Membership, MembershipStatus } from "../membership/types.js";
+import { createMemoryPolicyRepository } from "../policy/memory.js";
 import type { BlockMembershipInput, CreateMembershipInput, MembershipListing, MembershipRepository, SearchMembershipsOptions } from "../membership/repository.js";
 import { MembershipError, assertBlockUntil, sanitizeBlockReason } from "../membership/repository.js";
 import type { Role } from "../role/types.js";
@@ -73,6 +74,24 @@ import {
 import type { SupportGrant } from "../support-grant/types.js";
 import type { SearchSupportGrantsOptions, SupportGrantRepository } from "../support-grant/repository.js";
 import { SupportGrantError, assertValidSupportGrant, grantStatus } from "../support-grant/repository.js";
+import type { Team, TeamMembership } from "../team/types.js";
+import type { SearchTeamMembersOptions, SearchTeamsOptions, TeamMembershipRepository, TeamRepository } from "../team/repository.js";
+import {
+  MAX_TEAM_DEPTH,
+  TeamError,
+  assertPathSourceTeams,
+  assertResponsibilityFilter,
+  assertTeamPlacement,
+  assertTeamMemberStatus,
+  assertTeamResponsibility,
+  assertValidAddTeamMember,
+  assertValidCreateTeam,
+  assertValidUpdateTeam,
+  isTeamMemberTransitionAllowed,
+  sameTeamData,
+  sanitizeTeamReason,
+} from "../team/repository.js";
+import { assertTeamAuthorization } from "../team/authorization.js";
 import type { UnioraStorage, UnioraTransaction } from "./types.js";
 
 function identityKey(identity: Identity): string {
@@ -235,6 +254,9 @@ export function createMemoryStorage(): UnioraStorage {
       const name = sanitizeOrganizationName(input.name);
       const slug = resolveOrganizationSlug(name, input.slug);
 
+      // The databases reject a repeated id with their primary key; without this the memory backend would silently REPLACE the organization.
+      if (organizations.has(input.id)) throw new OrganizationError(`An organization with id "${input.id}" already exists.`);
+
       const slugTaken = [...organizations.values()].some((o) => o.slug === slug);
       if (slugTaken) {
         throw new OrganizationError(
@@ -335,12 +357,13 @@ export function createMemoryStorage(): UnioraStorage {
       const query = options?.query?.trim().toLowerCase();
       const statuses = statusSet(options?.status);
       const hasFeature = featureFilter(options?.feature);
-      return [...organizations.values()].filter(
+      const total = [...organizations.values()].filter(
         (organization) =>
           (!statuses || statuses.has(organization.status)) &&
           hasFeature(organization.id) &&
           (!query || organization.name.toLowerCase().includes(query) || organization.slug.toLowerCase().includes(query)),
       ).length;
+      return options?.limit === undefined ? total : Math.min(total, options.limit);
     },
   };
 
@@ -348,11 +371,15 @@ export function createMemoryStorage(): UnioraStorage {
   // "the last Owner holder" of `excludeMembershipId` when that role is the
   // protected Owner role AND no other membership currently has it.
   // Assigning the Owner role to several memberships is allowed — only
-  // dropping the very last holder is blocked.
+  // dropping the very last holder is blocked, and the last ACTIVE one while others are blocked or suspended.
   function isLastOwnerRoleHolder(roleId: string, excludeMembershipId: string): boolean {
     const role = roles.get(roleId);
     if (!role?.isOwnerRole) return false;
-    return ![...memberships.values()].some((m) => m.id !== excludeMembershipId && m.roleIds.includes(roleId));
+    lapseBlocks();
+    const others = [...memberships.values()].filter((m) => m.id !== excludeMembershipId && m.roleIds.includes(roleId));
+    if (others.length === 0) return true;
+    // An Owner who can still act can't be removed when every other holder is blocked or suspended.
+    return memberships.get(excludeMembershipId)?.status === "active" && !others.some((m) => m.status === "active");
   }
 
   function touch(membership: Membership): void {
@@ -384,6 +411,17 @@ export function createMemoryStorage(): UnioraStorage {
     const membership = memberships.get(membershipId);
     if (!membership) throw new MembershipError(`Membership not found: ${membershipId}`);
     assertMembershipVersion(membership, input.expectedVersion);
+    if (membership.status === "suspended" && until === undefined) {
+      // `block` over a timed suspension makes it indefinite; the member was already inactive, so no Owner guard applies.
+      const at = new Date();
+      Object.assign(membership, {
+        status: "blocked" as const,
+        updatedAt: at,
+        version: membership.version + 1,
+        blocked: { at, by: { ...input.actor }, ...(sanitizeBlockReason(input.reason) !== undefined ? { reason: sanitizeBlockReason(input.reason) } : {}) },
+      });
+      return copy(membership);
+    }
     if (membership.status !== "active") return copy(membership);
     // The Owner who is blocked must not be the only ACTIVE one left: the organization would have nobody who can act.
     const ownerRoleIds = membership.roleIds.filter((roleId) => roles.get(roleId)?.isOwnerRole);
@@ -405,7 +443,7 @@ export function createMemoryStorage(): UnioraStorage {
     return copy(membership);
   }
 
-  function matchingMemberships(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus }): Membership[] {
+  function matchingMemberships(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus; limit?: number }): Membership[] {
     lapseBlocks();
     const query = options?.query?.trim().toLowerCase();
     return [...memberships.values()].filter(
@@ -543,13 +581,14 @@ export function createMemoryStorage(): UnioraStorage {
       });
     },
     async count(options) {
-      return matchingMemberships(options).length;
+      const total = matchingMemberships(options).length;
+      return options?.limit === undefined ? total : Math.min(total, options.limit);
     },
     async countByRole(roleIds) {
       return tally(roleIds, [...memberships.values()].flatMap((m) => m.roleIds));
     },
-    async countByOrganization(organizationIds) {
-      return tally(organizationIds, [...memberships.values()].map((m) => m.organizationId));
+    async countByOrganization(organizationIds, options) {
+      return capped(tally(organizationIds, [...memberships.values()].map((m) => m.organizationId)), options?.limit);
     },
     async assignRole(membershipId, roleId, options) {
       const membership = memberships.get(membershipId);
@@ -638,6 +677,7 @@ export function createMemoryStorage(): UnioraStorage {
       if (isLastOwnerRoleHolder(roleId, membershipId)) {
         throw new MembershipError(
           "Cannot remove the organization's last Owner — every organization must keep at least one.",
+          "last_owner",
         );
       }
 
@@ -675,10 +715,12 @@ export function createMemoryStorage(): UnioraStorage {
       if (wouldOrphanOrg) {
         throw new MembershipError(
           "Cannot remove the organization's last Owner — every organization must keep at least one.",
+          "last_owner",
         );
       }
 
       memberships.delete(membershipId);
+      for (const row of [...teamMemberships.values()]) if (row.membershipId === membershipId) teamMemberships.delete(row.id);
     },
   };
 
@@ -713,6 +755,8 @@ export function createMemoryStorage(): UnioraStorage {
 
   const roleRepository: RoleRepository = {
     async create(input: CreateRoleInput) {
+      // The id is the primary key: reusing it would replace somebody's role, the Owner role or another organization's.
+      if (roles.has(input.id)) throw new RoleError(`A role with id "${input.id}" already exists.`, "role_exists");
       const name = sanitizeRoleName(input.name);
       if (roleNameTaken(input.organizationId, name)) {
         throw new RoleError(`A role named "${name}" already exists in this organization.`);
@@ -741,6 +785,7 @@ export function createMemoryStorage(): UnioraStorage {
       return copy(role);
     },
     async createOwnerRole(input: CreateOwnerRoleInput) {
+      if (roles.has(input.id)) throw new RoleError(`A role with id "${input.id}" already exists.`, "role_exists");
       const alreadyHasOwner = [...roles.values()].some(
         (r) => r.organizationId === input.organizationId && r.isOwnerRole,
       );
@@ -797,8 +842,8 @@ export function createMemoryStorage(): UnioraStorage {
       const granted = new Set(roles.get(roleId)?.permissionKeys ?? []);
       return keys.filter((key) => granted.has(key));
     },
-    async countByOrganization(organizationIds) {
-      return tally(organizationIds, [...roles.values()].map((r) => r.organizationId));
+    async countByOrganization(organizationIds, options) {
+      return capped(tally(organizationIds, [...roles.values()].map((r) => r.organizationId)), options?.limit);
     },
     async grantPermission(roleId, permissionKey) {
       const role = roles.get(roleId);
@@ -911,8 +956,9 @@ export function createMemoryStorage(): UnioraStorage {
       if (role.isSystem) throw new RoleError("Cannot delete a system role.", "role_system_protected");
       const policy = options?.members ?? "detach";
       const holders = [...memberships.values()].filter((membership) => membership.roleIds.includes(roleId));
-      if (policy === "reject" && holders.length > 0) {
-        throw new RoleError(`The role is still held by ${holders.length} membership(s).`, "role_in_use");
+      const teamHolders = [...teamMemberships.values()].filter((row) => row.roleIds.includes(roleId));
+      if (policy === "reject" && holders.length + teamHolders.length > 0) {
+        throw new RoleError(`The role is still held by ${holders.length + teamHolders.length} membership(s).`, "role_in_use");
       }
       if (typeof policy === "object") {
         const target = roles.get(policy.reassignTo);
@@ -929,11 +975,20 @@ export function createMemoryStorage(): UnioraStorage {
         const index = membership.roleIds.indexOf(roleId);
         if (index !== -1) membership.roleIds.splice(index, 1);
       }
+      for (const row of teamMemberships.values()) {
+        if (row.roleIds.includes(roleId)) row.roleIds = row.roleIds.filter((candidate) => candidate !== roleId);
+      }
     },
   };
 
   /** Counts occurrences of each requested id (`0` for ids that never occur). */
-  function tally(requestedIds: string[], occurrences: string[]): Record<string, number> {
+  /** Caps every count at `limit` (when given): the in-memory twin of a `limit` inside a database count. */
+function capped(counts: Record<string, number>, limit: number | undefined): Record<string, number> {
+  if (limit === undefined) return counts;
+  return Object.fromEntries(Object.entries(counts).map(([key, value]) => [key, Math.min(value, limit)]));
+}
+
+function tally(requestedIds: string[], occurrences: string[]): Record<string, number> {
     const counts: Record<string, number> = Object.fromEntries(requestedIds.map((id) => [id, 0]));
     for (const id of occurrences) if (id in counts) counts[id] = (counts[id] ?? 0) + 1;
     return counts;
@@ -1330,6 +1385,8 @@ export function createMemoryStorage(): UnioraStorage {
   const clone = (invitation: Invitation): Invitation => ({
     ...invitation,
     roleIds: [...invitation.roleIds],
+    // An offer for a team that was deleted since disappears with it, like the foreign key's cascade in the databases.
+    teamIds: invitation.teamIds.filter((id) => teams.get(id)?.organizationId === invitation.organizationId),
     delivery: { ...invitation.delivery },
   });
 
@@ -1344,11 +1401,17 @@ export function createMemoryStorage(): UnioraStorage {
       if (!organizations.has(input.organizationId)) {
         throw new InvitationError("The organization does not exist.", "bad_request");
       }
+      for (const teamId of input.teamIds ?? []) {
+        if (teams.get(teamId)?.organizationId !== input.organizationId) {
+          throw new InvitationError("The organization, a chosen role or a chosen team does not exist.", "bad_request");
+        }
+      }
       const invitation: Invitation = {
         id: input.id,
         organizationId: input.organizationId,
         email: input.email,
         roleIds: [...input.roleIds],
+        teamIds: [...new Set(input.teamIds ?? [])],
         invitedBy: input.invitedBy,
         status: "pending",
         createdAt: input.createdAt,
@@ -1385,8 +1448,9 @@ export function createMemoryStorage(): UnioraStorage {
       }
       return null;
     },
-    async count(organizationId: string, options?: Pick<SearchInvitationsOptions, "status" | "query">) {
-      return [...invitations.values()].filter((i) => matchesInvitationFilter(i, organizationId, options)).length;
+    async count(organizationId: string, options?: Pick<SearchInvitationsOptions, "status" | "query"> & { limit?: number }) {
+      const total = [...invitations.values()].filter((i) => matchesInvitationFilter(i, organizationId, options)).length;
+      return options?.limit === undefined ? total : Math.min(total, options.limit);
     },
     async search(organizationId: string, options?: SearchInvitationsOptions) {
       const matches = [...invitations.values()]
@@ -1614,6 +1678,395 @@ export function createMemoryStorage(): UnioraStorage {
     },
   };
 
+  const teams = new Map<string, Team>();
+  const teamMemberships = new Map<string, TeamMembership>();
+  const cloneTeam = (team: Team): Team => structuredClone(team);
+  const cloneTeamMembership = (row: TeamMembership): TeamMembership => structuredClone(row);
+  const teamOf = (organizationId: string, id: string): Team | undefined => {
+    const team = teams.get(id);
+    return team && team.organizationId === organizationId ? team : undefined;
+  };
+  const requireTeam = (organizationId: string, id: string): Team => {
+    const team = teamOf(organizationId, id);
+    if (!team) throw new TeamError(`Team not found: ${id}`, "team_not_found");
+    return team;
+  };
+  const assertTeamVersion = (row: { version: number }, expectedVersion: number | undefined, code: "team_version_conflict" | "team_membership_version_conflict") => {
+    const expected = assertExpectedVersion(expectedVersion);
+    if (expected !== undefined && expected !== row.version) {
+      throw new TeamError(`The ${code === "team_version_conflict" ? "team" : "team membership"} changed (version ${row.version}, expected ${expected}).`, code);
+    }
+  };
+  const teamPage = <T extends { id: string }>(rows: T[], options: { limit?: number; after?: string }): T[] => {
+    const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+    return rows
+      .filter((row) => options.after === undefined || row.id > options.after)
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      .slice(0, limit);
+  };
+  const teamMatches = (team: Team, filter: Omit<SearchTeamsOptions, "limit" | "after">): boolean => {
+    if (team.organizationId !== filter.organizationId) return false;
+    if (filter.status !== undefined && team.status !== filter.status) return false;
+    if (filter.externalId !== undefined && team.externalId !== filter.externalId) return false;
+    if (filter.parentId !== undefined && (team.parentId ?? null) !== filter.parentId) return false;
+    const query = filter.query?.trim().toLowerCase();
+    return !query || team.name.toLowerCase().includes(query) || team.slug.includes(query);
+  };
+  const childrenOf = (organizationId: string, id: string): Team[] =>
+    [...teams.values()].filter((team) => team.organizationId === organizationId && team.parentId === id);
+  const ancestorsOf = (organizationId: string, id: string): Team[] => {
+    const chain: Team[] = [];
+    let current = teamOf(organizationId, id);
+    while (current?.parentId !== undefined && chain.length <= MAX_TEAM_DEPTH * 4) {
+      current = teamOf(organizationId, current.parentId);
+      if (current) chain.unshift(current);
+    }
+    return chain;
+  };
+  const descendantsOf = (organizationId: string, id: string): Team[] => {
+    const found: Team[] = [];
+    const queue = childrenOf(organizationId, id);
+    while (queue.length > 0 && found.length <= teams.size) {
+      const next = queue.shift()!;
+      found.push(next);
+      queue.push(...childrenOf(organizationId, next.id));
+    }
+    return found;
+  };
+  const heightOf = (organizationId: string, id: string): number => {
+    const walk = (team: string, depth: number): number =>
+      childrenOf(organizationId, team).reduce((max, child) => (depth > MAX_TEAM_DEPTH * 4 ? max : Math.max(max, walk(child.id, depth + 1))), depth);
+    return walk(id, 0);
+  };
+  /** The same facts a SQL backend reads with recursive queries, so every backend rejects exactly the same placements. */
+  const checkPlacement = (organizationId: string, selfId: string | null, parentId: string): void => {
+    const parent = teamOf(organizationId, parentId);
+    const above = parent ? ancestorsOf(organizationId, parentId) : [];
+    assertTeamPlacement({
+      selfId,
+      parentId,
+      parent: parent ? { status: parent.status, depth: above.length + 1 } : null,
+      loop: selfId !== null && (parentId === selfId || above.some((team) => team.id === selfId)),
+      subtreeHeight: selfId === null ? 0 : heightOf(organizationId, selfId),
+    });
+  };
+  const teamRepository: TeamRepository = {
+    async ancestors(organizationId, id) {
+      requireTeam(organizationId, id);
+      return ancestorsOf(organizationId, id).map(cloneTeam);
+    },
+    async descendants(organizationId, id) {
+      requireTeam(organizationId, id);
+      return descendantsOf(organizationId, id).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).map(cloneTeam);
+    },
+    async pathIds(organizationId, teamIds, options = {}) {
+      const limit = Math.min(Math.max(Math.trunc(options.limit ?? 1000), 1), 5000);
+      const found = new Set<string>();
+      for (const id of assertPathSourceTeams(teamIds)) {
+        if (!teamOf(organizationId, id)) continue;
+        found.add(id);
+        for (const ancestor of ancestorsOf(organizationId, id)) found.add(ancestor.id);
+      }
+      return [...found].sort().slice(0, limit);
+    },
+    async create(input) {
+      assertTeamAuthorization(input.authorization, { organizationId: input.organizationId, operation: "team.create" });
+      const valid = assertValidCreateTeam(input);
+      if (!organizations.has(input.organizationId)) {
+        throw new TeamError(`Organization "${input.organizationId}" does not exist.`, "team_organization_unknown");
+      }
+      if (teams.has(input.id)) throw new TeamError(`A team with id "${input.id}" already exists.`, "team_exists");
+      const inOrganization = [...teams.values()].filter((team) => team.organizationId === input.organizationId);
+      if (inOrganization.some((team) => team.slug === valid.slug)) {
+        throw new TeamError(`A team with slug "${valid.slug}" already exists in this organization.`, "team_slug_taken");
+      }
+      if (valid.externalId !== undefined && inOrganization.some((team) => team.externalId === valid.externalId)) {
+        throw new TeamError(`A team with external id "${valid.externalId}" already exists in this organization.`, "team_external_id_taken");
+      }
+      if (valid.parentId !== undefined) checkPlacement(input.organizationId, null, valid.parentId);
+      const team: Team = {
+        id: input.id,
+        organizationId: input.organizationId,
+        slug: valid.slug,
+        name: valid.name,
+        status: "active",
+        ...(valid.parentId !== undefined ? { parentId: valid.parentId } : {}),
+        ...(valid.externalId !== undefined ? { externalId: valid.externalId } : {}),
+        metadata: valid.metadata,
+        settings: valid.settings,
+        createdAt: valid.now,
+        updatedAt: valid.now,
+        version: 1,
+      };
+      teams.set(team.id, team);
+      return cloneTeam(team);
+    },
+    async findById(organizationId, id) {
+      const team = teamOf(organizationId, id);
+      return team ? cloneTeam(team) : null;
+    },
+    async findBySlug(organizationId, slug) {
+      const team = [...teams.values()].find((candidate) => candidate.organizationId === organizationId && candidate.slug === slug);
+      return team ? cloneTeam(team) : null;
+    },
+    async findByExternalId(organizationId, externalId) {
+      const team = [...teams.values()].find((candidate) => candidate.organizationId === organizationId && candidate.externalId === externalId);
+      return team ? cloneTeam(team) : null;
+    },
+    async search(options) {
+      return teamPage([...teams.values()].filter((team) => teamMatches(team, options)), options).map(cloneTeam);
+    },
+    async count(options) {
+      return [...teams.values()].filter((team) => teamMatches(team, options)).length;
+    },
+    async update(organizationId, id, input) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "team.update" });
+      const team = requireTeam(organizationId, id);
+      const change = assertValidUpdateTeam(input);
+      assertTeamVersion(team, input.expectedVersion, "team_version_conflict");
+      if (team.status === "archived") throw new TeamError("An archived team cannot be changed; restore it first.", "team_archived");
+      const others = [...teams.values()].filter((candidate) => candidate.organizationId === organizationId && candidate.id !== id);
+      if (change.slug !== undefined && others.some((candidate) => candidate.slug === change.slug)) {
+        throw new TeamError(`A team with slug "${change.slug}" already exists in this organization.`, "team_slug_taken");
+      }
+      if (typeof change.externalId === "string" && others.some((candidate) => candidate.externalId === change.externalId)) {
+        throw new TeamError(`A team with external id "${change.externalId}" already exists in this organization.`, "team_external_id_taken");
+      }
+      const next: Team = { ...team };
+      if (change.name !== undefined) next.name = change.name;
+      if (change.slug !== undefined) next.slug = change.slug;
+      if (change.externalId === null) delete next.externalId;
+      else if (change.externalId !== undefined) next.externalId = change.externalId;
+      if (change.parentId !== undefined && change.parentId !== (team.parentId ?? null)) {
+        if (change.parentId !== null) checkPlacement(organizationId, id, change.parentId);
+        if (change.parentId === null) delete next.parentId;
+        else next.parentId = change.parentId;
+      }
+      if (change.metadata !== undefined) next.metadata = change.metadata;
+      if (change.settings !== undefined) next.settings = change.settings;
+      if (
+        next.name === team.name &&
+        next.parentId === team.parentId &&
+        next.slug === team.slug &&
+        next.externalId === team.externalId &&
+        sameTeamData(next.metadata, team.metadata) &&
+        sameTeamData(next.settings, team.settings)
+      ) {
+        return cloneTeam(team);
+      }
+      const saved: Team = { ...next, updatedAt: new Date(), version: team.version + 1 };
+      teams.set(id, saved);
+      return cloneTeam(saved);
+    },
+    async archive(organizationId, id, input) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "team.archive", actor: input.actor });
+      const team = requireTeam(organizationId, id);
+      assertTeamVersion(team, input.expectedVersion, "team_version_conflict");
+      if (team.status === "archived") return cloneTeam(team);
+      if (childrenOf(organizationId, id).some((child) => child.status === "active")) {
+        throw new TeamError("This team still has active sub-teams; archive or move them first.", "team_has_children");
+      }
+      const reason = sanitizeTeamReason(input.reason);
+      const saved: Team = {
+        ...team,
+        status: "archived",
+        archived: { at: new Date(), by: { ...input.actor }, ...(reason !== undefined ? { reason } : {}) },
+        updatedAt: new Date(),
+        version: team.version + 1,
+      };
+      teams.set(id, saved);
+      return cloneTeam(saved);
+    },
+    async restore(organizationId, id, input) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "team.restore", actor: input.actor });
+      const team = requireTeam(organizationId, id);
+      assertTeamVersion(team, input.expectedVersion, "team_version_conflict");
+      if (team.status === "active") return cloneTeam(team);
+      if (team.parentId !== undefined && teamOf(organizationId, team.parentId)?.status !== "active") {
+        throw new TeamError("The parent team is archived; restore it first.", "team_parent_invalid");
+      }
+      const { archived: _archived, ...rest } = team;
+      const saved: Team = { ...rest, status: "active", updatedAt: new Date(), version: team.version + 1 };
+      teams.set(id, saved);
+      return cloneTeam(saved);
+    },
+    async delete(organizationId, id, input) {
+      assertTeamAuthorization(input?.authorization, { organizationId, operation: "team.delete" });
+      const team = requireTeam(organizationId, id);
+      if (team.status !== "archived") throw new TeamError("Only an archived team can be deleted; archive it first.", "team_not_archived");
+      if (childrenOf(organizationId, id).length > 0) {
+        throw new TeamError("This team still has sub-teams; move or delete them first.", "team_has_children");
+      }
+      teams.delete(id);
+      for (const row of [...teamMemberships.values()]) if (row.teamId === id) teamMemberships.delete(row.id);
+    },
+  };
+
+  const teamMembershipMatches = (row: TeamMembership, filter: Omit<SearchTeamMembersOptions, "limit" | "after">): boolean => {
+    if (row.organizationId !== filter.organizationId) return false;
+    if (filter.teamId !== undefined && row.teamId !== filter.teamId) return false;
+    if (filter.membershipId !== undefined && row.membershipId !== filter.membershipId) return false;
+    if (filter.status !== undefined && row.status !== filter.status) return false;
+    if (filter.responsibility !== undefined && row.responsibility !== filter.responsibility) return false;
+    if (filter.identity !== undefined) {
+      const membership = memberships.get(row.membershipId);
+      if (!membership || !sameIdentity(membership.identity, filter.identity)) return false;
+    }
+    return true;
+  };
+  const requireTeamMembership = (organizationId: string, id: string): TeamMembership => {
+    const row = teamMemberships.get(id);
+    if (!row || row.organizationId !== organizationId) throw new TeamError(`Team membership not found: ${id}`, "team_membership_not_found");
+    return row;
+  };
+  const assertTeamRoles = (organizationId: string, roleIds: string[]): void => {
+    for (const roleId of roleIds) {
+      const role = roles.get(roleId);
+      if (!role || role.organizationId !== organizationId) {
+        throw new TeamError(`Role "${roleId}" does not exist in this organization.`, "team_role_invalid");
+      }
+      if (role.isOwnerRole) throw new TeamError("The Owner role cannot be held inside a team.", "team_role_owner_protected");
+    }
+  };
+  const teamMembershipRepository: TeamMembershipRepository = {
+    async add(input) {
+      assertTeamAuthorization(input.authorization, { organizationId: input.organizationId, operation: "member.add" });
+      const valid = assertValidAddTeamMember(input);
+      const team = requireTeam(input.organizationId, input.teamId);
+      const membership = memberships.get(input.membershipId);
+      if (!membership || membership.organizationId !== input.organizationId) {
+        throw new TeamError(`Membership "${input.membershipId}" does not exist in this organization.`, "team_member_unknown");
+      }
+      if (team.status !== "active") throw new TeamError("An archived team accepts no new members; restore it first.", "team_archived");
+      assertTeamRoles(input.organizationId, valid.roleIds);
+      const existing = [...teamMemberships.values()].find((row) => row.teamId === input.teamId && row.membershipId === input.membershipId);
+      if (existing && existing.status !== "removed") {
+        throw new TeamError("This member already belongs to the team (or has a pending invitation).", "team_membership_exists");
+      }
+      if (!existing && teamMemberships.has(input.id)) throw new TeamError(`A team membership with id "${input.id}" already exists.`, "team_membership_exists");
+      const invitedBy = input.invitedBy ? { ...input.invitedBy } : undefined;
+      const row: TeamMembership = {
+        id: existing?.id ?? input.id,
+        organizationId: input.organizationId,
+        teamId: input.teamId,
+        membershipId: input.membershipId,
+        status: valid.status,
+        responsibility: valid.responsibility,
+        roleIds: valid.roleIds,
+        createdAt: existing?.createdAt ?? valid.now,
+        updatedAt: valid.now,
+        ...(valid.status === "active" ? { joinedAt: existing?.joinedAt ?? valid.now } : existing?.joinedAt ? { joinedAt: existing.joinedAt } : {}),
+        ...(invitedBy ? { invitedBy } : {}),
+        version: (existing?.version ?? 0) + 1,
+      };
+      teamMemberships.set(row.id, row);
+      return cloneTeamMembership(row);
+    },
+    async activeTeamIds(organizationId, membershipId, options = {}) {
+      const limit = Math.min(Math.max(Math.trunc(options.limit ?? 1000), 1), 5000);
+      const responsibilities = assertResponsibilityFilter(options.responsibilities);
+      return [...teamMemberships.values()]
+        .filter((row) => row.organizationId === organizationId && row.membershipId === membershipId && row.status === "active" && teamOf(organizationId, row.teamId)?.status === "active")
+        .filter((row) => responsibilities === undefined || responsibilities.includes(row.responsibility))
+        .map((row) => row.teamId)
+        .sort()
+        .slice(0, limit);
+    },
+    async findById(organizationId, id) {
+      const row = teamMemberships.get(id);
+      return row && row.organizationId === organizationId ? cloneTeamMembership(row) : null;
+    },
+    async find(organizationId, teamId, membershipId) {
+      const row = [...teamMemberships.values()].find(
+        (candidate) => candidate.organizationId === organizationId && candidate.teamId === teamId && candidate.membershipId === membershipId,
+      );
+      return row ? cloneTeamMembership(row) : null;
+    },
+    async search(options) {
+      return teamPage([...teamMemberships.values()].filter((row) => teamMembershipMatches(row, options)), options).map(cloneTeamMembership);
+    },
+    async count(options) {
+      return [...teamMemberships.values()].filter((row) => teamMembershipMatches(row, options)).length;
+    },
+    async setStatus(organizationId, id, status, input) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "member.status", actor: input.actor });
+      const row = requireTeamMembership(organizationId, id);
+      assertTeamMemberStatus(status);
+      assertTeamVersion(row, input.expectedVersion, "team_membership_version_conflict");
+      if (row.status === status) return cloneTeamMembership(row);
+      if (!isTeamMemberTransitionAllowed(row.status, status)) {
+        throw new TeamError(`A ${row.status} team membership cannot become ${status}.`, "team_membership_transition_invalid");
+      }
+      const reason = sanitizeTeamReason(input.reason);
+      const now = new Date();
+      const saved: TeamMembership = {
+        ...row,
+        status,
+        // Removing someone drops the roles they held in the team.
+        roleIds: status === "removed" ? [] : row.roleIds,
+        updatedAt: now,
+        ...(status === "active" && !row.joinedAt ? { joinedAt: now } : {}),
+        statusChange: { at: now, by: { ...input.actor }, ...(reason !== undefined ? { reason } : {}) },
+        version: row.version + 1,
+      };
+      teamMemberships.set(id, saved);
+      return cloneTeamMembership(saved);
+    },
+    async accept(organizationId, id, input) {
+      assertTeamAuthorization(input.authorization, { organizationId, operation: "member.accept", actor: input.actor });
+      const row = requireTeamMembership(organizationId, id);
+      assertTeamVersion(row, input.expectedVersion, "team_membership_version_conflict");
+      const membership = memberships.get(row.membershipId);
+      if (!membership || !sameIdentity(membership.identity, input.actor)) {
+        throw new TeamError("Only the invited person can accept a team invitation.", "team_accept_forbidden");
+      }
+      if (row.status === "active") return cloneTeamMembership(row);
+      if (row.status !== "pending") {
+        throw new TeamError(`A ${row.status} team membership cannot be accepted.`, "team_membership_transition_invalid");
+      }
+      const now = new Date();
+      const saved: TeamMembership = {
+        ...row,
+        status: "active",
+        updatedAt: now,
+        joinedAt: row.joinedAt ?? now,
+        statusChange: { at: now, by: { ...input.actor } },
+        version: row.version + 1,
+      };
+      teamMemberships.set(id, saved);
+      return cloneTeamMembership(saved);
+    },
+    async setResponsibility(organizationId, id, responsibility, options) {
+      assertTeamAuthorization(options?.authorization, { organizationId, operation: "member.responsibility" });
+      const row = requireTeamMembership(organizationId, id);
+      assertTeamResponsibility(responsibility);
+      assertTeamVersion(row, options?.expectedVersion, "team_membership_version_conflict");
+      if (row.responsibility === responsibility) return cloneTeamMembership(row);
+      const saved: TeamMembership = { ...row, responsibility, updatedAt: new Date(), version: row.version + 1 };
+      teamMemberships.set(id, saved);
+      return cloneTeamMembership(saved);
+    },
+    async assignRole(organizationId, id, roleId, options) {
+      assertTeamAuthorization(options?.authorization, { organizationId, operation: "member.role" });
+      const row = requireTeamMembership(organizationId, id);
+      assertTeamVersion(row, options?.expectedVersion, "team_membership_version_conflict");
+      assertTeamRoles(organizationId, [roleId]);
+      if (row.roleIds.includes(roleId)) return cloneTeamMembership(row);
+      const saved: TeamMembership = { ...row, roleIds: [...row.roleIds, roleId], updatedAt: new Date(), version: row.version + 1 };
+      teamMemberships.set(id, saved);
+      return cloneTeamMembership(saved);
+    },
+    async unassignRole(organizationId, id, roleId, options) {
+      assertTeamAuthorization(options?.authorization, { organizationId, operation: "member.role" });
+      const row = requireTeamMembership(organizationId, id);
+      assertTeamVersion(row, options?.expectedVersion, "team_membership_version_conflict");
+      if (!row.roleIds.includes(roleId)) return cloneTeamMembership(row);
+      const saved: TeamMembership = { ...row, roleIds: row.roleIds.filter((candidate) => candidate !== roleId), updatedAt: new Date(), version: row.version + 1 };
+      teamMemberships.set(id, saved);
+      return cloneTeamMembership(saved);
+    },
+  };
+
   const cloneOutboxEvent = (event: OutboxEvent): OutboxEvent => ({ ...event, payload: event.payload === undefined ? undefined : structuredClone(event.payload) });
   const outboxEvents = new Map<string, OutboxEvent>();
   const outboxLeases = new Map<string, number>(); // id -> lease expiry (ms)
@@ -1712,6 +2165,8 @@ export function createMemoryStorage(): UnioraStorage {
     },
   };
 
+  const policyRepository = createMemoryPolicyRepository((organizationId) => organizations.has(organizationId));
+
   return {
     organizations: organizationRepository,
     memberships: membershipRepository,
@@ -1724,6 +2179,9 @@ export function createMemoryStorage(): UnioraStorage {
     outbox: outboxRepository,
     entitlements: entitlementRepository,
     supportGrants: supportGrantRepository,
+    teams: teamRepository,
+    teamMemberships: teamMembershipRepository,
+    policies: policyRepository,
     async transaction<T>(callback: (tx: UnioraTransaction) => Promise<T>): Promise<T> {
       // In-memory storage has no isolation to offer; adapters with a real
       // database (e.g. Postgres) must run `callback` inside a DB transaction.
@@ -1739,6 +2197,9 @@ export function createMemoryStorage(): UnioraStorage {
         outbox: outboxRepository,
         entitlements: entitlementRepository,
         supportGrants: supportGrantRepository,
+        teams: teamRepository,
+        teamMemberships: teamMembershipRepository,
+        policies: policyRepository,
       });
     },
   };

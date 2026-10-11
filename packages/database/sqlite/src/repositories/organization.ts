@@ -22,6 +22,7 @@ import type { SqliteExecutor } from "../executor.js";
 import { loadDefinitions } from "./feature.js";
 import { jsonList } from "../json.js";
 import { toLikePattern } from "../like.js";
+import { searchCandidates } from "../search.js";
 import { isUniqueViolation, violatedExactly } from "../sqlite-errors.js";
 
 interface OrganizationRow {
@@ -197,32 +198,40 @@ export function createOrganizationRepository(db: SqliteExecutor): OrganizationRe
       const query = options?.query?.trim();
       const pattern = query ? toLikePattern(query) : null;
       const after = options?.after;
-      const condition = await featureCondition(db, options?.feature, 6);
+      const candidates = await searchCandidates(db, "uniora_organizations_search", query);
+      const condition = await featureCondition(db, options?.feature, 7);
       const result = await db.query<OrganizationRow>(
         `select ${COLUMNS}
          from uniora_organizations o
          where (?1 is null or uniora_ilike(o.name, ?1) or uniora_ilike(o.slug, ?1))
            and (?2 is null or (o.created_at, o.id) > (?2, ?3))
            and (?5 is null or o.status in (select value from json_each(?5)))
+           and (?6 is null or o.rowid in (select value from json_each(?6)))
            and ${condition.sql}
          order by o.created_at asc, o.id asc
          limit coalesce(?4, -1)`,
-        [pattern, after?.createdAt ?? null, after?.id ?? null, options?.limit ?? null, statusFilter(options?.status), ...condition.params],
+        [pattern, after?.createdAt ?? null, after?.id ?? null, options?.limit ?? null, statusFilter(options?.status), candidates, ...condition.params],
       );
       return result.rows.map(toOrganization);
     },
 
-    async count(options?: Pick<SearchOrganizationsOptions, "query" | "status" | "feature">) {
+    async count(options?: Pick<SearchOrganizationsOptions, "query" | "status" | "feature"> & { limit?: number }) {
       const query = options?.query?.trim();
       const pattern = query ? toLikePattern(query) : null;
-      const condition = await featureCondition(db, options?.feature, 3);
+      const candidates = await searchCandidates(db, "uniora_organizations_search", query);
+      const condition = await featureCondition(db, options?.feature, 5);
       const result = await db.query<{ count: number }>(
         `select count(*) as count
-         from uniora_organizations o
-         where (?1 is null or uniora_ilike(o.name, ?1) or uniora_ilike(o.slug, ?1))
-           and (?2 is null or o.status in (select value from json_each(?2)))
-           and ${condition.sql}`,
-        [pattern, statusFilter(options?.status), ...condition.params],
+         from (
+           select 1
+           from uniora_organizations o
+           where (?1 is null or uniora_ilike(o.name, ?1) or uniora_ilike(o.slug, ?1))
+             and (?2 is null or o.status in (select value from json_each(?2)))
+             and (?3 is null or o.rowid in (select value from json_each(?3)))
+             and ${condition.sql}
+           limit coalesce(?4, -1)
+         )`,
+        [pattern, statusFilter(options?.status), candidates, options?.limit ?? null, ...condition.params],
       );
       return Number(result.rows[0]!.count);
     },

@@ -1,4 +1,5 @@
 import { IconArrowRight, IconBuildingSkyscraper, IconKey, IconShieldLock, IconToggleRight, IconUser } from "@tabler/icons-react";
+import { capParams } from "@/lib/limits";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ListSearch } from "@/components/shared/list-search";
@@ -187,7 +188,7 @@ async function RolesSection({ header, q, after }: SectionProps) {
           labelKey="roles.searchLabel"
           clearKey="roles.clearSearch"
         />
-        <span className="text-sm text-muted-foreground">{t("roles.resultsCount", { count: page.total })}</span>
+        <span className="text-sm text-muted-foreground">{t("roles.resultsCount", capParams(page.total))}</span>
       </div>
       {page.items.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">{t("roles.noMatchesTitle", { query: q })}</p>
@@ -255,7 +256,7 @@ async function PermissionsSection({ header, q, after }: SectionProps) {
           labelKey="roles.permSearchLabel"
           clearKey="roles.clearSearch"
         />
-        <span className="text-sm text-muted-foreground">{t("perms.resultsCount", { count: page.total })}</span>
+        <span className="text-sm text-muted-foreground">{t("perms.resultsCount", capParams(page.total))}</span>
       </div>
       {page.items.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">{t("roles.permNoMatches")}</p>
@@ -318,7 +319,7 @@ async function FeaturesSection({ header, q, after }: SectionProps) {
           labelKey="feats.searchLabel"
           clearKey="feats.clearSearch"
         />
-        <span className="text-sm text-muted-foreground">{t("feats.resultsCount", { count: page.total })}</span>
+        <span className="text-sm text-muted-foreground">{t("feats.resultsCount", capParams(page.total))}</span>
       </div>
       {page.items.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">{t("feats.noMatchesTitle", { query: q })}</p>

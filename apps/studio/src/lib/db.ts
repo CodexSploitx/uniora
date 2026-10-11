@@ -2,15 +2,18 @@ import "server-only";
 import { existsSync } from "node:fs";
 import { Pool } from "pg";
 import type { Database as SqliteDatabase } from "better-sqlite3";
-import type { UnioraStorage } from "@uniora/core";
-import { createPostgresStorage } from "@uniora/postgres";
-import { createSqliteStorage, hasUnioraSchema, openSqliteDatabase, sqlitePathFromUrl } from "@uniora/sqlite";
+import type { ApiCredentialStorage, PlatformStorage, UnioraStorage, WebhookStorage } from "@uniora/core";
+import { createPostgresApiCredentialStorage, createPostgresPlatformStorage, createPostgresStorage, createPostgresWebhookStorage } from "@uniora/postgres";
+import { createSqliteApiCredentialStorage, createSqlitePlatformStorage, createSqliteStorage, createSqliteWebhookStorage, hasUnioraSchema, openSqliteDatabase, sqlitePathFromUrl } from "@uniora/sqlite";
 import { getStudioEnv } from "@/lib/env";
 
 const globalForStudio = globalThis as unknown as {
   __unioraStudioPool?: Pool;
   __unioraStudioSqlite?: SqliteDatabase;
   __unioraStudioStorage?: UnioraStorage;
+  __unioraStudioPlatform?: PlatformStorage;
+  __unioraStudioApiCredentials?: ApiCredentialStorage;
+  __unioraStudioWebhooks?: WebhookStorage;
 };
 
 function getPool(): Pool {
@@ -43,6 +46,32 @@ export function getStorage(): UnioraStorage {
       getStudioEnv().databaseProvider === "sqlite" ? createSqliteStorage(getSqlite()) : createPostgresStorage(getPool());
   }
   return globalForStudio.__unioraStudioStorage;
+}
+
+/** The platform scope's own storage (separate tables). Studio only reads it: platform changes need platform actors. */
+export function getPlatformStorage(): PlatformStorage {
+  if (!globalForStudio.__unioraStudioPlatform) {
+    globalForStudio.__unioraStudioPlatform =
+      getStudioEnv().databaseProvider === "sqlite" ? createSqlitePlatformStorage(getSqlite()) : createPostgresPlatformStorage(getPool());
+  }
+  return globalForStudio.__unioraStudioPlatform;
+}
+
+/** The API credentials (clients and keys of the standalone API server): own tables, own storage, never mixed with the organization data. */
+export function getApiCredentialStorage(): ApiCredentialStorage {
+  if (!globalForStudio.__unioraStudioApiCredentials) {
+    globalForStudio.__unioraStudioApiCredentials =
+      getStudioEnv().databaseProvider === "sqlite" ? createSqliteApiCredentialStorage(getSqlite()) : createPostgresApiCredentialStorage(getPool());
+  }
+  return globalForStudio.__unioraStudioApiCredentials;
+}
+
+/** The webhook endpoints and their deliveries: own tables, because the endpoint rows hold the signing secrets. */
+export function getWebhookStorage(): WebhookStorage {
+  if (!globalForStudio.__unioraStudioWebhooks) {
+    globalForStudio.__unioraStudioWebhooks = getStudioEnv().databaseProvider === "sqlite" ? createSqliteWebhookStorage(getSqlite()) : createPostgresWebhookStorage(getPool());
+  }
+  return globalForStudio.__unioraStudioWebhooks;
 }
 
 /**

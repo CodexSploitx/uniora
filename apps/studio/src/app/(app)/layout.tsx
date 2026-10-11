@@ -29,7 +29,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         organizationsTotal={sidebarOrganizations.total}
         readOnly={readOnly}
       />
-      <SidebarInset>
+      <SidebarInset className="min-w-0">
         <header className="sticky top-0 z-10 flex h-14 items-center gap-2 border-b bg-background/80 px-4 backdrop-blur">
           <SidebarTrigger />
           <Separator orientation="vertical" className="mx-1 h-5" />
@@ -41,7 +41,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <ThemeToggle />
           </div>
         </header>
-        <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-8 px-6 py-8">
+        <div className="mx-auto flex w-full max-w-6xl min-w-0 flex-1 flex-col gap-8 px-4 py-6 sm:px-6 sm:py-8">
           {ready ? (
             children
           ) : (

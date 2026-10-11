@@ -1,5 +1,6 @@
 "use client";
 
+import { capParams } from "@/lib/limits";
 import { IconArrowRight, IconTrash, IconUserPlus, IconX } from "@tabler/icons-react";
 import Link from "next/link";
 import { useState } from "react";
@@ -25,8 +26,14 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui
 import { ProviderField } from "@/components/shared/provider-field";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { MemberStatusMenu } from "@/components/organizations/member-status-menu";
+import { StatusBadge, StatusFilter } from "@/components/shared/status";
 import { useI18n } from "@/i18n/client";
+import { timeAgo } from "@/lib/format";
 import type { MemberRow, RoleRef } from "@/lib/types";
+
+/** The members tab link with the search kept and the status dropped (the chips add it back). */
+const statusPath = (basePath: string, query: string) => (query ? `${basePath}&q=${encodeURIComponent(query)}` : basePath);
 
 interface MembersTableProps {
   defaultProvider?: string;
@@ -34,6 +41,7 @@ interface MembersTableProps {
   members: MemberRow[];
   total: number;
   query: string;
+  status?: string;
   /** Path (with `?tab=members`) the search box writes `q` to. */
   basePath: string;
   nextHref: string | null;
@@ -47,6 +55,7 @@ export function MembersTable({
   members,
   total,
   query,
+  status,
   basePath,
   nextHref,
   ownerRoleId,
@@ -55,9 +64,9 @@ export function MembersTable({
   defaultProvider,
 }: MembersTableProps) {
   const { pending, run } = useAction();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
 
-  if (total === 0 && !query) {
+  if (total === 0 && !query && !status) {
     return (
       <Empty className="border">
         <EmptyHeader>
@@ -74,16 +83,17 @@ export function MembersTable({
 
   return (
     <div className="flex flex-col gap-3">
+      <StatusFilter basePath={statusPath(basePath, query)} current={status} values={["active", "suspended", "blocked"]} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <ListSearch
-          basePath={basePath}
+          basePath={status ? `${basePath}&status=${status}` : basePath}
           initialQuery={query}
           placeholderKey="members.searchPlaceholder"
           labelKey="members.searchLabel"
           clearKey="members.clearSearch"
         />
         <div className="flex items-center gap-3">
-          <span className="text-sm text-muted-foreground">{t("members.resultsCount", { count: total })}</span>
+          <span className="text-sm text-muted-foreground">{t("members.resultsCount", capParams(total))}</span>
           {!readOnly && <AddMemberDialog organizationId={organizationId} defaultProvider={defaultProvider} />}
         </div>
       </div>
@@ -94,8 +104,8 @@ export function MembersTable({
             <EmptyMedia variant="icon">
               <IconUserPlus />
             </EmptyMedia>
-            <EmptyTitle>{t("members.noMatchesTitle", { query })}</EmptyTitle>
-            <EmptyDescription>{t("members.noMatchesDescription")}</EmptyDescription>
+            <EmptyTitle>{query ? t("members.noMatchesTitle", { query }) : t("members.noneWithStatus")}</EmptyTitle>
+            <EmptyDescription>{query ? t("members.noMatchesDescription") : t("members.noneWithStatusHint")}</EmptyDescription>
           </EmptyHeader>
         </Empty>
       ) : (
@@ -105,7 +115,8 @@ export function MembersTable({
               <TableRow>
                 <TableHead>{t("members.identity")}</TableHead>
                 <TableHead>{t("members.roles")}</TableHead>
-                {!readOnly && <TableHead className="w-24 text-right">{t("members.actions")}</TableHead>}
+                <TableHead>{t("members.status")}</TableHead>
+                {!readOnly && <TableHead className="w-28 text-right">{t("members.actions")}</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -165,6 +176,14 @@ export function MembersTable({
                         )}
                       </div>
                     </TableCell>
+                    <TableCell>
+                      <div className="flex flex-col items-start gap-0.5">
+                        <StatusBadge status={member.status} />
+                        <span className="text-xs text-muted-foreground">
+                          {member.lastActiveAt ? t("status.lastActive", { when: timeAgo(member.lastActiveAt, locale, t) }) : t("status.neverActive")}
+                        </span>
+                      </div>
+                    </TableCell>
                     {!readOnly && (
                       <TableCell className="text-right">
                         {isLastOwner ? (
@@ -172,6 +191,8 @@ export function MembersTable({
                             {t("members.lastOwner")}
                           </span>
                         ) : (
+                          <div className="flex items-center justify-end gap-0.5">
+                          <MemberStatusMenu organizationId={organizationId} member={member} disabled={pending} />
                           <ConfirmDialog
                             trigger={
                               <Button variant="ghost" size="icon-sm" aria-label={t("members.removeAria", { member: member.identity.subject })} disabled={pending}>
@@ -186,6 +207,7 @@ export function MembersTable({
                               run(() => removeMember({ organizationId, membershipId: member.id }), { success: t("members.removed") })
                             }
                           />
+                          </div>
                         )}
                       </TableCell>
                     )}

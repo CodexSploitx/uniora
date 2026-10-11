@@ -1,6 +1,9 @@
 import type { Identity } from "../identity/types.js";
 import type { UnioraStorage } from "../storage/types.js";
 import { assertValidPermissionKey } from "../permission/key.js";
+import type { Membership } from "../membership/types.js";
+import { createPolicyDecider } from "../policy/decider.js";
+import type { AuthorizationResult, AuthorizeInput, PolicyDeciderOptions } from "../policy/decider.js";
 
 /** A permission key the engine will even consider: a string with the registered `resource.action` shape. */
 function isWellFormedPermissionKey(value: unknown): value is string {
@@ -15,16 +18,22 @@ function isWellFormedPermissionKey(value: unknown): value is string {
 
 /** One authorization decision, as reported to `AuthorizationEngineOptions.onDecision`. */
 export interface AuthorizationDecision {
-  kind: "can" | "access.check";
+  kind: "can" | "access.check" | "authorize";
   identity: Identity;
   organizationId: string;
   permission?: string;
   feature?: string;
+  /** Present when the question was asked inside a team context. */
+  teamId?: string;
   allowed: boolean;
   /** Only on `can`: what allowed it — the member's roles or a temporary support grant. */
   via?: "membership" | "support_grant";
   /** `malformed_input` when a permission key was refused before touching storage (empty/odd key). */
   reason: "evaluated" | "malformed_input";
+  /** Only on `authorize`: the full result (verdict, reason code, the policies used with their revision and hash). It holds no attribute values. */
+  authorization?: AuthorizationResult;
+  /** Only on `authorize`: the resource the question was about. */
+  resource?: { type: string; id: string };
   at: Date;
 }
 
@@ -42,12 +51,22 @@ export interface AuthorizationEngineOptions {
    * from the hook are swallowed: a failing logger must never change a decision.
    */
   onDecision?: (decision: AuthorizationDecision) => void | Promise<void>;
+  /** Tuning of `authorize()` (the policy layer). The defaults are the safe ones. */
+  policies?: PolicyDeciderOptions;
 }
 
 export interface CanInput {
   identity: Identity;
   organizationId: string;
   permission: string;
+  /**
+   * Ask inside a team context (for example the team a resource belongs to). It only ever NARROWS the answer: the identity
+   * must be an active member of an active team of this organization AND hold the permission, either through its
+   * organization roles or through the roles it holds in that team. Being a member, manager or owner of the team grants
+   * nothing by itself, there is no Owner shortcut around the membership, and a support grant does not apply here.
+   * Anything else (unknown team, a team of another organization, archived, not a member, suspended or pending) is `false`.
+   */
+  teamId?: string;
 }
 
 export interface AccessCheckInput {
@@ -56,10 +75,18 @@ export interface AccessCheckInput {
   /** At least one of `permission`/`feature` is expected — see `access.check()`. */
   permission?: string;
   feature?: string;
+  /** Same team context as `CanInput.teamId`; with it, the answer also requires an active membership of that team. */
+  teamId?: string;
 }
 
 export interface AuthorizationEngine {
   can(input: CanInput): Promise<boolean>;
+  /**
+   * The full decision for an action on a resource, with the organization's policies applied on top of the roles. Unlike
+   * `can()` it never throws for a problem while deciding: a failure is an `indeterminate` result, which is not allowed.
+   * See `guides/policies.md`.
+   */
+  authorize(input: AuthorizeInput): Promise<AuthorizationResult>;
   access: {
     check(input: AccessCheckInput): Promise<boolean>;
   };
@@ -115,6 +142,7 @@ export function createAuthorizationEngine(
       identity: input.identity,
       organizationId: input.organizationId,
       permission: keyOf(input.permission),
+      ...(input.teamId !== undefined ? { teamId: keyOf(input.teamId) } : {}),
       allowed,
       via,
       reason: isWellFormedPermissionKey(input.permission) ? "evaluated" : "malformed_input",
@@ -132,21 +160,41 @@ export function createAuthorizationEngine(
     return resolved.provider === identity.provider && resolved.subject === identity.subject ? [identity] : [identity, resolved];
   }
 
-  async function decideCan(input: CanInput): Promise<{ allowed: boolean; via?: "membership" | "support_grant" }> {
+  /** Why `decideCan` said no. Only the policy layer reports it (`can()` stays a plain boolean). */
+  type BaseReason = "malformed_input" | "organization_inactive" | "membership_inactive" | "permission_denied";
+  interface BaseDecision {
+    allowed: boolean;
+    via?: "membership" | "support_grant";
+    reason?: BaseReason;
+    /** The organization membership that was found (members only); the policy layer reads the subject's attributes from it. */
+    membership?: Membership;
+  }
+
+  async function decideCan(input: CanInput): Promise<BaseDecision> {
     // SECURITY FIX (audit F-02): the Owner bypass below grants ANY key, so a
     // malformed one (`""`, `undefined`, a non-string) is refused first —
     // otherwise an upstream bug that yields an empty key is invisible to
     // Owners (always allowed) and only shows up for everyone else.
-    if (!isWellFormedPermissionKey(input.permission)) return { allowed: false };
+    if (!isWellFormedPermissionKey(input.permission)) return { allowed: false, reason: "malformed_input" };
     const membership = await storage.memberships.findByIdentity(input.organizationId, input.identity);
     // A blocked member keeps their roles but is denied everything, Owner included — and a support grant can't get around the block.
-    if (membership && membership.status !== "active") return { allowed: false };
+    if (membership && membership.status !== "active") return { allowed: false, reason: "membership_inactive" };
 
     // A suspended or archived organization denies everyone in it, Owner included (and an unknown one, fail-closed).
-    if (!(await organizationIsActive(input.organizationId))) return { allowed: false };
+    if (!(await organizationIsActive(input.organizationId))) return { allowed: false, reason: "organization_inactive" };
+
+    if (input.teamId !== undefined) {
+      // Team context only narrows: no membership of the organization, no active team membership, no answer. No support grant.
+      if (!membership || typeof input.teamId !== "string") return { allowed: false, reason: "permission_denied" };
+      const teamRoleIds = await activeTeamRoleIds(input.organizationId, input.teamId, membership.id);
+      if (teamRoleIds === null) return { allowed: false, reason: "permission_denied" };
+      const roleIds = [...new Set([...membership.roleIds, ...teamRoleIds])];
+      if (roleIds.length > 0 && (await membershipAllows(input, roleIds))) return { allowed: true, via: "membership", membership };
+      return { allowed: false, reason: "permission_denied" };
+    }
 
     if (membership && membership.roleIds.length > 0 && (await membershipAllows(input, membership.roleIds))) {
-      return { allowed: true, via: "membership" };
+      return { allowed: true, via: "membership", membership };
     }
     // Last resort: a temporary support grant (a platform operator who is not a member), narrow and expiring.
     const granted = await storage.supportGrants.activePermissions(input.organizationId, await grantIdentities(input.identity));
@@ -155,7 +203,15 @@ export function createAuthorizationEngine(
       const implying = await storage.permissions.impliedBy(input.permission);
       if (implying.some((key) => granted.includes(key))) return { allowed: true, via: "support_grant" };
     }
-    return { allowed: false };
+    return { allowed: false, reason: "permission_denied" };
+  }
+
+  /** The roles the membership holds in an ACTIVE team of the organization; `null` when it is not an active member of it. */
+  async function activeTeamRoleIds(organizationId: string, teamId: string, membershipId: string): Promise<string[] | null> {
+    const team = await storage.teams.findById(organizationId, teamId);
+    if (!team || team.status !== "active") return null;
+    const row = await storage.teamMemberships.find(organizationId, teamId, membershipId);
+    return row && row.status === "active" ? row.roleIds : null;
   }
 
   async function membershipAllows(input: CanInput, roleIds: string[]): Promise<boolean> {
@@ -180,6 +236,7 @@ export function createAuthorizationEngine(
       identity: input.identity,
       organizationId: input.organizationId,
       permission: keyOf(input.permission),
+      ...(input.teamId !== undefined ? { teamId: keyOf(input.teamId) } : {}),
       feature: keyOf(input.feature),
       allowed,
       reason:
@@ -214,6 +271,7 @@ export function createAuthorizationEngine(
         identity: input.identity,
         organizationId: input.organizationId,
         permission: input.permission,
+        ...(input.teamId !== undefined ? { teamId: input.teamId } : {}),
       });
       if (!allowed) return false;
     } else {
@@ -233,6 +291,11 @@ export function createAuthorizationEngine(
       const membership = await storage.memberships.findByIdentity(input.organizationId, input.identity);
       if (membership && membership.status !== "active") return false;
       if (!(await organizationIsActive(input.organizationId))) return false;
+      if (input.teamId !== undefined) {
+        // Team context without a permission: just "is an active member of this active team".
+        if (!membership || typeof input.teamId !== "string") return false;
+        return (await activeTeamRoleIds(input.organizationId, input.teamId, membership.id)) !== null;
+      }
       if (!membership) {
         // Not a member: only someone holding an active support grant counts as "inside" the organization.
         const granted = await storage.supportGrants.activePermissions(input.organizationId, await grantIdentities(input.identity));
@@ -243,5 +306,31 @@ export function createAuthorizationEngine(
     return true;
   }
 
-  return { can, access: { check } };
+  const decider = createPolicyDecider({
+    storage,
+    options: options.policies,
+    base: (input) => decideCan(input),
+    teamAllows: (input) => decideCan(input).then((decision) => decision.allowed),
+  });
+
+  async function authorize(input: AuthorizeInput): Promise<AuthorizationResult> {
+    const result = await decider.authorize(input);
+    const given = (input && typeof input === "object" ? input : {}) as Partial<AuthorizeInput>;
+    const resource = given.resource && typeof given.resource === "object" ? given.resource : undefined;
+    await report({
+      kind: "authorize",
+      identity: given.identity as Identity,
+      organizationId: result.organizationId,
+      permission: keyOf(given.permission),
+      ...(typeof given.teamId === "string" ? { teamId: given.teamId } : {}),
+      allowed: result.allowed,
+      ...(result.via !== undefined ? { via: result.via } : {}),
+      reason: result.reason === "malformed_input" ? "malformed_input" : "evaluated",
+      authorization: result,
+      ...(resource && typeof resource.type === "string" && typeof resource.id === "string" ? { resource: { type: resource.type, id: resource.id } } : {}),
+    });
+    return result;
+  }
+
+  return { can, authorize, access: { check } };
 }

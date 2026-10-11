@@ -17,7 +17,7 @@ try {
 ```
 
 Each area has its own class, all subclasses of `UnioraError`: `OrganizationError`, `MembershipError`, `RoleError`, `PermissionError`, `FeatureError`,
-`IdentityLinkError`, `InvitationError`, `AuditLogError`, `OutboxError`, `EntitlementError`, `SupportGrantError`. Across a framework boundary (Next.js can load a module twice)
+`IdentityLinkError`, `InvitationError`, `AuditLogError`, `OutboxError`, `EntitlementError`, `SupportGrantError`, `TeamError`. Across a framework boundary (Next.js can load a module twice)
 compare `error.name` or `error.code` instead of `instanceof`.
 
 Errors that are not `UnioraError`: `AuthorizationDeniedError` (`@uniora/next`, thrown by `assertCan`/`assertAccess`), `SmtpConfigError` (`@uniora/mailer-smtp`), `MigrationError`
@@ -98,7 +98,8 @@ The code is `invitation_` plus the reason (`InvitationError.reason`):
 | `invitation_idempotency_conflict` | 409 `idempotency_conflict` | `invite` was given an `idempotencyKey` that an earlier invitation of this organization already used for a different request. |
 | `invitation_already_member` | 409 `already_member` | `invite()` found that the address already belongs to a member (only when the service has `findIdentitiesByEmail`). |
 | `invitation_rate_limited`, `invitation_cooldown` | 429 `rate_limited` | Too many invitations, or a resend too soon. |
-| `invitation_bad_request` | 400 `bad_request` | Invalid e-mail, no roles, the Owner role, a role of another organization. |
+| `invitation_teams_forbidden` | 403 `teams_forbidden` | `invite({ teamIds })` offered a team the inviter may not add people to (`teams.members.add`). |
+| `invitation_bad_request` | 400 `bad_request` | Invalid e-mail, no roles, the Owner role, a role of another organization, a team that is missing, archived or of another organization. |
 
 ### Audit log
 
@@ -116,6 +117,26 @@ The code is `invitation_` plus the reason (`InvitationError.reason`):
 ### Support grant
 
 `support_grant_invalid`, `support_grant_exists`, `support_grant_reason_invalid`, `support_grant_permission_invalid`, `support_grant_expiry_invalid`, `support_grant_organization_unknown`.
+
+### Team
+
+`team_not_found` (also for a team of another organization), `team_exists`, `team_slug_taken`, `team_external_id_taken`, `team_name_invalid`, `team_slug_invalid`, `team_external_id_invalid`, `team_data_invalid`, `team_organization_unknown`, `team_update_empty`, `team_archived`, `team_not_archived`, `team_version_conflict`, `team_invalid`, `team_parent_invalid` (missing, archived or foreign parent), `team_cycle`, `team_too_deep` (more than 8 levels), `team_has_children` (archiving a team with active sub-teams or deleting one with any).
+Team memberships: `team_membership_not_found`, `team_membership_exists`, `team_membership_invalid`, `team_membership_transition_invalid`, `team_membership_version_conflict`, `team_member_unknown` (the organization membership does not exist in that organization), `team_role_invalid`, `team_role_owner_protected`, `team_accept_forbidden`, `team_forbidden` (the team service refused the actor), `team_authorization_required` (a team write reached the storage without a valid `TeamAuthorization`).
+
+### Access (who may change whom)
+
+Raised by `createAccessAdminService` and by the invitation service when `access` is on (see [Access administration](./access-admin.md)). All are `AccessError`s.
+
+- `access_forbidden`: the actor lacks the permission the operation needs (e.g. `members.roles.manage`). Not audited.
+- `access_self_change`: the actor tried to change their own roles, status or membership (also through another linked identity).
+- `access_escalation`: the role would give permissions the actor does not hold (also for an invitation).
+- `access_target_stronger`: the target holds permissions the actor does not (e.g. an Owner).
+- `access_owner_protected`: the Owner role was involved outside `assignOwnerRole`.
+- `access_authorization_required`: a write reached a guarded storage without a valid, single-use `AccessAuthorization` (missing, replayed, expired, or for another operation, target, organization or actor). A programming error.
+- `access_storage_not_guarded`: the service was given a storage that is not wrapped with `createGuardedStorage` (pass `allowUnguardedStorage` to opt out).
+- `access_invalid`: malformed input.
+
+The rule refusals (`access_self_change`, `access_escalation`, `access_target_stronger`, `access_owner_protected`) are recorded in the audit log as `access.change_refused`. `accessErrorToHttp` maps `access_forbidden` to a plain `403`, the four rule refusals to a `403` with a `reason`, unknown members and roles to `404`, conflicts to `409`, `access_invalid` to `400`, and `access_authorization_required` / `access_storage_not_guarded` to `500` (a wiring bug, not the caller's).
 
 ## Denials are not errors
 

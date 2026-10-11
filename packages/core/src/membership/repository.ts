@@ -1,6 +1,7 @@
 import { UnioraError, inferErrorCode } from "../shared/errors.js";
 import type { MembershipErrorCode } from "../shared/errors.js";
 import type { Identity } from "../identity/types.js";
+import type { AccessAuthorization, AccessWriteOptions } from "../access/authorization.js";
 import type { RoleSummary } from "../role/repository.js";
 import type { Membership, MembershipStatus } from "./types.js";
 
@@ -26,6 +27,8 @@ export interface CreateMembershipInput {
   invitedBy?: Identity;
   /** Overrides "now" for `createdAt` — only for importing existing members. */
   createdAt?: Date;
+  /** Needed by a guarded storage when `roleIds` is not empty (see `createGuardedStorage`); ignored otherwise. */
+  authorization?: AccessAuthorization;
 }
 
 export interface SearchMembershipsOptions {
@@ -49,6 +52,8 @@ export interface BlockMembershipInput {
   reason?: string;
   /** Apply only if the membership is still at this `version`; otherwise `membership_version_conflict` and nothing changes. */
   expectedVersion?: number;
+  /** Needed by a guarded storage (see `createGuardedStorage`); ignored otherwise. */
+  authorization?: AccessAuthorization;
 }
 
 export interface SuspendMembershipInput extends BlockMembershipInput {
@@ -60,9 +65,11 @@ export interface UnblockMembershipInput {
   actor: Identity;
   /** Apply only if the membership is still at this `version`; otherwise `membership_version_conflict` and nothing changes. */
   expectedVersion?: number;
+  /** Needed by a guarded storage (see `createGuardedStorage`); ignored otherwise. */
+  authorization?: AccessAuthorization;
 }
 
-export interface MembershipVersionOptions {
+export interface MembershipVersionOptions extends AccessWriteOptions {
   /** Apply only if the membership is still at this `version` (see `Membership.version`); otherwise `membership_version_conflict`. */
   expectedVersion?: number;
 }
@@ -102,8 +109,11 @@ export interface MembershipRepository {
    * of its roles plus the total role count (never every role id).
    */
   searchListing(options: SearchMembershipsOptions & { rolesPerMember: number }): Promise<MembershipListing[]>;
-  /** Count of memberships (optionally within one organization / matching `query`) — never loads rows. */
-  count(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus }): Promise<number>;
+  /**
+   * Count of memberships (optionally within one organization / matching `query`) — never loads rows.
+   * With `limit`, the answer is at most that many — it stops counting there, so a filter matching millions of rows costs a page of work.
+   */
+  count(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus; limit?: number }): Promise<number>;
   /**
    * How many members currently hold each of the given roles, in one call.
    * Every requested id is present (`0` when none).
@@ -111,9 +121,10 @@ export interface MembershipRepository {
   countByRole(roleIds: string[]): Promise<Record<string, number>>;
   /**
    * Members per organization for a batch of organization ids, in one call.
-   * Every requested id is present (`0` when it has none).
+   * Every requested id is present (`0` when it has none). With `limit`, each count stops there ("at least this
+   * many"), so an organization with millions of rows costs `limit` index entries.
    */
-  countByOrganization(organizationIds: string[]): Promise<Record<string, number>>;
+  countByOrganization(organizationIds: string[], options?: { limit?: number }): Promise<Record<string, number>>;
   /**
    * Assigns a REGULAR (non-Owner) role. Idempotent (no-op if already
    * assigned). Rejects (`MembershipError`) if `membershipId`/`roleId` don't
@@ -153,7 +164,7 @@ export interface MembershipRepository {
    * `organization.transfer_ownership`) than whatever gates ordinary role
    * assignment.
    */
-  assignOwnerRole(membershipId: string, roleId: string): Promise<void>;
+  assignOwnerRole(membershipId: string, roleId: string, options?: AccessWriteOptions): Promise<void>;
   /**
    * Unassigns a REGULAR (non-Owner) role. Idempotent (no-op if not
    * assigned). Rejects (`MembershipError`) if `roleId` is the organization's
@@ -171,12 +182,14 @@ export interface MembershipRepository {
    * role to more than one membership is valid and unassigning any of the
    * extra ones is fine; only the last one is protected.
    */
-  unassignOwnerRole(membershipId: string, roleId: string): Promise<void>;
+  unassignOwnerRole(membershipId: string, roleId: string, options?: AccessWriteOptions): Promise<void>;
   /**
    * Blocks a member without removing them: the engine denies a blocked member everything (`can`,
    * `access.check`, snapshots) while roles, history and audit trail stay. Idempotent — blocking an
-   * already-blocked or suspended member changes nothing (keeps the original actor, reason and date; `unblock` first
-   * to change them); a suspension that already ended counts as not blocked. Rejects (`MembershipError`) if the
+   * already-blocked member changes nothing (keeps the original actor, reason and date; `unblock` first
+   * to change them). Blocking a SUSPENDED member turns the suspension into an indefinite block (new actor, reason and
+   * date; the member does not come back by themselves): a block never ends sooner than the suspension it replaces.
+   * A suspension that already ended counts as not blocked. Rejects (`MembershipError`) if the
    * membership doesn't exist (`membership_not_found`), or if it is an Owner and no OTHER active Owner would
    * remain (`last_owner`) — an organization must always keep an Owner who can still act.
    *
@@ -187,7 +200,8 @@ export interface MembershipRepository {
   /**
    * Same as `block`, but the member is denied only until `input.until` and then is `active` again by themselves:
    * status `suspended` meanwhile (see `MembershipStatus`). The last active Owner can't be suspended (`last_owner`).
-   * Same idempotence and trust boundary as `block` (authorize it in the host, e.g. `members.suspend`).
+   * Suspending a member who is already blocked or suspended changes nothing (never shortens or extends: `unblock`
+   * first to change it). Same trust boundary as `block` (authorize it in the host, e.g. `members.suspend`).
    */
   suspend(membershipId: string, input: SuspendMembershipInput): Promise<Membership>;
   /** Lifts a block or a suspension. Idempotent. Rejects (`membership_not_found`) for an unknown membership. */
@@ -201,10 +215,13 @@ export interface MembershipRepository {
    * Rejects if the membership is not found, or if it holds the
    * organization's Owner role and is the only membership holding it.
    */
-  delete(membershipId: string): Promise<void>;
+  delete(membershipId: string, options?: AccessWriteOptions): Promise<void>;
 }
 
-/** Validates the end of a timed suspension: a valid `Date` strictly after `now`. Returns it, or `undefined` when none. */
+/** The latest representable end of a suspension: the last instant of year 9999 (SQLite compares ISO-8601 text, which only sorts right for four-digit years). */
+export const MAX_BLOCK_UNTIL = new Date("9999-12-31T23:59:59.999Z");
+
+/** Validates the end of a timed suspension: a valid `Date` strictly after `now` and no later than `MAX_BLOCK_UNTIL`. Returns it, or `undefined` when none. */
 export function assertBlockUntil(until: Date | undefined, now: Date = new Date()): Date | undefined {
   if (until === undefined) return undefined;
   if (!(until instanceof Date) || Number.isNaN(until.getTime())) {
@@ -212,6 +229,9 @@ export function assertBlockUntil(until: Date | undefined, now: Date = new Date()
   }
   if (until.getTime() <= now.getTime()) {
     throw new MembershipError("The end of a suspension must be in the future.", "membership_block_until_invalid");
+  }
+  if (until.getTime() > MAX_BLOCK_UNTIL.getTime()) {
+    throw new MembershipError("The end of a suspension can't be after the year 9999; use block() for an indefinite one.", "membership_block_until_invalid");
   }
   return new Date(until.getTime());
 }

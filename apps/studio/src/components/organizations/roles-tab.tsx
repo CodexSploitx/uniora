@@ -1,5 +1,6 @@
 "use client";
 
+import { capParams } from "@/lib/limits";
 import { IconArrowRight, IconDots, IconLock, IconPencil, IconPlus, IconShieldLock, IconTrash } from "@tabler/icons-react";
 import Link from "next/link";
 import { useOptimistic, useState } from "react";
@@ -272,7 +273,7 @@ function RoleDetail({ organizationId, orgPath, readOnly, role, permissions, tota
               >
                 {t("roles.filterGranted")}
               </Link>
-              <span className="text-muted-foreground">{t("perms.resultsCount", { count: total })}</span>
+              <span className="text-muted-foreground">{t("perms.resultsCount", capParams(total))}</span>
             </div>
           </div>
 

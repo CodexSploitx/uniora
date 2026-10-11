@@ -1,5 +1,6 @@
 import { UnioraError } from "../shared/errors.js";
 import type { Identity } from "../identity/types.js";
+import type { AccessAuthorization, AccessWriteOptions } from "../access/authorization.js";
 import type { Invitation, InvitationDeliveryStatus, InvitationStatus } from "./types.js";
 
 export type InvitationFailureReason =
@@ -9,6 +10,7 @@ export type InvitationFailureReason =
   | "already_accepted"
   | "email_mismatch"
   | "roles_unavailable"
+  | "teams_forbidden" // `invite()` offered a team the inviter may not add people to
   | "duplicate_pending"
   | "already_member" // `invite()` found the e-mail already belongs to a member of the organization
   | "idempotency_conflict" // the same `idempotencyKey` was reused for a different invitation
@@ -39,6 +41,8 @@ export interface CreateInvitationInput {
   email: string;
   /** Non-empty, regular (non-Owner) roles of `organizationId`. Validated by the service, re-validated on accept. */
   roleIds: string[];
+  /** Teams of `organizationId` offered with the invitation (optional; possibly empty). Another organization's team is rejected as `bad_request`. */
+  teamIds?: string[];
   /** SHA-256 hex of the accept token. The token itself must never reach a repository. */
   tokenHash: string;
   invitedBy: Identity;
@@ -47,6 +51,8 @@ export interface CreateInvitationInput {
   expiresAt: Date;
   /** The caller's idempotency key for this creation and a hash of what was asked (see `InviteInput.idempotencyKey`). */
   idempotency?: { key: string; hash: string };
+  /** Needed by a guarded storage (see `createGuardedStorage`); the invitation service issues it. Ignored otherwise. */
+  authorization?: AccessAuthorization;
 }
 
 export interface SearchInvitationsOptions {
@@ -85,8 +91,11 @@ export interface InvitationRepository {
   findByTokenHash(tokenHash: string): Promise<Invitation | null>;
   /** Newest first, keyset-paged on `id`. */
   search(organizationId: string, options?: SearchInvitationsOptions): Promise<Invitation[]>;
-  /** How many invitations of the organization match — same `status` / `query` filters as `search` (`after` and `limit` don't apply). */
-  count(organizationId: string, options?: Pick<SearchInvitationsOptions, "status" | "query">): Promise<number>;
+  /**
+   * How many invitations of the organization match — same `status` / `query` filters as `search` (`after` doesn't apply).
+   * With `limit`, the answer is at most that many — it stops counting there, so a filter matching millions of rows costs a page of work.
+   */
+  count(organizationId: string, options?: Pick<SearchInvitationsOptions, "status" | "query"> & { limit?: number }): Promise<number>;
   /**
    * Marks as `expired` the organization's pending invitations for `email`
    * whose `expiresAt <= now`, so a fresh invitation can take their place.
@@ -97,9 +106,9 @@ export interface InvitationRepository {
    * expiry of a still-pending invitation, and resets its delivery to
    * `pending`. `null` when it isn't pending.
    */
-  rotateToken(id: string, input: { tokenHash: string; expiresAt: Date }): Promise<Invitation | null>;
+  rotateToken(id: string, input: { tokenHash: string; expiresAt: Date; authorization?: AccessAuthorization }): Promise<Invitation | null>;
   /** `pending` → `revoked`. `null` when it isn't pending (already accepted, revoked, expired, or unknown). */
-  revoke(id: string, now: Date): Promise<Invitation | null>;
+  revoke(id: string, now: Date, options?: AccessWriteOptions): Promise<Invitation | null>;
   /**
    * Atomically claims an invitation: `pending` and not expired → `accepted`,
    * recording who accepted it. Exactly one concurrent caller wins; everyone

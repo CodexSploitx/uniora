@@ -20,6 +20,7 @@ export interface OrgSummary {
   slug: string;
   name: string;
   createdAt: string;
+  status: "active" | "suspended" | "archived";
   memberCount: number;
   roleCount: number;
   enabledFeatureCount: number;
@@ -39,6 +40,11 @@ export interface MemberRow {
   roles: RoleRef[];
   /** How many roles the member holds in total (`roles.length` may be smaller). */
   roleCount: number;
+  /** `suspended` is a block with an end date; once it passes the member reads `active` again by itself. */
+  status: "active" | "suspended" | "blocked";
+  createdAt: string;
+  /** Last time the application reported the member as active, when it does. */
+  lastActiveAt?: string;
   /** Set on the global members page, where rows come from many organizations. */
   organization?: { id: string; name: string };
 }
@@ -85,7 +91,7 @@ export interface RolePermissionRow {
 }
 
 export interface OrgHeader {
-  organization: { id: string; slug: string; name: string; createdAt: string };
+  organization: { id: string; slug: string; name: string; createdAt: string; status: "active" | "suspended" | "archived"; statusReason?: string };
   memberCount: number;
   roleCount: number;
   featuresEnabled: number;
@@ -103,6 +109,8 @@ export interface FeatureView {
   key: string;
   name: string;
   description?: string;
+  /** On for every organization that has no override of its own. */
+  defaultEnabled: boolean;
   /** How many organizations have it enabled. */
   enabledCount: number;
   /** A few of those organizations, for a "used by…" preview (never the full list). */
@@ -136,8 +144,140 @@ export interface InvitationRow {
   /** `pending` past its expiry is shown as `expired`. */
   status: InvitationViewStatus;
   roles: RoleRef[];
+  /** Teams offered with the invitation (the invitee joins them as a plain member on accepting). */
+  teams: { id: string; name: string }[];
   invitedBy: IdentityView;
   createdAt: string;
   expiresAt: string;
   delivery: { status: "pending" | "sent" | "failed"; sends: number; lastError?: string };
+}
+
+/** A team as Studio lists it: counts and the parent's name only, never its members or data. */
+export interface TeamRow {
+  id: string;
+  name: string;
+  slug: string;
+  status: "active" | "archived";
+  externalId?: string;
+  parent?: { id: string; name: string };
+  /** Active members of the team. */
+  memberCount: number;
+  childCount: number;
+}
+
+/** A policy as Studio lists it: the summary only, never the definition. */
+export interface PolicyRow {
+  id: string;
+  key: string;
+  name: string;
+  kind: "access" | "resource" | "scope" | "feature" | "contextual" | "sensitive";
+  effect: "deny" | "require";
+  status: "draft" | "active" | "disabled" | "retired";
+  revision: number;
+  updatedAt: string;
+}
+
+export interface PolicyRevisionRow {
+  revision: number;
+  createdAt: string;
+  createdBy: { provider: string; subject: string };
+  note?: string;
+  /** First characters of the SHA-256 of the canonical definition. */
+  hash: string;
+}
+
+export interface TeamMemberRow {
+  /** The team membership id. */
+  id: string;
+  membershipId: string;
+  identity: IdentityView;
+  status: "pending" | "active" | "suspended" | "removed";
+  responsibility: "owner" | "manager" | "member";
+  roles: RoleRef[];
+}
+
+export interface PlatformMemberRow {
+  id: string;
+  identity: IdentityView;
+  status: "active" | "suspended";
+  roles: { id: string; name: string; isSystem: boolean }[];
+  createdAt: string;
+  statusReason?: string;
+}
+
+export interface PlatformRoleRow {
+  id: string;
+  key: string;
+  name: string;
+  description?: string;
+  isSystem: boolean;
+  permissions: string[];
+}
+
+export interface ApiKeyRow {
+  id: string;
+  /** The last characters of the key, so an operator can tell keys apart. Never the secret, never its hash. */
+  hint: string;
+  status: "active" | "revoked" | "expired";
+  createdAt: string;
+  expiresAt?: string;
+  lastUsedAt?: string;
+}
+
+export interface ApiClientRow {
+  id: string;
+  name: string;
+  status: "active" | "disabled";
+  scopes: string[];
+  /** `"*"` = every organization. */
+  organizations: "*" | string[];
+  keys: ApiKeyRow[];
+  createdAt: string;
+  version: number;
+}
+
+export interface ApiClientsPage {
+  /** False when the credential tables do not exist yet (`uniora migrate` has not run since the upgrade). */
+  available: boolean;
+  clients: ApiClientRow[];
+  nextCursor: string | null;
+}
+
+export interface WebhookDeliveryRow {
+  id: string;
+  eventType: string;
+  organizationId?: string;
+  status: "pending" | "delivered" | "dead";
+  attempts: number;
+  createdAt: string;
+  /** The sanitized failure of the last attempt: never the URL, never the receiver's answer. */
+  lastError?: string;
+  lastHttpStatus?: number;
+}
+
+export interface WebhookEndpointRow {
+  id: string;
+  /** Shown to the operator who registered it; it can carry a secret in its path, so it is not repeated in logs or toasts. */
+  url: string;
+  description?: string;
+  events: string[];
+  /** `"*"` = every organization. */
+  organizations: "*" | string[];
+  status: "enabled" | "disabled";
+  disabledReason?: string;
+  consecutiveFailures: number;
+  lastSuccessAt?: string;
+  lastFailureAt?: string;
+  createdAt: string;
+  version: number;
+  pending: number;
+  dead: number;
+  recent: WebhookDeliveryRow[];
+}
+
+export interface WebhooksPage {
+  /** False when the webhook tables do not exist yet (`uniora migrate` has not run since the upgrade). */
+  available: boolean;
+  endpoints: WebhookEndpointRow[];
+  nextCursor: string | null;
 }
