@@ -1,13 +1,15 @@
 import "server-only";
 import type { AuditLogEntry, Organization, Policy } from "@uniora/core";
 import { createApiCredentialService } from "@uniora/core";
-import { databaseSchemaExists, getApiCredentialStorage, getPlatformStorage, getStorage } from "@/lib/db";
+import { databaseSchemaExists, getApiCredentialStorage, getPlatformStorage, getStorage, getWebhookStorage } from "@/lib/db";
 import { countLimit } from "@/lib/limits";
 import { requireSession } from "@/lib/session";
 import { cachedTotal } from "@/lib/totals-cache";
 import type {
   ActivityItem,
   ApiClientsPage,
+  WebhookEndpointRow,
+  WebhooksPage,
   FeatureView,
   InvitationRow,
   MemberHeader,
@@ -1161,5 +1163,56 @@ export async function getApiClientsPage(options?: { cursor?: string }): Promise<
     // A database that predates the API server has no such tables: say so instead of failing the page. Anything else is a real error.
     if (!(error instanceof Error) || !/no such table|does not exist|no such schema/i.test(error.message)) throw error;
     return { available: false, clients: [], nextCursor: null };
+  }
+}
+
+const WEBHOOKS_PAGE_SIZE = 25;
+
+export async function getWebhooksPage(options?: { cursor?: string }): Promise<WebhooksPage> {
+  await requireSession();
+  try {
+    const storage = getWebhookStorage();
+    const rows = await storage.endpoints.search({ limit: WEBHOOKS_PAGE_SIZE + 1, ...(cleanCursor(options?.cursor) ? { after: cleanCursor(options?.cursor)! } : {}) });
+    const { page, hasMore } = splitPage(rows, WEBHOOKS_PAGE_SIZE);
+    const endpoints = await Promise.all(
+      page.map(async (endpoint): Promise<WebhookEndpointRow> => {
+        const [pending, dead, recent] = await Promise.all([
+          storage.deliveries.count({ endpointId: endpoint.id, status: "pending" }),
+          storage.deliveries.count({ endpointId: endpoint.id, status: "dead" }),
+          storage.deliveries.search({ endpointId: endpoint.id, limit: 5 }),
+        ]);
+        return {
+          id: endpoint.id,
+          url: endpoint.url,
+          ...(endpoint.description !== undefined ? { description: endpoint.description } : {}),
+          events: [...endpoint.events],
+          organizations: endpoint.organizations === "*" ? "*" : [...endpoint.organizations],
+          status: endpoint.status,
+          ...(endpoint.disabledReason !== undefined ? { disabledReason: endpoint.disabledReason } : {}),
+          consecutiveFailures: endpoint.consecutiveFailures,
+          ...(endpoint.lastSuccessAt ? { lastSuccessAt: endpoint.lastSuccessAt.toISOString() } : {}),
+          ...(endpoint.lastFailureAt ? { lastFailureAt: endpoint.lastFailureAt.toISOString() } : {}),
+          createdAt: endpoint.createdAt.toISOString(),
+          version: endpoint.version,
+          pending,
+          dead,
+          recent: recent.map((delivery) => ({
+            id: delivery.id,
+            eventType: delivery.eventType,
+            ...(delivery.organizationId !== undefined ? { organizationId: delivery.organizationId } : {}),
+            status: delivery.status,
+            attempts: delivery.attempts,
+            createdAt: delivery.createdAt.toISOString(),
+            ...(delivery.lastError !== undefined ? { lastError: delivery.lastError } : {}),
+            ...(delivery.lastHttpStatus !== undefined ? { lastHttpStatus: delivery.lastHttpStatus } : {}),
+          })),
+        };
+      }),
+    );
+    return { available: true, endpoints, nextCursor: hasMore ? page[page.length - 1]!.id : null };
+  } catch (error) {
+    // A database that predates webhooks has no such tables: say so instead of failing the page. Anything else is a real error.
+    if (!(error instanceof Error) || !/no such table|does not exist|no such schema/i.test(error.message)) throw error;
+    return { available: false, endpoints: [], nextCursor: null };
   }
 }

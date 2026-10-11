@@ -2,9 +2,9 @@ import "server-only";
 import { existsSync } from "node:fs";
 import { Pool } from "pg";
 import type { Database as SqliteDatabase } from "better-sqlite3";
-import type { ApiCredentialStorage, PlatformStorage, UnioraStorage } from "@uniora/core";
-import { createPostgresApiCredentialStorage, createPostgresPlatformStorage, createPostgresStorage } from "@uniora/postgres";
-import { createSqliteApiCredentialStorage, createSqlitePlatformStorage, createSqliteStorage, hasUnioraSchema, openSqliteDatabase, sqlitePathFromUrl } from "@uniora/sqlite";
+import type { ApiCredentialStorage, PlatformStorage, UnioraStorage, WebhookStorage } from "@uniora/core";
+import { createPostgresApiCredentialStorage, createPostgresPlatformStorage, createPostgresStorage, createPostgresWebhookStorage } from "@uniora/postgres";
+import { createSqliteApiCredentialStorage, createSqlitePlatformStorage, createSqliteStorage, createSqliteWebhookStorage, hasUnioraSchema, openSqliteDatabase, sqlitePathFromUrl } from "@uniora/sqlite";
 import { getStudioEnv } from "@/lib/env";
 
 const globalForStudio = globalThis as unknown as {
@@ -13,6 +13,7 @@ const globalForStudio = globalThis as unknown as {
   __unioraStudioStorage?: UnioraStorage;
   __unioraStudioPlatform?: PlatformStorage;
   __unioraStudioApiCredentials?: ApiCredentialStorage;
+  __unioraStudioWebhooks?: WebhookStorage;
 };
 
 function getPool(): Pool {
@@ -63,6 +64,14 @@ export function getApiCredentialStorage(): ApiCredentialStorage {
       getStudioEnv().databaseProvider === "sqlite" ? createSqliteApiCredentialStorage(getSqlite()) : createPostgresApiCredentialStorage(getPool());
   }
   return globalForStudio.__unioraStudioApiCredentials;
+}
+
+/** The webhook endpoints and their deliveries: own tables, because the endpoint rows hold the signing secrets. */
+export function getWebhookStorage(): WebhookStorage {
+  if (!globalForStudio.__unioraStudioWebhooks) {
+    globalForStudio.__unioraStudioWebhooks = getStudioEnv().databaseProvider === "sqlite" ? createSqliteWebhookStorage(getSqlite()) : createPostgresWebhookStorage(getPool());
+  }
+  return globalForStudio.__unioraStudioWebhooks;
 }
 
 /**

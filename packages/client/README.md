@@ -10,6 +10,7 @@ npm install @uniora/client
 import { createUnioraClient } from "@uniora/client";
 
 const uniora = createUnioraClient({ baseUrl: process.env.UNIORA_URL!, apiKey: process.env.UNIORA_API_KEY! });
+// or, with your own OAuth server (machineTokens): accessToken: () => getAccessToken()  // renewed for every attempt
 
 const { allowed } = await uniora.decisions.check({ identity: { subject: user.id }, organizationId, permission: "vehicles.delete" });
 

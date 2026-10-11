@@ -396,7 +396,7 @@ is compared with the documented one. A change that breaks an example breaks the 
 | --- | --- |
 | 1 | Credential storage (Postgres + SQLite + conformance). Studio and CLI management. The server skeleton: authentication, scopes, organization allowlists, default provider label, limits, errors, health, fail-closed boot. Decisions (`check`, `authorize`, snapshots) and reads. Their documentation and tested examples. |
 | 2 | Delegated commands (access, teams, policies, invitations). Provisioning. Idempotency. The generated OpenAPI. `@uniora/client` with the remote engine. |
-| 3 | Verified end-user tokens (D2). OAuth 2.0 client credentials / JWT (D1). Platform commands with a step-up design. Webhooks from the outbox. A shared rate limiter. |
+| 3 | Verified end-user tokens (D2). OAuth 2.0 client credentials / JWT (D1). Platform commands with a step-up design. Webhooks from the outbox. A shared rate limiter. **Built; see §18 for what changed from this table.** |
 
 Each phase ships only with its part of the conformance and security suites green **and every route it adds documented with tested examples**.
 
@@ -406,8 +406,7 @@ Each phase ships only with its part of the conformance and security suites green
 2. **Read permissions in delegated mode** (still open: reads are application calls except policies): which keys (`members.read`, `roles.read`, `audit.read`, …), and whether any read is
    allowed to every active member. Default deny.
 3. **Rate-limit defaults** (§8): to be tuned with the load tests.
-4. **Verified-token configuration**: one identity provider per deployment, or several (one per auth adapter), each with its own
-   issuer and audience.
+4. ~~**Verified-token configuration**~~: settled, a list of providers (§18).
 
 ## 17. What the implementation settled (phases 1 and 2)
 
@@ -441,3 +440,32 @@ Where the build made a decision this document left open, or did something differ
   the route table, and mutation checks (each guard removed on purpose must fail a test).
 - **A real bug found on the way:** the in-memory storage replaced an organization when the id was repeated; it now rejects it like the
   databases.
+
+## 18. What the implementation settled (phase 3)
+
+- **Verified end users are a list of providers** (`actorTokens`), each with its own label, issuer, audience, pinned algorithms and keys; nothing in a token chooses how it
+  is verified. The verifier is hand-written over `node:crypto` (no JWT library), with the constraints of §4 as tests: no algorithm confusion, keys only from the
+  configuration, a JWKS cache that cannot be made to hammer the provider (30 s refresh floor, single flight, stale keys for an hour on an outage), `exp` required, audience required.
+  `Uniora-Actor-Token` and the asserted headers are mutually exclusive; `requireVerifiedActors` switches the asserted form off. `actor:verified` is a scope of its own and is not
+  "sensitive": a leaked key cannot use it alone. `authorize` takes `session` from the token (`auth_time`, `amr`, `acr` through `acrLevels`), so the sensitive-action policies of 0.9
+  read what the provider signed.
+- **Platform commands ship with the step-up of the platform service answered from the operator's token.** §7 guessed "a signed step-up assertion from the host"; the token already
+  carries `auth_time`, `amr` and `acr`, so no new artifact is needed: `platform.stepUp` says how recent and how strong, and a change that does not meet it is
+  `428 platform_step_up_required`. Platform routes are never delegated-by-assertion and never the key alone; they need `platform:admin` on a client with every organization and a token
+  from a provider listed in `platform.providers`. Platform audit entries carry `via` through `createPlatformAuditContext`.
+- **The shared rate limiter is a leased token bucket** in the credential storage, not a counter per request: an instance takes a tenth of the burst and spends it locally, so the database
+  is touched once per lease (Postgres uses its own clock; arithmetic is shared between memory, SQLite and Postgres and held to the same answers by the conformance suite). If the storage
+  fails the instance limits on its own; a request is never refused because the shared limiter is down.
+- **Webhooks are managed from the CLI, never from the API**, and are delivered by a dispatcher that is the consumer of the outbox: events fan out into one delivery per endpoint
+  (`<endpoint>:<event>`, so repeating a fan-out cannot repeat a send), each leased, retried with backoff and parked as `dead` for an operator. Signing is Standard Webhooks
+  (`webhook-id`, `webhook-timestamp`, `webhook-signature: v1,…`) with `whsec_` secrets that rotate with a grace period. The signing secret has to be readable by the worker, so the endpoints
+  live in their own scope (`uniora_webhooks`), outside the organization tables. The API-server side of §4's "later webhooks need an SSRF guard" is real: public addresses only, checked on every
+  delivery against what the name resolves to and connected to by address with the name for TLS; no redirects; bounded reads; no URL or answer in any error.
+- **D1 is settled differently from §5: the server does not issue tokens.** Server-issued JWTs would add nothing, because the server already checks the database on every request (a key
+  is as revocable as anything gets, and a JWT could only be revoked more slowly). What is worth having is the other half: accepting the access tokens of the customer's own OAuth 2.0 server
+  (`machineTokens`), so nothing UNIORA-specific has to be distributed. A subject maps to an API client in configuration; the client's scopes and organizations stay the ceiling and the token's
+  `scope` only narrows them; disabling the client cuts the machine off at once. A machine provider must have an audience of its own (a user token must never be mistaken for a machine one).
+- **Things the third round of reviews changed in phases 1 and 2**: callers no longer choose ids of roles, teams and team memberships (an existence oracle across tenants, and in the in-memory
+  storage an overwrite); the routing uses the raw path; the readiness probe is shared; error codes from drivers and Node are never taken for ours; `engine.onDecision` is refused by the server.
+  Known and left as they are, on purpose: the in-memory storage has no rollback (the databases do); the failed-authentication throttle is check-then-count, so a burst overshoots by what is in flight
+  (bounded by `maxInFlight`), and it locks out valid keys from a source that has failed 20 times (a shared egress address behind a wrong `trustedProxyHops` is the case to watch).

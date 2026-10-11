@@ -15,7 +15,8 @@ Use the scoped name for the one-off form: a bare `npx uniora` outside a project 
 | `uniora check` | Validates the configuration and the database connection. |
 | `uniora migrate [--status \| --dry-run]` | Applies pending migrations, recorded in a ledger, additive and never destructive. `--status` only reports and **exits 1** if migrations are pending or were edited after being applied (a CI gate); `--dry-run` shows what would run. |
 | `uniora doctor` | Deeper diagnosis: Node version, `.gitignore`, config, connection, engine version, migrations, organizations without an Owner, audit-chain integrity, SMTP settings (only when some `UNIORA_SMTP_*` variable is set and `@uniora/mailer-smtp` is installed), Studio availability. |
-| `uniora server clients\|keys\|start` | Manage the API clients and keys of the [server](server.md) and run it. Keys are printed once. |
+| `uniora server clients\|keys\|start` | Manage the API clients and keys of the [server](server.md) and run it (tokens, platform and webhooks from the `server` section of the config). Keys are printed once. |
+| `uniora webhooks create\|list\|show\|update\|enable\|disable\|rotate-secret\|delete\|deliveries\|requeue\|test\|run` | Manage the [webhooks](server.md#webhooks) the server sends and run their worker. The signing secret is printed once. |
 | `uniora platform init --admin provider:subject` / `uniora platform status` | Creates the first Platform Administrator (once, needs database access) / shows platform members. See [platform](platform.md). |
 | `uniora studio [--port N] [--read-only] [--no-open]` | Opens Studio locally. |
 
@@ -50,7 +51,7 @@ Never hard-code the URL. With SQLite, read-only commands (`check`, `doctor`, `mi
 
 ## Studio
 
-A local admin UI over your own database: organizations (with their members, teams, roles, features and invitations), members, the global permission and feature catalogs, the activity log a read-only view of the platform administrators and the **API clients** of the [server](server.md): create a client with its scopes (grouped by category, with starting points) and organization list, create keys (shown once), rotate, revoke and disable. Members and organizations show their state (active, suspended, blocked or archived) and can be filtered and changed by state, with a reason.
+A local admin UI over your own database: organizations (with their members, teams, roles, features and invitations), members, the global permission and feature catalogs, the activity log a read-only view of the platform administrators and the **API clients** of the [server](server.md): create a client with its scopes (grouped by category, with starting points) and organization list, create keys (shown once), rotate, revoke and disable; and the **Webhooks** of the server (create, edit, enable or disable, rotate the signing secret, delete, latest deliveries). Members and organizations show their state (active, suspended, blocked or archived) and can be filtered and changed by state, with a reason.
 
 ```bash
 npx uniora studio            # first free port from 4321

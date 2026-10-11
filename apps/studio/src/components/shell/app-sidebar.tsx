@@ -8,6 +8,7 @@ import {
   IconKey,
   IconLayoutDashboard,
   IconPlugConnected,
+  IconWebhook,
   IconShieldLock,
   IconToggleRight,
   IconUsers,
@@ -49,6 +50,7 @@ const NAV: { href: string; label: MessageKey; icon: typeof IconKey }[] = [
   { href: "/features", label: "nav.features", icon: IconToggleRight },
   { href: "/platform", label: "nav.platform", icon: IconShieldLock },
   { href: "/api-clients", label: "nav.apiClients", icon: IconPlugConnected },
+  { href: "/webhooks", label: "nav.webhooks", icon: IconWebhook },
   { href: "/activity", label: "nav.activity", icon: IconHistory },
 ];
 

@@ -36,7 +36,16 @@ await dispatchOutbox(raw.outbox, async (event) => {
 ## What is and isn't emitted
 
 `createAuditedStorage(…, { outbox: true })` emits for organizations, memberships, roles, permissions and features, with the
-actor, the target and the audit metadata (no secrets; an oversized change keeps the facts and omits the detail). Invitations
-and identity links write their own audit entries and are not emitted yet; enqueue your own event around them if you need one.
+actor, the target and the audit metadata (no secrets; an oversized change keeps the facts and omits the detail). Teams and policies
+are emitted by their services (`createTeamService`, `createPolicyService`) and the access service (`createAccessAdminService`) with their
+`outbox: true` option, and invitations by `createInvitationService` with `outbox: true` (the event names the invitation and a fingerprint
+of the address, never the address, the token or the link). Identity links write their own audit entries and are not emitted; enqueue
+your own event around them if you need one.
+
+## Webhooks, ready made
+
+If what you want to do with the events is call a URL, you do not have to write that worker: [`@uniora/server` sends them as signed
+webhooks](server.md#webhooks) (retries, rotation of the secret, an SSRF guard, `uniora webhooks ...`). That dispatcher then **is** the
+consumer of the outbox, so do not run your own `dispatchOutbox` on the same database at the same time.
 
 Postgres migration `0026`, SQLite `0011`. The least-privilege role of `guides/sql/least-privilege-roles.sql` already covers the table.

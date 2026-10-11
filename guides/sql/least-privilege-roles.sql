@@ -101,3 +101,38 @@ grant usage, select on all sequences in schema uniora to uniora_app;
 --
 -- -- And make sure the organization role can NOT reach credentials:
 -- revoke all on schema uniora_api from uniora_app;
+
+-- ---------------------------------------------------------------------------------------------------------------------
+-- Webhooks (optional; only if you send webhooks, see guides/server.md#webhooks)
+--
+-- Webhook endpoints and their deliveries live in their OWN schema, `uniora_webhooks` (migration 0045), because an endpoint row holds
+-- the SIGNING SECRET: the worker must read it to sign. uniora_app (the code that serves organizations) needs NO access to it.
+--   uniora_webhook_worker  what the dispatcher connects as (inside `uniora server start`, or `uniora webhooks run`). It reads the
+--                          endpoints and their secrets, writes deliveries and records what each attempt did; it reads and completes
+--                          the outbox events it turns into deliveries.
+--   uniora_webhook_admin   what Studio and the CLI connect as to manage endpoints (full DML), plus append to the audit log.
+-- Run after `uniora migrate`, as uniora_migrator or a superuser.
+--
+--   create role uniora_webhook_worker login password '...' nosuperuser nocreaterole nocreatedb;
+--   create role uniora_webhook_admin  login password '...' nosuperuser nocreaterole nocreatedb;
+-- ---------------------------------------------------------------------------------------------------------------------
+
+-- grant usage on schema uniora_webhooks to uniora_webhook_worker, uniora_webhook_admin;
+--
+-- -- The worker: it never creates or deletes an endpoint, it only keeps them current.
+-- grant select on uniora_webhooks.endpoints to uniora_webhook_worker;
+-- grant update (consecutive_failures, last_success_at, last_failure_at, status, disabled_reason, disabled_at, version, updated_at) on uniora_webhooks.endpoints to uniora_webhook_worker;
+-- grant select, insert, update, delete on uniora_webhooks.deliveries to uniora_webhook_worker;
+-- grant usage on schema uniora to uniora_webhook_worker;
+-- grant select, update, delete on uniora.outbox to uniora_webhook_worker;
+--
+-- -- Studio / CLI: manage endpoints, requeue deliveries, and write the audit entries that go with each change.
+-- grant select, insert, update, delete on uniora_webhooks.endpoints to uniora_webhook_admin;
+-- grant select, update on uniora_webhooks.deliveries to uniora_webhook_admin;
+-- grant usage on schema uniora to uniora_webhook_admin;
+-- grant select, insert on uniora.audit_logs to uniora_webhook_admin;
+-- grant select on uniora.audit_log_checkpoints to uniora_webhook_admin;
+-- grant usage, select on all sequences in schema uniora to uniora_webhook_admin;
+--
+-- -- And make sure the organization role can NOT reach the secrets:
+-- revoke all on schema uniora_webhooks from uniora_app;

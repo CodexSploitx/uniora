@@ -19,7 +19,8 @@ Each customer runs their own server and their own database. There is no shared U
 | --- | --- |
 | **The call, endpoint by endpoint** | [API reference](server-api.md) (every example in it was executed), and the machine-readable [`openapi.json`](openapi.json) |
 | **From TypeScript** | `@uniora/client`: typed calls, retries, and a remote engine for the Express and Next guards ([below](#from-your-backend-uniora-client)) |
-| **Who may call** | API clients and keys, managed in Studio or with `uniora server …` ([below](#api-clients-and-keys)) |
+| **Who may call** | API clients and keys, managed in Studio or with `uniora server …` ([below](#api-clients-and-keys)); or your own OAuth server ([machine tokens](#machine-tokens-your-own-oauth-server-instead-of-keys)) |
+| **Everything else the server can do** | [verified end users](#verified-end-users-the-list-of-providers), [platform administration](#platform-administration), [webhooks](#webhooks), [a shared rate limit](#a-rate-limit-shared-between-instances), and [the `server` section of `uniora.config.mjs`](#configuring-the-server-from-the-config-file) |
 
 ## Quick start
 
@@ -171,8 +172,8 @@ Everything is bounded before any database work, and every number is configurable
 | Failed authentications per source address | 20 per minute |
 | Slow clients | headers 10 s, body 10 s, keep-alive 5 s |
 
-The rate limiter is **per process**: with N instances the effective limit is N times the configured one. A shared limiter is on the
-[roadmap](roadmap.md). A request that timed out keeps its concurrency slot until the work really ends.
+The rate limiter is **per process** unless you turn on the [shared one](#a-rate-limit-shared-between-instances). A request that timed out
+keeps its concurrency slot until the work really ends, and if it fails after the `503 timeout` was sent, the failure is still logged.
 
 ### Database users
 
@@ -307,6 +308,148 @@ unknown, and a policy that needs it refuses with a `stepUp`.
 **What it does not give you.** A token is a bearer credential: the server does not remember used tokens (it relies on `exp`, so keep tokens short-lived), and it
 verifies the user, not your backend's intentions. Hold tokens only as long as your auth provider's session does.
 
+### Machine tokens: your own OAuth server instead of keys
+
+If you already issue machine-to-machine tokens (Auth0 machine-to-machine applications, Okta, Azure AD, Keycloak, any OAuth 2.0 server with the
+`client_credentials` grant), the server can accept those tokens in `Authorization: Bearer` instead of an UNIORA key. Nothing to distribute or
+rotate on the UNIORA side: the secret stays with your identity provider.
+
+```ts
+createUnioraServer({
+  …,
+  machineTokens: [
+    {
+      provider: "machines",                       // a label for this provider (used in logs)
+      issuer: "https://idp.example.com/",         // the exact `iss`
+      audience: "uniora-api",                     // required, and DIFFERENT from the audience of `actorTokens`
+      algorithms: ["RS256"],                      // pinned, exactly like `actorTokens`
+      jwksUri: "https://idp.example.com/.well-known/jwks.json",
+      // Which API client each machine is: the token's `sub` (or the claim `subjectClaim` names: `azp`, `client_id`) -> an API client id.
+      clients: { "billing-app@clients": "apc_Pea5THFBmbEyvigq" },
+    },
+  ],
+});
+```
+
+- The API **client** (created with `uniora server clients create`) is still where the power lives: its scopes and its organization list are the
+  **ceiling**. A token may carry a `scope` (space-separated) or `scp` (list) claim that **narrows** them, never widens them; a token that names no
+  UNIORA scope at all can call nothing. A subject that is not in `clients` is refused.
+- Everything else about verification is the same as for [end-user tokens](#verified-end-users-the-list-of-providers): pinned algorithms, keys only from the
+  configuration, `exp` required, audience required. Every refusal is the same `401` as a bad key; `503 unavailable` when the keys cannot be fetched.
+- **Disabling the API client cuts the machine off on its next request**, whatever the token's own expiry. Keep tokens short-lived anyway.
+- The audit trail says it was a token: `metadata.via` has `credential: "token"` and a `keyId` such as `oidc_3f9a…` (a stand-in that names the machine, not a key).
+  The rate limit is one bucket per machine identity.
+- A server can accept keys and machine tokens side by side. The client library takes either: `createUnioraClient({ baseUrl, accessToken })`, where
+  `accessToken` is a token or a function that returns the current one (called for every attempt, so cache and renew it yourself).
+- **Not here: UNIORA does not issue tokens.** A token endpoint of our own would add nothing: the server already reads the database on every request, so a
+  key is as revocable as it gets, and a JWT could only be revoked more slowly. If you want short-lived credentials, your OAuth server is the right place.
+
+### Platform administration
+
+The platform scope (staff roles and members, suspending an organization, opening support access) is available over the API under `/v1/platform`, for your
+own admin panel. It is the most powerful thing the server can do, so it has more locks than anything else:
+
+1. **Off unless configured.** Without the `platform` option every platform route answers `501 platform_not_configured`.
+2. **A scope of its own**, `platform:admin`, on a client that may reach **every organization**.
+3. **Never the key alone, never an asserted operator.** Every call carries the operator's **own token** in `Uniora-Actor-Token`, from one of the providers you
+   list in `platform.providers` (use a separate staff provider; a customer-facing one cannot reach this). The platform service then applies its own rules to that
+   operator: they must be a platform member holding the permission, nobody changes themselves, nobody hands out more than they hold, and the last active
+   administrator stays.
+4. **Step-up for every change.** The platform service asks "has this operator re-authenticated recently?" before any change (never before a read). The server
+   answers it from the operator's token: `auth_time` within `maxAgeSeconds` (default 300) and `amr` containing `mfa` (`requireMfa`, default on), and optionally an
+   assurance level (`minAssuranceLevel`, through the provider's `acrLevels`). Otherwise: `428 platform_step_up_required` with
+   `WWW-Authenticate: Bearer error="insufficient_user_authentication"`. Your panel then sends the operator through your sign-in again and retries.
+
+```ts
+import { createPostgresPlatformStorage } from "@uniora/postgres";
+
+createUnioraServer({
+  …,
+  actorTokens: [{ provider: "staff", issuer: "https://staff-idp.example.com/", audience: "uniora", algorithms: ["RS256"], jwksUri: "…", acrLevels: { "urn:mfa": 2 } }],
+  platform: {
+    storage: createPostgresPlatformStorage(pool),
+    providers: ["staff"],
+    stepUp: { maxAgeSeconds: 300, requireMfa: true },
+    supportGrantablePermissions: ["reports.read", "members.block"], // strongly recommended: the organization permissions support access may open
+  },
+});
+```
+
+The first administrator is created once, with direct access to the database: `uniora platform init --admin staff:ana-staff`. The routes cover platform roles
+and members, listing organizations, suspending/archiving/reactivating them, and opening or ending support access (the [reference](server-api.md#platform) has
+every one, with executed examples). Platform audit entries carry the same `via` as everything else (`apiClientId`, `keyId`, `requestId`, `actorMode: "verified"`).
+The client library takes `{ operatorToken }` on these calls.
+
+### Webhooks
+
+Webhooks send the events that happen (`membership.blocked`, `role.updated`, `invitation.accepted`, `organization.created`...) to a URL you register, so another
+system can react without polling. They are built on the [outbox](outbox.md): the event is written in the same transaction as the change, so a rolled-back change
+sends nothing and a committed one cannot lose its event.
+
+They are managed **only** from the CLI and Studio (**Webhooks**: create, edit, enable/disable, rotate the secret, delete, and see the latest deliveries with a button to send a dead one again), never from an API route: an endpoint receives the events of every organization. Studio registers only public `https` URLs; a receiver on a private network is registered with the CLI and the `urlPolicy` of your config.
+
+```bash
+uniora webhooks create --url https://hooks.example.com/uniora --events 'membership.*,role.*' --orgs '*'
+#   -> prints the signing secret ONCE (whsec_…); it is not shown again
+uniora webhooks list | show <id> | update <id> --events '*' | disable <id> | enable <id> | delete <id>
+uniora webhooks rotate-secret <id> --grace-seconds 86400   # the old secret keeps signing for a day, so receivers can switch with no downtime
+uniora webhooks test <id>                                   # sends a signed webhook.test event
+uniora webhooks deliveries --status dead                    # what gave up; `uniora webhooks requeue <deliveryId>` sends it again
+uniora webhooks run [--once]                                # the worker, when it does not run inside the server
+```
+
+Turn it on with `webhooks` (in `createUnioraServer`, or `server.webhooks` in `uniora.config.mjs`); `listen()` then runs the dispatcher and `close()` stops it,
+or set `run: false` and run `uniora webhooks run` elsewhere. Several dispatchers over the same database are safe: claims are leased.
+**The dispatcher is the consumer of the outbox**: if you also consume it yourself, you will compete for the same events.
+
+Which changes produce events: those made through the server's delegated routes and `organizations.create` (the access, team, policy and invitation services
+enqueue them), with the event type equal to the audit action. Changes made directly with Studio or your own code produce events only if that code writes them
+(`createAuditedStorage(storage, { actor, outbox: true })`). An invitation event names the invitation and a fingerprint of the address, never the address, the
+token or the link.
+
+**What the receiver gets**: a `POST` with this body and the [Standard Webhooks](https://www.standardwebhooks.com/) headers:
+
+```
+webhook-id: evt:7f1c…              the event id, the same on every retry: deduplicate on it (delivery is at least once)
+webhook-timestamp: 1760000000      unix seconds of this attempt
+webhook-signature: v1,K5oBfV…      base64 HMAC-SHA256 of "<id>.<timestamp>.<body>"; two values (separated by a space) while a rotation is in its grace
+{"id":"evt:7f1c…","type":"membership.blocked","organizationId":"org_acme","createdAt":"…","data":{"actor":{…},"target":{…},"metadata":{…}}}
+```
+
+```ts
+import { verifyWebhook } from "@uniora/core";
+
+const ok = verifyWebhook({
+  body: rawBody,                                   // the raw text, before any JSON.parse
+  headers: { id: req.headers["webhook-id"], timestamp: req.headers["webhook-timestamp"], signature: req.headers["webhook-signature"] },
+  secrets: process.env.UNIORA_WEBHOOK_SECRET!,     // pass both during a rotation
+  toleranceSeconds: 300,                           // refuses a captured delivery replayed later
+});
+```
+
+**Delivery**: any `2xx` is success; anything else (including redirects, which are never followed) is retried after 30 s, 1 min, 2 min... up to 1 h (a `Retry-After` on
+`429`/`503` is honoured), and after 8 attempts the delivery is parked as `dead` for an operator to look at and `requeue`. An endpoint that fails 50 attempts in a row is
+disabled (`too_many_failures`); its queued deliveries wait, and it sends them when enabled again (events that happen while it is disabled are not queued for it).
+Each attempt has a 10 s deadline, 10 deliveries run at once, and a delivered row is kept 7 days. All of it is configurable.
+
+**The SSRF defense.** A webhook makes the server call a URL somebody typed, so it is treated as a request to a stranger's server: the URL must be `https`, carry no
+credentials and not point at a private, loopback, link-local (the cloud metadata address included), carrier-grade NAT, multicast or documentation address, nor at an
+internal name (`.internal`, `.local`, `localhost`). That is checked when the endpoint is registered **and again on every delivery, against the addresses the name
+resolves to** (every one must be public, and the connection goes to the address that was checked, with the name for TLS: DNS rebinding does not help). Redirects are not
+followed, the answer is read for at most a few KB, and nothing about the answer or the URL is put in an error (the URL may carry a secret in its path). For a
+development receiver on this machine, `urlPolicy: { allowInsecureHttp: true, allowPrivateNetworks: true }`; the server refuses to start with both on and
+`NODE_ENV=production`.
+
+The signing secrets live in their own scope (`uniora_webhooks` schema in Postgres, `uniora_webhook_*` tables in SQLite), outside the organization tables, because the
+worker must read them to sign: give the role that serves organizations no access to it ([`least-privilege-roles.sql`](sql/least-privilege-roles.sql)).
+
+### A rate limit shared between instances
+
+By default each process limits on its own, so N instances allow N times the configured rate. With `sharedRateLimit: true` (config file: `server.sharedRateLimit`) all
+instances draw on one budget per API key, kept in the credential storage (table `rate_limits`; the database user needs to read and write it). An instance takes a small
+lease of tokens (a tenth of the burst), spends it locally, and comes back for more, so the database is touched once per lease and not once per request. If the storage fails,
+each instance limits on its own meanwhile and logs it; a request is never refused because the shared limiter is down.
+
 ### Optimistic concurrency
 
 Members, roles, teams and policies carry a `version`, also sent as the `ETag`. Send it back as `If-Match` (the client: `ifMatch`)
@@ -343,6 +486,30 @@ Errors are `application/problem+json` with a stable `code` and **never** an inte
 `code`. The client retries on its own, but only where it cannot repeat a change: reads, calls the server refused before doing
 anything (`429`, `503 overloaded`), and calls that carry an `Idempotency-Key`. A `503 timeout` on a change is **not** retried: the work
 may have happened. Read the resource and decide.
+
+## Configuring the server from the config file
+
+`uniora server start` reads the `server` section of `uniora.config.mjs` (a JavaScript module, so secrets come from `process.env`). The flags `--default-provider`,
+`--trusted-proxy-hops` and `--read-only` win over the file. The fine checks are the server's own and it fails closed, naming the option that is wrong.
+
+```js
+export default {
+  database: { provider: "postgresql", url: process.env.DATABASE_URL },
+  server: {
+    defaultProvider: "main",
+    trustedProxyHops: 1,
+    sharedRateLimit: true,
+    actorTokens: [{ provider: "main", issuer: "https://idp.example.com/", audience: "uniora", algorithms: ["RS256"], jwksUri: "https://idp.example.com/.well-known/jwks.json" }],
+    requireVerifiedActors: true,
+    machineTokens: [{ provider: "machines", issuer: "https://idp.example.com/", audience: "uniora-api", algorithms: ["RS256"], jwksUri: "https://idp.example.com/.well-known/jwks.json", clients: { "billing-app@clients": "apc_…" } }],
+    invitations: { acceptUrl: (token) => `https://app.example.com/invite/${token}`, sender },
+    platform: { providers: ["staff"], stepUp: { maxAgeSeconds: 300 }, supportGrantablePermissions: ["reports.read"] },
+    webhooks: { run: true },
+  },
+};
+```
+
+`platform` and `webhooks` take their storage from the same database as everything else; `limits`, `policies`-style options are the ones of `createUnioraServer`.
 
 ## From your backend: `@uniora/client`
 
@@ -388,8 +555,14 @@ decision, the reason and `stepUp`, not the per-policy detail. Its key needs the 
 | Security misconfiguration | The server refuses to start without TLS off loopback, refuses unknown options, sets `no-store`, `nosniff` and a locked-down CSP on every answer, and returns no internal message. |
 | Improper inventory management | The route table is the one source of the server, the OpenAPI document and the client; a test fails when the committed copies differ. |
 
-**What it does not do (yet)**: share its rate
-limits between instances; sign or push events (webhooks); cover platform administration (it needs a step-up design). See the
+**Review notes worth knowing.** The pipeline was attacked from outside by three independent reviews; what they found is fixed and each fix has a test. The ones that change
+behaviour: requests are routed on the path exactly as written (`//x/v1/...`, `/v1/./...`, `%2e%2e` are `404`, so a proxy rule on the raw path cannot be bypassed); `/readyz` shares one
+probe between callers; the memory storage is for tests (it has no rollback, so a failed provisioning can leave a partial state: the databases do); a caller never chooses the id of a
+role, a team or a team membership (the server generates them); and an `engine.onDecision` auditor is refused at start, because the identity of a decision comes from the caller.
+The failed-authentication throttle is checked before the credential lookup and counted after it, so a burst of bad keys can overshoot the limit by what is in flight at that moment
+(bounded by `maxInFlight`); an IPv6 client is counted by its /64.
+
+**What it does not do**: issue tokens (use your OAuth server, above), manage webhooks or API keys over HTTP (on purpose), or read members, roles and teams as an end user. See the
 [roadmap](roadmap.md).
 
 ### Hardening checklist
@@ -402,9 +575,10 @@ limits between instances; sign or push events (webhooks); cover platform adminis
 - [ ] The default provider label is set and written down; it is never changed.
 - [ ] Health checks point at `/healthz` and `/readyz`; logs go somewhere you read them and the `requestId` of a 5xx is findable.
 - [ ] `uniora doctor` is clean, and you [anchor the audit head](hardening.md) outside the database.
-- [ ] You run more than one instance only after accounting for the per-process rate limit.
+- [ ] More than one instance? Turn on `sharedRateLimit`, or account for the per-process limit.
+- [ ] Platform routes: a separate staff identity provider in `platform.providers`, `supportGrantablePermissions` listed, `platform:admin` only on the one client of your admin panel.
+- [ ] Webhooks: receivers verify the signature (and the timestamp), deduplicate on `webhook-id`, and secrets are rotated with a grace period.
 
 ## What is not here yet
 
-Tracked in the [roadmap](roadmap.md): OAuth 2.0 client credentials with short-lived JWTs (opaque keys come first), platform administration over the API (it needs a step-up design), webhooks from the outbox, a shared rate limiter,
-and delegated reads of members, roles and teams (today they are application calls; only policies can be read as an end user). A container image is not published yet.
+Tracked in the [roadmap](roadmap.md): delegated reads of members, roles and teams (today they are application calls; only policies can be read as an end user), and a published container image.
