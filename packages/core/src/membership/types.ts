@@ -40,4 +40,11 @@ export interface Membership {
   readonly lastActiveAt?: Date;
   /** Present exactly while `status` is `blocked` or `suspended`. */
   readonly blocked?: MembershipBlock;
+  /**
+   * Starts at 1 and goes up by one on every explicit change (a role assigned or removed, `block`, `suspend`,
+   * `unblock`; a call that changes nothing, `recordActivity` and the automatic end of a suspension do not count).
+   * Pass it back as `expectedVersion` so an edit made from a stale copy fails (`membership_version_conflict`)
+   * instead of overwriting a newer one.
+   */
+  version: number;
 }

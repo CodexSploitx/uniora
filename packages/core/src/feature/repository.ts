@@ -9,6 +9,15 @@ export class FeatureError extends UnioraError {
   }
 }
 
+/** Options of `enable` / `disable`: who and why (`FeatureChangeMeta`), plus the optimistic-concurrency guard. */
+export interface FeatureToggleOptions extends FeatureChangeMeta {
+  /**
+   * Apply only if the override is still at this `version` (see `Feature.version`; `0` means "the organization has no
+   * override yet"); otherwise the call fails with `feature_version_conflict` and nothing changes. Omitted: last write wins.
+   */
+  expectedVersion?: number;
+}
+
 export interface RegisterFeatureInput {
   /**
    * Stable, URL-safe handle, unique across the whole catalog (global,
@@ -92,9 +101,9 @@ export interface FeatureRepository {
    * `feature_unknown`, fail-closed) if `key` was never registered via `register()`. `meta` records who did it
    * and why on the override (`updatedAt` is always recorded).
    */
-  enable(organizationId: string, key: string, meta?: FeatureChangeMeta): Promise<void>;
+  enable(organizationId: string, key: string, meta?: FeatureToggleOptions): Promise<void>;
   /** Same as `enable`, for turning it off. Rejects (`feature_unknown`) if `key` was never registered. */
-  disable(organizationId: string, key: string, meta?: FeatureChangeMeta): Promise<void>;
+  disable(organizationId: string, key: string, meta?: FeatureToggleOptions): Promise<void>;
   /**
    * Applies several on/off changes to one organization atomically: either every key is applied or — if any
    * is unregistered — none is (`feature_unknown`). The same `meta` is recorded on each.

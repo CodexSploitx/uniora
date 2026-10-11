@@ -1,0 +1,240 @@
+import { computeAuthorizationSnapshot } from "@uniora/core";
+import type { AuthorizationReason } from "@uniora/core";
+import { ApiError, errors } from "../errors.js";
+import type { RouteContext } from "../route.js";
+import { defineRoute } from "../route.js";
+import { s } from "../schema.js";
+import { IdentityInput, id, mapPool } from "./common.js";
+import { ContextInput, ResourceInput, SessionInput } from "./schemas.js";
+
+/** With a verified `Uniora-Actor-Token`, the question must be about the person the token proves: a mismatch is the caller's bug, not an answer. */
+function resolveAsked(ctx: RouteContext, input: { provider?: string | undefined; subject: string }) {
+  const identity = ctx.resolveIdentity(input, "identity");
+  const proven = ctx.verifiedActor?.identity;
+  if (proven && (proven.provider !== identity.provider || proven.subject !== identity.subject)) {
+    throw new ApiError(400, "actor_mismatch", { issues: [{ path: "identity", code: "pattern" }] });
+  }
+  return identity;
+}
+
+const TOKEN_NOTE = " Send the end user's token in `Uniora-Actor-Token` and the server verifies it: the question must then be about that person.";
+
+const permissionKey = (description: string) => s.string({ min: 1, max: 200, description, example: "vehicles.delete" });
+const featureKey = (description: string) => s.string({ min: 1, max: 200, description, example: "advanced_reports" });
+const teamId = s.optional(s.string({ min: 1, max: 200, description: "Ask inside this team: it can only narrow the answer." }));
+
+const Check = s.object({
+  permission: s.optional(permissionKey("The permission the identity needs.")),
+  feature: s.optional(featureKey("The feature the organization needs enabled.")),
+  teamId,
+});
+
+const REASONS = [
+  "allowed",
+  "malformed_input",
+  "cross_tenant_resource",
+  "organization_inactive",
+  "membership_inactive",
+  "permission_denied",
+  "policy_denied",
+  "policy_indeterminate",
+  "no_applicable_policy",
+  "evaluation_error",
+  "policy_set_too_large",
+] as const satisfies readonly AuthorizationReason[];
+
+const needsPermissionOrFeature = (input: { permission?: string | undefined; feature?: string | undefined }, prefix = "") =>
+  input.permission === undefined && input.feature === undefined
+    ? [{ path: `${prefix}permission`, code: "required" as const }]
+    : [];
+
+export const decisionRoutes = [
+  defineRoute({
+    id: "decisions.check",
+    method: "POST",
+    path: "/v1/check",
+    summary: "May this identity do this?",
+    description:
+      "Answers with the role-based decision of the engine: whether the identity holds the permission in the organization (and, if asked, whether the organization has the feature enabled). Anything the engine cannot justify is `false`; an unknown organization, a non-member and a malformed key all answer `false` the same way. Policies are not applied here: use `authorize` for that." + TOKEN_NOTE,
+    scope: "check",
+    write: false,
+    actorToken: true,
+    body: s.object({
+      identity: IdentityInput,
+      organizationId: id("The organization the question is about.", "org_acme"),
+      permission: s.optional(permissionKey("The permission the identity needs.")),
+      feature: s.optional(featureKey("The feature the organization needs enabled.")),
+      teamId,
+    }),
+    response: s.object({ allowed: s.bool({ description: "`true` only when every part of the question holds." }) }),
+    organization: ({ body }) => body.organizationId,
+    refine: ({ body }) => needsPermissionOrFeature(body),
+    errors: ["identity_provider_required", "identity_provider_reserved", "organization_not_found"],
+    async handler(ctx, { body }) {
+      const identity = resolveAsked(ctx, body.identity);
+      const allowed =
+        body.feature !== undefined
+          ? await ctx.engine.access.check({
+              identity,
+              organizationId: body.organizationId,
+              ...(body.permission !== undefined ? { permission: body.permission } : {}),
+              feature: body.feature,
+              ...(body.teamId !== undefined ? { teamId: body.teamId } : {}),
+            })
+          : await ctx.engine.can({
+              identity,
+              organizationId: body.organizationId,
+              permission: body.permission!,
+              ...(body.teamId !== undefined ? { teamId: body.teamId } : {}),
+            });
+      return { allowed };
+    },
+  }),
+
+  defineRoute({
+    id: "decisions.checkBatch",
+    method: "POST",
+    path: "/v1/check:batch",
+    summary: "Several questions about one identity in one round trip",
+    description:
+      "Each check is evaluated independently, in the order given, and the answers come back in the same order. Use it to render a whole screen in one call. A malformed check answers `false` for that entry only." + TOKEN_NOTE,
+    scope: "check",
+    write: false,
+    actorToken: true,
+    body: s.object({
+      identity: IdentityInput,
+      organizationId: id("The organization the questions are about.", "org_acme"),
+      checks: s.array(Check, { min: 1, max: 1000, description: "At most the server's batch limit (50 unless configured)." }),
+    }),
+    response: s.object({ results: s.array(s.object({ allowed: s.bool() }), { max: 1000 }) }),
+    organization: ({ body }) => body.organizationId,
+    refine: ({ body }) => body.checks.flatMap((check, index) => needsPermissionOrFeature(check, `checks[${index}].`)),
+    errors: ["identity_provider_required", "identity_provider_reserved", "organization_not_found"],
+    async handler(ctx, { body }) {
+      if (body.checks.length > ctx.config.limits.maxBatchChecks) throw errors.invalidRequest([{ path: "checks", code: "too_many" }]);
+      const identity = resolveAsked(ctx, body.identity);
+      const results = await mapPool(body.checks, 8, async (check) => ({
+        allowed:
+          check.feature !== undefined
+            ? await ctx.engine.access.check({
+                identity,
+                organizationId: body.organizationId,
+                ...(check.permission !== undefined ? { permission: check.permission } : {}),
+                feature: check.feature,
+                ...(check.teamId !== undefined ? { teamId: check.teamId } : {}),
+              })
+            : await ctx.engine.can({
+                identity,
+                organizationId: body.organizationId,
+                permission: check.permission!,
+                ...(check.teamId !== undefined ? { teamId: check.teamId } : {}),
+              }),
+      }));
+      return { results };
+    },
+  }),
+
+  defineRoute({
+    id: "decisions.authorize",
+    method: "POST",
+    path: "/v1/authorize",
+    summary: "The full decision, with the organization's policies",
+    description:
+      "Like `check`, and then the organization's policies are applied on top of the roles (they can only restrict). Pass what YOUR server knows: the resource, the signals about the request (`context`) and how the person authenticated (`session`). UNIORA cannot verify those, so never copy them from what the end user sent. The answer never throws: a failure while deciding is `allowed: false`. When the refusal comes only from policies that stronger or fresher authentication could satisfy, `stepUp` says so: send the person to your own sign-in flow and ask again. With a verified `Uniora-Actor-Token` the server takes the `session` from the token (`auth_time`, `amr`, `acr`) and refuses a `session` in the body: facts the user's own provider signed, instead of what your server says.",
+    scope: "check",
+    write: false,
+    actorToken: true,
+    body: s.object({
+      identity: IdentityInput,
+      organizationId: id("The organization the question is about.", "org_acme"),
+      permission: permissionKey("The permission the identity needs."),
+      teamId,
+      resource: ResourceInput,
+      context: ContextInput,
+      session: SessionInput,
+      requireApplicablePolicy: s.optional(s.bool({ description: "A protected operation: with no applicable policy the answer is deny." })),
+    }),
+    response: s.object({
+      allowed: s.bool({ description: "Check this, not `decision`." }),
+      decision: s.enum(["allow", "deny", "indeterminate"] as const, { description: "Only `allow` lets the operation go on." }),
+      reason: s.enum(REASONS, { description: "Why. Stable codes; only ever added." }),
+      via: s.optional(s.enum(["membership", "support_grant"] as const, { description: "What granted the permission." })),
+      policyRevision: s.nullable(s.int({ min: 0, max: Number.MAX_SAFE_INTEGER, description: "The revision of the organization's policy set that the decision used (`0` when it has no policies yet); `null` when the roles refused first, so no policy was consulted. Key any cache of decisions on it." })),
+      stepUp: s.optional(
+        s.object({ policyKeys: s.array(s.string({ max: 200 }), { max: 100 }) }, { description: "Present only when stronger or fresher authentication could change the answer. Do not echo the keys to the person." }),
+      ),
+      evaluatedAt: s.date(),
+    }),
+    organization: ({ body }) => body.organizationId,
+    errors: ["identity_provider_required", "identity_provider_reserved", "organization_not_found"],
+    async handler(ctx, { body }) {
+      const identity = resolveAsked(ctx, body.identity);
+      if (ctx.verifiedActor && body.session !== undefined) throw errors.invalidRequest([{ path: "session", code: "too_many" }]);
+      const verified = ctx.verifiedActor?.session;
+      const session = body.session ?? (verified && Object.keys(verified).length > 0 ? verified : undefined);
+      const result = await ctx.engine.authorize({
+        identity,
+        organizationId: body.organizationId,
+        permission: body.permission,
+        ...(body.teamId !== undefined ? { teamId: body.teamId } : {}),
+        ...(body.resource
+          ? {
+              resource: {
+                type: body.resource.type,
+                id: body.resource.id,
+                organizationId: body.resource.organizationId,
+                ...(body.resource.teamIds !== undefined ? { teamIds: body.resource.teamIds } : {}),
+                ...(body.resource.attributes !== undefined ? { attributes: body.resource.attributes } : {}),
+              },
+            }
+          : {}),
+        ...(body.context !== undefined ? { context: body.context } : {}),
+        ...(session !== undefined ? { session } : {}),
+        ...(body.requireApplicablePolicy !== undefined ? { requireApplicablePolicy: body.requireApplicablePolicy } : {}),
+      });
+      return {
+        allowed: result.allowed,
+        decision: result.decision,
+        reason: result.reason,
+        ...(result.via !== undefined ? { via: result.via } : {}),
+        policyRevision: result.policyRevision,
+        ...(result.stepUp !== undefined ? { stepUp: { policyKeys: result.stepUp.policyKeys } } : {}),
+        evaluatedAt: result.evaluatedAt,
+      };
+    },
+  }),
+
+  defineRoute({
+    id: "decisions.snapshot",
+    method: "POST",
+    path: "/v1/snapshots",
+    summary: "A bounded set of decisions for a UI, in one call",
+    description:
+      "Resolves exactly the permissions and features listed, for one identity in one organization. It is bounded on purpose: this is not \"everything this person can do\" (which is not even defined for an Owner). A key you did not list is absent, and a consumer must treat an absent key as denied. Safe to hand to client-side UI after your own server authorizes the request." + TOKEN_NOTE,
+    scope: "check",
+    write: false,
+    actorToken: true,
+    body: s.object({
+      identity: IdentityInput,
+      organizationId: id("The organization the snapshot is about.", "org_acme"),
+      permissions: s.optional(s.array(permissionKey("A permission to resolve."), { max: 100 })),
+      features: s.optional(s.array(featureKey("A feature to resolve."), { max: 100 })),
+    }),
+    response: s.object({
+      organizationId: s.string({ max: 200 }),
+      permissions: s.record(s.bool(), { maxKeys: 100, keyPattern: /^[\x21-\x7e]{1,200}$/ }),
+      features: s.record(s.bool(), { maxKeys: 100, keyPattern: /^[\x21-\x7e]{1,200}$/ }),
+    }),
+    organization: ({ body }) => body.organizationId,
+    errors: ["identity_provider_required", "identity_provider_reserved", "organization_not_found"],
+    async handler(ctx, { body }) {
+      const identity = resolveAsked(ctx, body.identity);
+      return computeAuthorizationSnapshot(ctx.engine, ctx.config.storage.features, {
+        identity,
+        organizationId: body.organizationId,
+        ...(body.permissions !== undefined ? { permissions: body.permissions } : {}),
+        ...(body.features !== undefined ? { features: body.features } : {}),
+      });
+    },
+  }),
+];

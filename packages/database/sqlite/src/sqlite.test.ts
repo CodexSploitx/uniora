@@ -60,13 +60,13 @@ describe("@uniora/sqlite — particularidades del adaptador", () => {
 
     it("garantiza un único Owner role por organización con un índice parcial real", () => {
       db.exec("insert into uniora_organizations (id, name, slug) values ('o', 'O', 'o')");
-      db.exec("insert into uniora_roles (id, organization_id, name, key, is_owner_role) values ('r1', 'o', 'Owner', 'owner', 1)");
+      db.exec("insert into uniora_roles (id, organization_id, name, name_normalized, key, is_owner_role) values ('r1', 'o', 'Owner', 'owner', 'owner', 1)");
 
       expect(() =>
-        db.exec("insert into uniora_roles (id, organization_id, name, key, is_owner_role) values ('r2', 'o', 'Boss', 'boss', 1)"),
+        db.exec("insert into uniora_roles (id, organization_id, name, name_normalized, key, is_owner_role) values ('r2', 'o', 'Boss', 'boss', 'boss', 1)"),
       ).toThrow(/UNIQUE constraint failed/);
       expect(() =>
-        db.exec("insert into uniora_roles (id, organization_id, name, key, is_owner_role) values ('r3', 'o', 'Sales', 'sales', 0)"),
+        db.exec("insert into uniora_roles (id, organization_id, name, name_normalized, key, is_owner_role) values ('r3', 'o', 'Sales', 'sales', 'sales', 0)"),
       ).not.toThrow();
     });
 

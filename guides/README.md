@@ -14,19 +14,22 @@ Start with **Getting started**, read **Concepts** once, and keep the **Reference
 | Read, verify and prune the audit log | [Audit log](audit-log.md) |
 | Use `npx uniora …` and Studio, and set environment variables | [CLI, Studio and configuration](cli-and-studio.md) |
 | Translate or branch on an error | [Errors](errors.md) |
+| Run UNIORA as its own service your backends call over HTTP, with API keys and a typed client | [The server](server.md) and the [API reference](server-api.md) |
 
 Topic guides that go deeper:
 
 - [Hardening for production](hardening.md): database roles, anchoring the audit head, release settings.
+- [Performance at scale](performance.md): paging, indexes, capped counts, measured numbers on 5 million rows, and what to know before migrating a large database.
 - [Row-level security](rls.md): SQL functions for your own policies.
-- [Events after commit (outbox)](outbox.md), [quotas (entitlements)](entitlements.md), [support grants](support-grants.md).
+- [Events after commit (outbox)](outbox.md), [quotas (entitlements)](entitlements.md), [support grants](support-grants.md), [teams](teams.md), [policies](policies.md), [platform administrators](platform.md).
+- [Delegated administration](access-admin.md): let someone other than the Owner give roles and invite, without privilege escalation.
 - [SQL migrations as plain files](sql-migrations.md) and [writing your own storage backend](custom-backend.md).
 - [Roadmap](roadmap.md): what UNIORA does not do yet.
 
 Per-package READMEs (install line and the shortest example) live next to each package:
 [`core`](../packages/core), [`postgres`](../packages/database/postgres), [`sqlite`](../packages/database/sqlite),
 [`mailer-smtp`](../packages/mailer-smtp), [`next`](../packages/next), [`express`](../packages/express),
-[`react`](../packages/react), [`cli`](../packages/cli), [`studio`](../apps/studio) and the four
+[`react`](../packages/react), [`cli`](../packages/cli), [`server`](../packages/server), [`client`](../packages/client), [`studio`](../apps/studio) and the four
 [adapters](../packages/adapters). A runnable app is in [`examples/express-sqlite`](../examples/express-sqlite), and
 [`apps/playground`](../apps/playground) shows Next.js + React.
 

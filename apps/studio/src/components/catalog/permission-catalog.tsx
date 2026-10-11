@@ -1,5 +1,6 @@
 "use client";
 
+import { capParams } from "@/lib/limits";
 import { IconArrowRight, IconKey, IconPlus, IconTrash } from "@tabler/icons-react";
 import Link from "next/link";
 import { useState } from "react";
@@ -70,7 +71,7 @@ export function PermissionCatalog({ permissions, total, query, nextHref, readOnl
           clearKey="perms.clearSearch"
         />
         <div className="flex items-center gap-3">
-          <span className="text-sm text-muted-foreground">{t("perms.resultsCount", { count: total })}</span>
+          <span className="text-sm text-muted-foreground">{t("perms.resultsCount", capParams(total))}</span>
           {!readOnly && <RegisterPermissionDialog />}
         </div>
       </div>

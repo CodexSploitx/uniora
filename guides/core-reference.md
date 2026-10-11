@@ -83,10 +83,10 @@ await storage.memberships.suspend(membershipId, { actor, reason: "vacation", unt
 | `searchListing({ ..., rolesPerMember })` | Each row carries a bounded role preview and the total role count. |
 | `listByOrganization(organizationId)` | Internal use. |
 | `countByRole(roleIds)` / `countByOrganization(ids)` | Batch counts. |
-| `assignRole(membershipId, roleId)` / `unassignRole(...)` | Regular roles only; idempotent. Refuses the Owner role and roles of other organizations. |
+| `assignRole(membershipId, roleId, { expectedVersion? })` / `unassignRole(...)` | Regular roles only; idempotent. Refuses the Owner role and roles of other organizations. With `expectedVersion`, refused (`membership_version_conflict`) if the membership changed since you read it (`Membership.version`). |
 | `assignOwnerRole(membershipId, roleId)` / `unassignOwnerRole(...)` | The only way to grant or remove the Owner role. `unassignOwnerRole` refuses to remove the last Owner. |
-| `block(id, { actor, reason? })` / `unblock(id, { actor })` | Idempotent. The last active Owner can't be blocked (`last_owner`). `unblock` lifts both a block and a suspension. |
-| `suspend(id, { actor, until, reason? })` | Like `block`, but only until `until` (a future date, else `membership_block_until_invalid`). The status is `suspended` meanwhile (`blocked.until` has the date); from that instant it reads `active`, `blocked` disappears, and `can()`, snapshots and the SQL functions allow it again. Nothing runs at that moment, so the automatic reactivation has no audit entry (`membership.suspended` records `until`). Blocking or suspending someone already blocked or suspended changes nothing, so `unblock` first to change the date or turn a suspension into a block; a suspension that already ended counts as not blocked. |
+| `block(id, { actor, reason?, expectedVersion? })` / `unblock(id, { actor, expectedVersion? })` | Idempotent. The last active Owner can't be blocked (`last_owner`). `unblock` lifts both a block and a suspension. |
+| `suspend(id, { actor, until, reason? })` | Like `block`, but only until `until` (a future date, else `membership_block_until_invalid`). The status is `suspended` meanwhile (`blocked.until` has the date); from that instant it reads `active`, `blocked` disappears, and `can()`, snapshots and the SQL functions allow it again. Nothing runs at that moment, so the automatic reactivation has no audit entry (`membership.suspended` records `until`). Blocking someone already blocked, or suspending someone already blocked or suspended, changes nothing (`unblock` first to change the reason or the date) — except that `block` on a suspended member turns the suspension into an indefinite block, so a block never ends sooner than the suspension it replaces; `until` can't be after the year 9999. A suspension that already ended counts as not blocked. The clock is the database's (`now()`) on PostgreSQL and the process's on SQLite and the in-memory storage; keep application servers on NTP. An Owner who can still act can't be unassigned, deleted or leave while every other Owner is blocked or suspended (`last_owner`). A blocked or suspended member can't `leaveOrganization` or receive `transferOwnership` (`membership_blocked`). |
 | `recordActivity(id, at?)` | Moves `lastActiveAt` forward for a "last seen" column. |
 | `delete(id)` | Refuses to delete the last Owner. |
 
@@ -119,14 +119,14 @@ await storage.roles.delete(role.id, { members: { reassignTo: otherRoleId } });
 
 | Method | Purpose |
 | --- | --- |
-| `create({ id, organizationId, name, key?, description?, permissionKeys?, isSystem? })` | Name up to 100 characters, key like `billing-manager` (`owner` is reserved). Permissions must be registered. |
+| `create({ id, organizationId, name, key?, description?, permissionKeys?, isSystem? })` | Name up to 100 characters, unique per organization ignoring case, accents and extra spaces ("Recepción" = "recepcion"; `normalizeRoleName` gives that form), key like `billing-manager` (`owner` is reserved). Permissions must be registered. |
 | `createOwnerRole({ id, organizationId })` | The only way to make an Owner role. One per organization. Normally called by `createOrganizationWithOwner`. |
 | `findByIds(ids)` / `findSummariesByIds(ids)` | Summaries skip permission lists. |
 | `listByOrganization(organizationId)` | Internal use. |
 | `search({ organizationId, query?, heldBy?, notHeldBy?, isOwnerRole?, isSystem?, limit?, after? })` / `count(...)` | `heldBy` / `notHeldBy` take a membership id. |
 | `grantPermission` / `revokePermission(roleId, key)` | Not for the Owner role. |
-| `setPermissions(roleId, keys)` | Exactly this list, atomically. Unregistered key: `role_permission_invalid`, nothing changes. |
-| `rename(roleId, name)` / `update(roleId, { name?, description? })` | Owner and system roles keep their name; a system role's description can change. |
+| `setPermissions(roleId, keys, { expectedVersion? })` | Exactly this list, atomically. Unregistered key: `role_permission_invalid`, nothing changes. With `expectedVersion`, refused (`role_version_conflict`) if the role changed since you read it. |
+| `rename(roleId, name)` / `update(roleId, { name?, description?, expectedVersion? })` | Owner and system roles keep their name; a system role's description can change. The new name follows the same uniqueness rule as `create`. |
 | `clone(roleId, { id, name, key?, organizationId?, description? })` | A custom copy, never a system role. Can't clone the Owner role. |
 | `delete(roleId, { members?: "detach" \| "reject" \| { reassignTo } })` | Default `detach`. `reject` fails with `role_in_use` while someone holds it. Not for Owner or system roles. |
 | `countPermissions(ids)` / `countByOrganization(ids)` / `grantedPermissionKeys(roleId, keys)` / `grantingRoles(membershipId, keys, perKey)` | UI helpers: counts and "why does this member have this permission". |
@@ -144,6 +144,12 @@ const { created, synced, skipped } = await applyRoleTemplates(storage.roles, org
 ```
 
 Idempotent. Creates missing system roles, re-syncs system roles whose template changed, and leaves alone a custom role a tenant made under the same key (`skipped`). Pass `newId` for your own id scheme.
+
+Options:
+
+- `mode: "create-missing"` only creates what is missing and never changes an existing role (whoever made it), so an Owner's edits to a system role's permissions or description survive; the untouched system roles come back in `unchanged`. The default, `"sync"`, overwrites them as before.
+- A template whose `key` or name is already used by a tenant's role no longer stops the others: it is reported in `conflicts` (`{ key, reason: "key_taken" | "name_taken" }`) and the rest are still applied.
+- `continueOnError: true` records any other failure in `failed` (`{ key, error }`) and carries on instead of throwing. Use it on the plain repositories, not inside a PostgreSQL transaction (a failed statement aborts the whole transaction).
 
 ---
 
@@ -178,7 +184,7 @@ const effective = await storage.features.listEffective(orgId); // [{ key, enable
 | Method | Purpose |
 | --- | --- |
 | `register({ key?, name, description?, defaultEnabled?, parentKey? })` | **Full upsert**; the key is derived from the name when omitted. |
-| `enable` / `disable(organizationId, key, meta?)` | An explicit override. Unknown key: `feature_unknown`. `meta` is `{ actor?, reason? }`. |
+| `enable` / `disable(organizationId, key, meta?)` | An explicit override. Unknown key: `feature_unknown`. `meta` is `{ actor?, reason?, expectedVersion? }`; `expectedVersion` is the override's `version` (0 = no override yet) and a stale one fails with `feature_version_conflict`. |
 | `setMany(organizationId, { key: boolean }, meta?)` | Atomic: all or nothing. |
 | `disableEverywhere(key, meta?)` | Kill switch: every override off, default off. |
 | `isEnabled(organizationId, key)` | Effective answer. Unknown key is `false`. |
@@ -197,7 +203,7 @@ Key: lowercase alphanumerics separated by underscores, up to 63 characters.
 
 Documented in their own guides: [entitlements](entitlements.md) (`storage.entitlements`: `define`, `setLimit`, `clearLimit`, `get`, `list`, `consume`, `release`),
 [support grants](support-grants.md) (`storage.supportGrants`: `create`, `revoke`, `findById`, `search`, `count`, `activePermissions`) and
-[outbox](outbox.md) (`storage.outbox`, `dispatchOutbox`).
+[outbox](outbox.md) (`storage.outbox`, `dispatchOutbox`) and [teams](teams.md) (`storage.teams`, `storage.teamMemberships`).
 
 ---
 

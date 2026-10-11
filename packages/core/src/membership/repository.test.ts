@@ -124,27 +124,19 @@ describe("MembershipRepository — Owner protection (uniora-security-engineering
     await expect(storage.memberships.delete("no-such-membership")).rejects.toThrow(MembershipError);
   });
 
-  it("el Owner role de otra organización nunca bloquea el delete de un membership de esta (INV-001)", async () => {
+  it("un membership leído es una copia: mutarlo no puede forjar el Owner role de otra organización (INV-001)", async () => {
     const storage = createMemoryStorage();
     await storage.organizations.create({ id: "org-1", name: "Acme" });
     await storage.organizations.create({ id: "org-2", name: "Other" });
     const ownerOrg2 = await storage.roles.createOwnerRole({ id: "role-owner-2", organizationId: "org-2" });
     const membership = await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity });
-    // `create()`/`assignRole()` ya rechazan un roleId de otra organización
-    // desde el origen (docs/security-pentest-2026-09-24.md Hallazgo 2), así
-    // que ya no se puede producir este estado forjado a través de la API
-    // pública. Se simula mutando el objeto en memoria directamente (el
-    // adapter en memoria devuelve referencias vivas, no copias) para seguir
-    // probando que `delete()` se mantiene seguro aunque el dato exista de
-    // todas formas por otra vía (corrupción, bug futuro).
+    // `create()`/`assignRole()` rechazan un roleId de otra organización desde el origen
+    // (docs/security-pentest-2026-09-24.md Hallazgo 2), y el almacén en memoria devuelve
+    // copias: ni siquiera mutando el objeto leído se puede fabricar ese estado.
     membership.roleIds.push(ownerOrg2.id);
 
-    // org-2 sigue sin nadie más con ese Owner role, pero este membership es
-    // de org-1 — el invariante de "última owner" solo debe importar para la
-    // organización dueña real del role, y de todas formas bloquear aquí es
-    // lo seguro: nunca dejar caer silenciosamente la única referencia al
-    // Owner role de org-2, aunque esté mal asignada.
-    await expect(storage.memberships.delete(membership.id)).rejects.toThrow(MembershipError);
+    expect((await storage.memberships.findById(membership.id))!.roleIds).toEqual([]);
+    await expect(storage.memberships.delete(membership.id)).resolves.toBeUndefined();
   });
 });
 

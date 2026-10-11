@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import { defineStorageConformance, type StorageHarness } from "@uniora/storage-conformance";
 import { createTestPool } from "./test-pool.js";
 import { applyMigrations } from "./migrate.js";
-import { createInvitationService, createOrganizationWithOwner } from "@uniora/core";
+import { createInvitationService, createOrganizationWithOwner, createTrustedTeamStorage } from "@uniora/core";
 import { createPostgresStorage } from "./storage.js";
 
 let pool: Pool;
@@ -69,7 +69,67 @@ const harness: StorageHarness = {
       await withoutAuditProtection(`delete from uniora.audit_logs where id = '${id.replace(/'/g, "''")}'`);
     },
   },
+  policyProbe: {
+    updateRevisionDirectly: (policyId, revision) => attempt(`update uniora.policy_revisions set note = 'tampered' where policy_id = $1 and revision = $2`, [policyId, revision]),
+    deleteRevisionDirectly: (policyId, revision) => attempt(`delete from uniora.policy_revisions where policy_id = $1 and revision = $2`, [policyId, revision]),
+    reviveRetiredDirectly: (policyId) => attempt(`update uniora.policies set status = 'active', version = version + 1 where id = $1`, [policyId]),
+    deleteDirectly: (policyId) => attempt(`delete from uniora.policies where id = $1`, [policyId]),
+    attachRevisionOfOtherOrganizationDirectly: (policyId, organizationId) =>
+      attempt(
+        `insert into uniora.policy_revisions (policy_id, organization_id, revision, definition, definition_hash, created_by_provider, created_by_subject)
+         select id, $2, 99, definition, definition_hash, 'p', 's' from uniora.policies where id = $1`,
+        [policyId, organizationId],
+      ),
+    moveToOtherOrganizationDirectly: (policyId, organizationId) =>
+      attempt(`update uniora.policies set organization_id = $2, version = version + 1 where id = $1`, [policyId, organizationId]),
+    changeHashDirectly: (policyId) => attempt(`update uniora.policies set definition_hash = repeat('f', 64), version = version + 1 where id = $1`, [policyId]),
+    changeDefinitionDirectly: (policyId) => attempt(`update uniora.policies set definition = definition || '{"extra": true}'::jsonb, version = version + 1 where id = $1`, [policyId]),
+    skipVersionDirectly: (policyId) => attempt(`update uniora.policies set name = 'renamed' where id = $1`, [policyId]),
+    insertWithoutRevisionDirectly: (organizationId, id) =>
+      attempt(
+        `insert into uniora.policies (id, organization_id, key, name, kind, effect, definition, definition_hash, created_by_provider, created_by_subject)
+         values ($1, $2, $1, 'orphan', 'access', 'deny', '{"kind":"access","effect":"deny"}'::jsonb, repeat('a', 64), 'p', 's')`,
+        [id, organizationId],
+      ),
+    async fillDraftsDirectly(organizationId, total) {
+      const definition = `'{"kind":"access","effect":"deny","actions":["reports.run"],"condition":{"not":{"exists":"subject.teamIds"}}}'::jsonb`;
+      const client = await pool.connect();
+      try {
+        await client.query("begin");
+        await client.query(
+          `insert into uniora.policies (id, organization_id, key, name, kind, effect, definition, definition_hash, created_by_provider, created_by_subject)
+           select 'fill-' || lpad(i::text, 4, '0'), $1, 'fill-' || lpad(i::text, 4, '0'), 'fill', 'access', 'deny', ${definition}, repeat('a', 64), 'p', 's' from generate_series(0, $2::int - 1) i`,
+          [organizationId, total],
+        );
+        await client.query(
+          `insert into uniora.policy_revisions (policy_id, organization_id, revision, definition, definition_hash, created_by_provider, created_by_subject)
+           select 'fill-' || lpad(i::text, 4, '0'), $1, 1, ${definition}, repeat('a', 64), 'p', 's' from generate_series(0, $2::int - 1) i`,
+          [organizationId, total],
+        );
+        await client.query("commit");
+      } catch (error) {
+        await client.query("rollback").catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+    deleteOrganizationDirectly: (organizationId) => attempt(`delete from uniora.organizations where id = $1`, [organizationId]),
+    async countRows(organizationId) {
+      const count = async (table: string) =>
+        Number((await pool.query<{ n: string }>(`select count(*)::text as n from uniora.${table} where organization_id = $1`, [organizationId])).rows[0]!.n);
+      return { policies: await count("policies"), revisions: await count("policy_revisions"), counters: await count("policy_set_revisions") };
+    },
+  },
 };
+
+/** Runs a statement as any client could; `"rejected"` when the database refuses it. */
+function attempt(sql: string, params: unknown[]): Promise<"rejected" | "applied"> {
+  return pool.query(sql, params).then(
+    () => "applied" as const,
+    () => "rejected" as const,
+  );
+}
 
 /** What a superuser (or the table owner) could do: switch the append-only trigger off, edit, switch it back on. */
 async function withoutAuditProtection(statement: string): Promise<void> {
@@ -145,6 +205,37 @@ defineStorageConformance(harness, () => {
     expect(result.rowCount).toBe(0);
 
     expect(await harness.probe.hasMembershipRole("m-2", roleId)).toBe(false);
+  });
+
+  it("teams: la base de datos misma rechaza filas entre organizaciones, aunque alguien escriba SQL directo", async () => {
+    const storage = createTrustedTeamStorage(harness.storage(), { actor: identity, reason: "adapter isolation test" });
+    await storage.organizations.create({ id: "org-a", name: "A" });
+    await storage.organizations.create({ id: "org-b", name: "B" });
+    await storage.teams.create({ id: "team-a", organizationId: "org-a", name: "Equipo A" });
+    await storage.teams.create({ id: "team-b", organizationId: "org-b", name: "Equipo B" });
+    await storage.roles.create({ id: "role-b", organizationId: "org-b", name: "Rol B" });
+    await storage.memberships.create({ id: "m-a", organizationId: "org-a", identity: { provider: "p", subject: "a" } });
+    await storage.memberships.create({ id: "m-b", organizationId: "org-b", identity: { provider: "p", subject: "b" } });
+    const insert = (id: string, org: string, team: string, member: string) =>
+      pool.query(
+        `insert into uniora.team_memberships (id, organization_id, team_id, membership_id, status) values ($1, $2, $3, $4, 'active')`,
+        [id, org, team, member],
+      );
+    // El miembro de A en el equipo de B (con cualquiera de las dos organizaciones) y al revés.
+    await expect(insert("x1", "org-b", "team-b", "m-a")).rejects.toThrow();
+    await expect(insert("x2", "org-a", "team-b", "m-a")).rejects.toThrow();
+    await expect(insert("x3", "org-a", "team-a", "m-b")).rejects.toThrow();
+    await insert("ok", "org-a", "team-a", "m-a");
+    // Un rol de otra organización tampoco puede colgarse de una membresía de equipo.
+    await expect(
+      pool.query(`insert into uniora.team_membership_roles (team_membership_id, role_id, organization_id) values ('ok', 'role-b', 'org-a')`),
+    ).rejects.toThrow();
+    await expect(
+      pool.query(`insert into uniora.team_membership_roles (team_membership_id, role_id, organization_id) values ('ok', 'role-b', 'org-b')`),
+    ).rejects.toThrow();
+    // Mover una fila a otro equipo o a otra organización con un UPDATE directo también falla.
+    await expect(pool.query(`update uniora.team_memberships set team_id = 'team-b' where id = 'ok'`)).rejects.toThrow();
+    await expect(pool.query(`update uniora.team_memberships set organization_id = 'org-b' where id = 'ok'`)).rejects.toThrow();
   });
 
   it("el límite de invitaciones se respeta entre procesos distintos (audit F-06)", async () => {

@@ -10,6 +10,7 @@ import type {
 import {
   OrganizationError,
   assertAuditInput,
+  assertExpectedVersion,
   assertOrganizationStatus,
   assertValidSlug,
   featureRequirements,
@@ -21,6 +22,7 @@ import type { Queryable } from "../queryable.js";
 import { loadDefinitions } from "./feature.js";
 import { isUniqueViolation, violatedConstraint } from "../pg-errors.js";
 import { toLikePattern } from "../pg-like.js";
+import { searchCandidates } from "../pg-search.js";
 
 interface OrganizationRow {
   id: string;
@@ -32,10 +34,11 @@ interface OrganizationRow {
   status_changed_by_provider: string | null;
   status_changed_by_subject: string | null;
   status_reason: string | null;
+  version: number;
 }
 
 const COLUMNS =
-  "id, name, slug, created_at, status, status_changed_at, status_changed_by_provider, status_changed_by_subject, status_reason";
+  "id, name, slug, created_at, status, status_changed_at, status_changed_by_provider, status_changed_by_subject, status_reason, version";
 
 function toOrganization(row: OrganizationRow): Organization {
   const changed =
@@ -46,6 +49,7 @@ function toOrganization(row: OrganizationRow): Organization {
     name: row.name,
     createdAt: row.created_at,
     status: row.status,
+    version: row.version,
     ...(changed
       ? {
           statusChange: {
@@ -121,7 +125,7 @@ export function createOrganizationRepository(db: Queryable): OrganizationReposit
     async rename(id: string, name: string) {
       const sanitized = sanitizeOrganizationName(name);
       const result = await db.query<OrganizationRow>(
-        `update uniora.organizations set name = $2 where id = $1 returning ${COLUMNS}`,
+        `update uniora.organizations set name = $2, version = version + (case when name is distinct from $2 then 1 else 0 end) where id = $1 returning ${COLUMNS}`,
         [id, sanitized],
       );
       return result.rows[0] ? toOrganization(result.rows[0]) : null;
@@ -133,13 +137,20 @@ export function createOrganizationRepository(db: Queryable): OrganizationReposit
       }
       const name = input.name === undefined ? null : sanitizeOrganizationName(input.name);
       const slug = input.slug === undefined ? null : assertValidSlug(input.slug);
+      const expectedVersion = assertExpectedVersion(input.expectedVersion) ?? null;
       try {
         const result = await db.query<OrganizationRow>(
-          `update uniora.organizations set name = coalesce($2, name), slug = coalesce($3, slug)
-           where id = $1 returning ${COLUMNS}`,
-          [id, name, slug],
+          `update uniora.organizations set name = coalesce($2, name), slug = coalesce($3, slug),
+             version = version + (case when name is distinct from coalesce($2, name) or slug is distinct from coalesce($3, slug) then 1 else 0 end)
+           where id = $1 and ($4::integer is null or version = $4) returning ${COLUMNS}`,
+          [id, name, slug, expectedVersion],
         );
-        return result.rows[0] ? toOrganization(result.rows[0]) : null;
+        if (result.rows[0]) return toOrganization(result.rows[0]);
+        // No row: either there is no such organization or it is at another version.
+        if (expectedVersion !== null && (await db.query(`select 1 from uniora.organizations where id = $1`, [id])).rows.length > 0) {
+          throw new OrganizationError("The organization changed since it was read.", "organization_version_conflict");
+        }
+        return null;
       } catch (error) {
         if (isUniqueViolation(error)) {
           throw new OrganizationError(`An organization with slug "${slug}" already exists.`, "organization_slug_taken");
@@ -156,7 +167,7 @@ export function createOrganizationRepository(db: Queryable): OrganizationReposit
       const changed = await db.query<OrganizationRow>(
         `update uniora.organizations
          set status = $2, status_changed_at = date_trunc('milliseconds', now()),
-             status_changed_by_provider = $3, status_changed_by_subject = $4, status_reason = $5
+             status_changed_by_provider = $3, status_changed_by_subject = $4, status_reason = $5, version = version + 1
          where id = $1 and status <> $2
          returning ${COLUMNS}`,
         [id, status, input.actor.provider, input.actor.subject, reason ?? null],
@@ -186,32 +197,40 @@ export function createOrganizationRepository(db: Queryable): OrganizationReposit
       const query = options?.query?.trim();
       const pattern = query ? toLikePattern(query) : null;
       const after = options?.after;
-      const condition = await featureCondition(db, options?.feature, 6);
+      const candidates = await searchCandidates(db, "organizations", query);
+      const condition = await featureCondition(db, options?.feature, 7);
       const result = await db.query<OrganizationRow>(
         `select ${COLUMNS}
          from uniora.organizations o
          where ($1::text is null or o.name ilike $1 or o.slug ilike $1)
            and ($2::timestamptz is null or (o.created_at, o.id) > ($2, $3))
            and ($5::text[] is null or o.status = any($5))
+           and ($6::text[] is null or o.id = any($6))
            and ${condition.sql}
          order by o.created_at asc, o.id asc
          limit $4`,
-        [pattern, after?.createdAt ?? null, after?.id ?? null, options?.limit ?? null, statusFilter(options?.status), ...condition.params],
+        [pattern, after?.createdAt ?? null, after?.id ?? null, options?.limit ?? null, statusFilter(options?.status), candidates, ...condition.params],
       );
       return result.rows.map(toOrganization);
     },
 
-    async count(options?: Pick<SearchOrganizationsOptions, "query" | "status" | "feature">) {
+    async count(options?: Pick<SearchOrganizationsOptions, "query" | "status" | "feature"> & { limit?: number }) {
       const query = options?.query?.trim();
       const pattern = query ? toLikePattern(query) : null;
-      const condition = await featureCondition(db, options?.feature, 3);
+      const candidates = await searchCandidates(db, "organizations", query);
+      const condition = await featureCondition(db, options?.feature, 5);
       const result = await db.query<{ count: string }>(
         `select count(*)::text as count
-         from uniora.organizations o
-         where ($1::text is null or o.name ilike $1 or o.slug ilike $1)
-           and ($2::text[] is null or o.status = any($2))
-           and ${condition.sql}`,
-        [pattern, statusFilter(options?.status), ...condition.params],
+         from (
+           select 1
+           from uniora.organizations o
+           where ($1::text is null or o.name ilike $1 or o.slug ilike $1)
+             and ($2::text[] is null or o.status = any($2))
+             and ($4::text[] is null or o.id = any($4))
+             and ${condition.sql}
+           limit $3::integer
+         ) matching`,
+        [pattern, statusFilter(options?.status), options?.limit ?? null, candidates, ...condition.params],
       );
       return Number(result.rows[0]!.count);
     },

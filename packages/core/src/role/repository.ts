@@ -1,5 +1,6 @@
 import { UnioraError, inferErrorCode } from "../shared/errors.js";
 import type { RoleErrorCode } from "../shared/errors.js";
+import type { AccessAuthorization, AccessWriteOptions } from "../access/authorization.js";
 import type { Role } from "./types.js";
 
 export class RoleError extends UnioraError {
@@ -25,6 +26,8 @@ export interface CreateRoleInput {
   description?: string;
   /** Marks a role the host's code defines (see `Role.isSystem`). Normally set through `applyRoleTemplates`. */
   isSystem?: boolean;
+  /** Needed by a guarded storage (see `createGuardedStorage`); ignored otherwise. */
+  authorization?: AccessAuthorization;
 }
 
 export interface UpdateRoleInput {
@@ -32,6 +35,18 @@ export interface UpdateRoleInput {
   name?: string;
   /** New description, or `null` to clear it. */
   description?: string | null;
+  /**
+   * Apply the change only if the role is still at this `version` (see `Role.version`); otherwise it is refused with
+   * `role_version_conflict` and nothing changes. Omitted: last write wins, as before.
+   */
+  expectedVersion?: number;
+  /** Needed by a guarded storage (see `createGuardedStorage`); ignored otherwise. */
+  authorization?: AccessAuthorization;
+}
+
+export interface SetRolePermissionsOptions extends AccessWriteOptions {
+  /** Same as `UpdateRoleInput.expectedVersion`: refuse with `role_version_conflict` if the role changed since it was read. */
+  expectedVersion?: number;
 }
 
 export interface CloneRoleInput {
@@ -43,6 +58,8 @@ export interface CloneRoleInput {
   organizationId?: string;
   /** Defaults to the source's description. */
   description?: string;
+  /** Needed by a guarded storage (see `createGuardedStorage`); ignored otherwise. */
+  authorization?: AccessAuthorization;
 }
 
 export interface SetRolePermissionsResult {
@@ -55,7 +72,7 @@ export interface SetRolePermissionsResult {
 /** What `delete` does with the members that still hold the role. */
 export type DeleteRoleMembers = "detach" | "reject" | { reassignTo: string };
 
-export interface DeleteRoleOptions {
+export interface DeleteRoleOptions extends AccessWriteOptions {
   /**
    * `"detach"` (default, as before): the role is removed from its members, who keep their other roles.
    * `"reject"`: refuse (`role_in_use`) while any membership holds it.
@@ -146,9 +163,10 @@ export interface RoleRepository {
   grantedPermissionKeys(roleId: string, keys: string[]): Promise<string[]>;
   /**
    * Roles per organization for a batch of organization ids, in one call.
-   * Every requested id is present (`0` when it has none).
+   * Every requested id is present (`0` when it has none). With `limit`, each count stops there ("at least this
+   * many"), so an organization with millions of rows costs `limit` index entries.
    */
-  countByOrganization(organizationIds: string[]): Promise<Record<string, number>>;
+  countByOrganization(organizationIds: string[], options?: { limit?: number }): Promise<Record<string, number>>;
   /**
    * `permissionKey` must already be registered via `PermissionRepository.register`.
    * Rejects if the role is not found or is the protected Owner role.
@@ -159,7 +177,7 @@ export interface RoleRepository {
    * calling this primitive (uniora-security-engineering §71-72 "Unsafe
    * APIs"; docs/security-pentest-2026-09-24.md Hallazgo 3).
    */
-  grantPermission(roleId: string, permissionKey: string): Promise<void>;
+  grantPermission(roleId: string, permissionKey: string, options?: AccessWriteOptions): Promise<void>;
   /**
    * Idempotent (no-op if not granted). Rejects if the role is not found or
    * is the protected Owner role.
@@ -167,9 +185,9 @@ export interface RoleRepository {
    * **Performs no authorization of its own** — same trust boundary as
    * `grantPermission` above.
    */
-  revokePermission(roleId: string, permissionKey: string): Promise<void>;
+  revokePermission(roleId: string, permissionKey: string, options?: AccessWriteOptions): Promise<void>;
   /** Rejects if the role is not found, is the protected Owner role or a system role, or the name collides with another role in the same organization. */
-  rename(roleId: string, name: string): Promise<Role>;
+  rename(roleId: string, name: string, options?: AccessWriteOptions): Promise<Role>;
   /**
    * Changes the name and/or the description in one step (`role_update_empty` if neither is given). The Owner role
    * and system roles keep their name (`owner_role_protected`, `role_system_protected`); a system role's description
@@ -183,7 +201,7 @@ export interface RoleRepository {
    *
    * **Performs no authorization of its own** — same trust boundary as `grantPermission`.
    */
-  setPermissions(roleId: string, permissionKeys: string[]): Promise<SetRolePermissionsResult>;
+  setPermissions(roleId: string, permissionKeys: string[], options?: SetRolePermissionsOptions): Promise<SetRolePermissionsResult>;
   /**
    * A new custom role with the same permissions (and, unless overridden, description) as `roleId`, in the same
    * organization or in `organizationId`. The clone is never a system role. Rejects the Owner role

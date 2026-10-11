@@ -29,6 +29,22 @@ import { MIGRATION_0026_OUTBOX } from "./migrations/0026_outbox.js";
 import { MIGRATION_0027_ENTITLEMENTS } from "./migrations/0027_entitlements.js";
 import { MIGRATION_0028_SUPPORT_GRANTS } from "./migrations/0028_support_grants.js";
 import { MIGRATION_0029_MEMBERSHIP_SUSPENSION } from "./migrations/0029_membership_suspension.js";
+import { MIGRATION_0030_ROW_VERSIONS } from "./migrations/0030_row_versions.js";
+import { MIGRATION_0031_ROLE_NAME_NORMALIZED } from "./migrations/0031_role_name_normalized.js";
+import { MIGRATION_0032_INVITATION_IDEMPOTENCY } from "./migrations/0032_invitation_idempotency.js";
+import { MIGRATION_0033_MEMBERSHIP_FEATURE_VERSIONS } from "./migrations/0033_membership_feature_versions.js";
+import { MIGRATION_0034_TEAMS } from "./migrations/0034_teams.js";
+import { MIGRATION_0035_INVITATION_TEAMS } from "./migrations/0035_invitation_teams.js";
+import { MIGRATION_0036_TEAM_HIERARCHY } from "./migrations/0036_team_hierarchy.js";
+import { MIGRATION_0037_PLATFORM } from "./migrations/0037_platform.js";
+import { MIGRATION_0038_PLATFORM_HARDENING } from "./migrations/0038_platform_hardening.js";
+import { MIGRATION_0039_SEARCH_INDEXES } from "./migrations/0039_search_indexes.js";
+import { MIGRATION_0040_POLICIES } from "./migrations/0040_policies.js";
+import { MIGRATION_0041_POLICY_REVISION_SEQUENCE } from "./migrations/0041_policy_revision_sequence.js";
+import { MIGRATION_0042_POLICY_KINDS } from "./migrations/0042_policy_kinds.js";
+import { MIGRATION_0043_API_CREDENTIALS } from "./migrations/0043_api_credentials.js";
+import { MIGRATION_0044_RATE_LIMITS } from "./migrations/0044_rate_limits.js";
+import { MIGRATION_0045_WEBHOOKS } from "./migrations/0045_webhooks.js";
 
 interface Migration {
   readonly id: string;
@@ -66,6 +82,22 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0027_entitlements", sql: MIGRATION_0027_ENTITLEMENTS },
   { id: "0028_support_grants", sql: MIGRATION_0028_SUPPORT_GRANTS },
   { id: "0029_membership_suspension", sql: MIGRATION_0029_MEMBERSHIP_SUSPENSION },
+  { id: "0030_row_versions", sql: MIGRATION_0030_ROW_VERSIONS },
+  { id: "0031_role_name_normalized", sql: MIGRATION_0031_ROLE_NAME_NORMALIZED },
+  { id: "0032_invitation_idempotency", sql: MIGRATION_0032_INVITATION_IDEMPOTENCY },
+  { id: "0033_membership_feature_versions", sql: MIGRATION_0033_MEMBERSHIP_FEATURE_VERSIONS },
+  { id: "0034_teams", sql: MIGRATION_0034_TEAMS },
+  { id: "0035_invitation_teams", sql: MIGRATION_0035_INVITATION_TEAMS },
+  { id: "0036_team_hierarchy", sql: MIGRATION_0036_TEAM_HIERARCHY },
+  { id: "0037_platform", sql: MIGRATION_0037_PLATFORM },
+  { id: "0038_platform_hardening", sql: MIGRATION_0038_PLATFORM_HARDENING },
+  { id: "0039_search_indexes", sql: MIGRATION_0039_SEARCH_INDEXES },
+  { id: "0040_policies", sql: MIGRATION_0040_POLICIES },
+  { id: "0041_policy_revision_sequence", sql: MIGRATION_0041_POLICY_REVISION_SEQUENCE },
+  { id: "0042_policy_kinds", sql: MIGRATION_0042_POLICY_KINDS },
+  { id: "0043_api_credentials", sql: MIGRATION_0043_API_CREDENTIALS },
+  { id: "0044_rate_limits", sql: MIGRATION_0044_RATE_LIMITS },
+  { id: "0045_webhooks", sql: MIGRATION_0045_WEBHOOKS },
 ];
 
 /**

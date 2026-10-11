@@ -1,5 +1,6 @@
 "use client";
 
+import { capParams } from "@/lib/limits";
 import { IconArrowRight, IconToggleRight } from "@tabler/icons-react";
 import Link from "next/link";
 import { useOptimistic } from "react";
@@ -90,7 +91,7 @@ export function OrgFeaturesList({ organizationId, orgPath, features, total, quer
           >
             {t("features.filterEnabled")}
           </Link>
-          <span className="text-muted-foreground">{t("feats.resultsCount", { count: total })}</span>
+          <span className="text-muted-foreground">{t("feats.resultsCount", capParams(total))}</span>
         </div>
       </div>
 

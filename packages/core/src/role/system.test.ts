@@ -66,4 +66,60 @@ describe("system roles, setPermissions, clone and delete policy (memory)", () =>
     await storage.roles.create({ id: "mine", organizationId: "org-2", name: "Mine", key: "desk" });
     expect((await applyRoleTemplates(storage.roles, "org-2", [template])).skipped).toEqual(["desk"]);
   });
+
+  it("applyRoleTemplates: a name taken by a tenant's role is a conflict and the next templates are still created", async () => {
+    const storage = await seed();
+    await storage.roles.create({ id: "mine", organizationId: "org-1", name: "Front desk", key: "mine" });
+    const result = await applyRoleTemplates(storage.roles, "org-1", [
+      { key: "desk", name: "Front desk", permissionKeys: ["a.read"] },
+      { key: "ops", name: "Operations", permissionKeys: ["a.write"] },
+    ]);
+    expect(result.conflicts).toEqual([{ key: "desk", reason: "name_taken" }]);
+    expect(result.created.map((role) => role.key)).toEqual(["ops"]);
+    expect((await storage.roles.listByOrganization("org-1")).map((role) => role.key).sort()).toEqual(["mine", "ops"]);
+  });
+
+  it("applyRoleTemplates: create-missing never changes an existing role, even one the Owner edited", async () => {
+    const storage = await seed();
+    const desk = { key: "desk", name: "Front desk", description: "Door", permissionKeys: ["a.read", "a.write"] };
+    await applyRoleTemplates(storage.roles, "org-1", [desk]);
+    const role = (await storage.roles.listByOrganization("org-1"))[0]!;
+    await storage.roles.setPermissions(role.id, ["b.read"]);
+    await storage.roles.update(role.id, { description: "Edited by the Owner" });
+
+    const result = await applyRoleTemplates(
+      storage.roles,
+      "org-1",
+      [desk, { key: "ops", name: "Operations", permissionKeys: ["a.read"] }],
+      { mode: "create-missing" },
+    );
+    expect(result.unchanged).toEqual(["desk"]);
+    expect(result.synced).toEqual([]);
+    expect(result.created.map((created) => created.key)).toEqual(["ops"]);
+    expect((await storage.roles.findByIds([role.id]))[0]).toMatchObject({ permissionKeys: ["b.read"], description: "Edited by the Owner" });
+    // The default mode still syncs, as before.
+    expect((await applyRoleTemplates(storage.roles, "org-1", [desk])).synced).toHaveLength(1);
+  });
+
+  it("applyRoleTemplates: continueOnError records a failing template and applies the rest; without it the error is thrown", async () => {
+    const storage = await seed();
+    // The SQL backends reject an unregistered permission key; stand in for that here.
+    const roles = {
+      ...storage.roles,
+      create: async (input: Parameters<typeof storage.roles.create>[0]) => {
+        if (input.key === "bad") throw new Error("permission not registered");
+        return storage.roles.create(input);
+      },
+    };
+    const templates = [
+      { key: "bad", name: "Bad", permissionKeys: ["ghost.key"] },
+      { key: "ops", name: "Operations", permissionKeys: ["a.read"] },
+    ];
+    await expect(applyRoleTemplates(roles, "org-1", templates)).rejects.toThrow("permission not registered");
+    expect(await storage.roles.listByOrganization("org-1")).toEqual([]);
+
+    const result = await applyRoleTemplates(roles, "org-2", templates, { continueOnError: true });
+    expect(result.failed.map((failure) => failure.key)).toEqual(["bad"]);
+    expect(result.created.map((created) => created.key)).toEqual(["ops"]);
+  });
 });

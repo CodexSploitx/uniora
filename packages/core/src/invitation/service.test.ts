@@ -227,6 +227,25 @@ describe("delivery engine", () => {
     expect(result.delivery.error).not.toContain("\n");
     expect(sanitizeDeliveryError(new Error("x".repeat(900)), [])).toHaveLength(500);
   });
+
+  it("scrubs the token however the sender echoes it: encoded, or only a piece of it", () => {
+    const token = "uinv_Zk3Qp9xLm2Rv8TnWb5Yd7HcJa4Se6UgF1oIi0KtNqXA";
+    const link = `https://app.test/invite/${token}`;
+    const echoes = [
+      Buffer.from(link).toString("base64"),
+      Buffer.from(link).toString("base64url"),
+      Buffer.from(token).toString("hex"),
+      encodeURIComponent(link),
+      `fragment ${token.slice(10, 34)} only`,
+      `tail ${token.slice(-14)}`,
+    ];
+    for (const echo of echoes) {
+      const text = sanitizeDeliveryError(new Error(`bounce: ${echo}`), [token, link]);
+      expect(text, echo).toContain("[redacted]");
+      expect(text, echo).not.toContain(token.slice(-14));
+      expect(text, echo).not.toContain(Buffer.from(link).toString("base64"));
+    }
+  });
 });
 
 describe("resend and revoke", () => {
@@ -400,4 +419,44 @@ describe("audit trail (audit F-10)", () => {
     expect(JSON.stringify(created.metadata)).not.toContain("ana@example.com");
     expect(created.metadata?.emailFingerprint).toMatch(/^[0-9a-f]{32}$/);
   });
+
+describe("invite({ idempotencyKey })", () => {
+  const request = { organizationId: "org-1", email: "ana@example.com", roleIds: ["role-editor"], invitedBy: owner };
+
+  it("a retry with the same key and request creates and sends nothing and returns the same invitation", async () => {
+    const { service, sent, storage } = await setup();
+    const first = await service.invite({ ...request, idempotencyKey: "req-1" });
+    expect(first.replayed).toBeFalsy();
+    const again = await service.invite({ ...request, email: " Ana@Example.com ", idempotencyKey: "req-1" });
+    expect(again).toMatchObject({ replayed: true, acceptUrl: null, invitation: { id: first.invitation.id } });
+    expect(again.delivery.status).toBe("sent");
+    expect(sent).toHaveLength(1);
+    expect(await storage.invitations.count("org-1")).toBe(1);
+  });
+
+  it("the same key with a different request is a conflict, and a key is scoped to the organization", async () => {
+    const { service, storage } = await setup();
+    await service.invite({ ...request, idempotencyKey: "req-1" });
+    await expect(service.invite({ ...request, roleIds: ["role-viewer"], idempotencyKey: "req-1" })).rejects.toMatchObject({
+      reason: "idempotency_conflict",
+    });
+    await expect(service.invite({ ...request, email: "otra@example.com", idempotencyKey: "req-1" })).rejects.toMatchObject({
+      reason: "idempotency_conflict",
+    });
+    await storage.organizations.create({ id: "org-2", name: "Otra" });
+    await storage.roles.create({ id: "role-x", organizationId: "org-2", name: "X" });
+    await expect(
+      service.invite({ organizationId: "org-2", email: "ana@example.com", roleIds: ["role-x"], invitedBy: owner, idempotencyKey: "req-1" }),
+    ).resolves.toMatchObject({ invitation: { organizationId: "org-2" } });
+  });
+
+  it("without a key a retry still fails with duplicate_pending, and a malformed key is rejected", async () => {
+    const { service } = await setup();
+    await service.invite(request);
+    await expect(service.invite(request)).rejects.toMatchObject({ reason: "duplicate_pending" });
+    for (const key of ["", "has space", "x".repeat(129)]) {
+      await expect(service.invite({ ...request, idempotencyKey: key })).rejects.toMatchObject({ reason: "bad_request" });
+    }
+  });
+});
 });

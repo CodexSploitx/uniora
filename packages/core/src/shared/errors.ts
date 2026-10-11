@@ -25,7 +25,8 @@ export type MembershipErrorCode =
   | "identity_aliased"
   | "identity_link_busy"
   | "membership_invalid"
-  | "membership_block_until_invalid";
+  | "membership_block_until_invalid"
+  | "membership_version_conflict";
 
 export type RoleErrorCode =
   | "role_not_found"
@@ -42,6 +43,7 @@ export type RoleErrorCode =
   | "role_reassign_invalid"
   | "role_description_invalid"
   | "role_update_empty"
+  | "role_version_conflict"
   | "role_invalid";
 
 export type PermissionErrorCode =
@@ -61,6 +63,7 @@ export type FeatureErrorCode =
   | "feature_name_invalid"
   | "feature_key_invalid"
   | "feature_parent_invalid"
+  | "feature_version_conflict"
   | "feature_invalid";
 
 export type OrganizationErrorCode =
@@ -71,6 +74,7 @@ export type OrganizationErrorCode =
   | "organization_slug_invalid"
   | "organization_status_invalid"
   | "organization_update_empty"
+  | "organization_version_conflict"
   | "organization_invalid";
 
 export type IdentityLinkErrorCode =

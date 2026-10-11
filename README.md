@@ -174,6 +174,8 @@ Full documentation lives in [`guides/`](guides/README.md):
 | [`@uniora/react`](packages/react) | Headless React helpers (`<Can>`, `<Feature>`, `useCan`, `useFeature`) over a server-computed `AuthorizationSnapshot`. |
 | [`@uniora/next`](packages/next) | Next.js glue: request-scoped memoization (`react.cache()`) plus `assertCan`/`assertAccess`/`authorizeRoute` guards for Server Actions and Route Handlers and the invitation route helpers. |
 | [`@uniora/express`](packages/express) | Express middleware (`requirePermission`, `requireFeature`, `authorize`): deny-by-default route guards that answer 401/403 and fail closed on any error, plus the invitation preview/accept routes. |
+| [`@uniora/server`](packages/server) | UNIORA as its own self-hosted HTTP API: API keys with scopes and organization lists, decisions, delegated changes on behalf of an end user, sign-up, invitations; documented endpoint by endpoint ([guide](guides/server.md)). |
+| [`@uniora/client`](packages/client) | The typed client of that API for your backend, with retries and a remote `AuthorizationEngine` for the Express and Next guards. |
 | [`@uniora/cli`](packages/cli) | `npx uniora init / check / migrate / doctor / studio` — with a migration ledger, `--json` output and CI-friendly exit codes. |
 | [`@uniora/studio`](apps/studio) | UNIORA Studio: a local-first admin UI (Next.js + shadcn/ui + ReUI) to browse and manage organizations, members, roles, permissions, features and the audit log. Launched with `npx uniora studio`. |
 

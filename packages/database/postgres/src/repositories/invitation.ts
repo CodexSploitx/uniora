@@ -10,6 +10,7 @@ import type {
 import { InvitationError } from "@uniora/core";
 import type { Queryable } from "../queryable.js";
 import { toLikePattern } from "../pg-like.js";
+import { searchCandidates } from "../pg-search.js";
 import { isForeignKeyViolation, violatedConstraint } from "../pg-errors.js";
 
 function likeOrNull(query: string | undefined): string | null {
@@ -37,6 +38,7 @@ interface InvitationRow {
   delivery_sent_at: Date | null;
   delivery_last_error: string | null;
   role_ids: string[];
+  team_ids: string[];
 }
 
 const SELECT_COLUMNS = `
@@ -44,7 +46,8 @@ const SELECT_COLUMNS = `
   i.created_at, i.expires_at, i.accepted_at, i.accepted_by_provider, i.accepted_by_subject, i.revoked_at,
   i.delivery_status, i.delivery_attempts, i.delivery_sends, i.delivery_last_attempt_at,
   i.delivery_sent_at, i.delivery_last_error,
-  coalesce((select array_agg(role_id order by role_id) from uniora.invitation_roles where invitation_id = i.id), '{}') as role_ids`;
+  coalesce((select array_agg(role_id order by role_id) from uniora.invitation_roles where invitation_id = i.id), '{}') as role_ids,
+  coalesce((select array_agg(team_id order by team_id) from uniora.invitation_teams where invitation_id = i.id), '{}') as team_ids`;
 
 function toInvitation(row: InvitationRow): Invitation {
   const acceptedBy: Identity | undefined =
@@ -56,6 +59,7 @@ function toInvitation(row: InvitationRow): Invitation {
     organizationId: row.organization_id,
     email: row.email,
     roleIds: row.role_ids,
+    teamIds: row.team_ids,
     invitedBy: { provider: row.invited_by_provider, subject: row.invited_by_subject },
     status: row.status,
     createdAt: row.created_at,
@@ -89,12 +93,17 @@ export function createInvitationRepository(db: Queryable): InvitationRepository 
         await db.query(
           `with inserted as (
              insert into uniora.invitations
-               (id, organization_id, email, token_hash, invited_by_provider, invited_by_subject, created_at, expires_at)
-             values ($1, $2, $3, $4, $5, $6, $7, $8)
+               (id, organization_id, email, token_hash, invited_by_provider, invited_by_subject, created_at, expires_at,
+                idempotency_key, idempotency_hash)
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $10, $11)
              returning id
            )
-           insert into uniora.invitation_roles (invitation_id, role_id)
-           select inserted.id, role_id from inserted, unnest($9::text[]) as role_id`,
+           , roles as (
+             insert into uniora.invitation_roles (invitation_id, role_id)
+             select inserted.id, role_id from inserted, unnest($9::text[]) as role_id
+           )
+           insert into uniora.invitation_teams (invitation_id, organization_id, team_id)
+           select inserted.id, $2, team_id from inserted, unnest($12::text[]) as team_id`,
           [
             input.id,
             input.organizationId,
@@ -105,14 +114,20 @@ export function createInvitationRepository(db: Queryable): InvitationRepository 
             input.createdAt,
             input.expiresAt,
             [...new Set(input.roleIds)],
+            input.idempotency?.key ?? null,
+            input.idempotency?.hash ?? null,
+            [...new Set(input.teamIds ?? [])],
           ],
         );
       } catch (error) {
         if (violatedConstraint(error) === "invitations_one_pending_per_email") {
           throw new InvitationError("This e-mail already has a pending invitation to this organization.", "duplicate_pending");
         }
+        if (violatedConstraint(error) === "invitations_idempotency_key_key") {
+          throw new InvitationError("This idempotency key was already used.", "idempotency_conflict");
+        }
         if (isForeignKeyViolation(error)) {
-          throw new InvitationError("The organization or a chosen role does not exist.", "bad_request");
+          throw new InvitationError("The organization, a chosen role or a chosen team does not exist.", "bad_request");
         }
         throw error;
       }
@@ -122,6 +137,16 @@ export function createInvitationRepository(db: Queryable): InvitationRepository 
     },
 
     findById: byId,
+
+    async findByIdempotencyKey(organizationId: string, key: string) {
+      const result = await db.query<InvitationRow & { idempotency_hash: string }>(
+        `select ${SELECT_COLUMNS}, i.idempotency_hash
+         from uniora.invitations i where i.organization_id = $1 and i.idempotency_key = $2`,
+        [organizationId, key],
+      );
+      const row = result.rows[0];
+      return row ? { invitation: toInvitation(row), hash: row.idempotency_hash } : null;
+    },
 
     async findByTokenHash(tokenHash: string) {
       const result = await db.query<InvitationRow>(
@@ -133,6 +158,7 @@ export function createInvitationRepository(db: Queryable): InvitationRepository 
     },
 
     async search(organizationId: string, options?: SearchInvitationsOptions) {
+      const candidates = await searchCandidates(db, "invitations", options?.query, organizationId);
       const result = await db.query<InvitationRow>(
         `select ${SELECT_COLUMNS}
          from uniora.invitations i
@@ -140,21 +166,28 @@ export function createInvitationRepository(db: Queryable): InvitationRepository 
            and ($2::text is null or i.status = $2)
            and ($3::text is null or (i.created_at, i.id) < (select created_at, id from uniora.invitations where id = $3))
            and ($5::text is null or i.email ilike $5)
+           and ($6::text[] is null or i.id = any($6))
          order by i.created_at desc, i.id desc
          limit $4`,
-        [organizationId, options?.status ?? null, options?.after ?? null, options?.limit ?? null, likeOrNull(options?.query)],
+        [organizationId, options?.status ?? null, options?.after ?? null, options?.limit ?? null, likeOrNull(options?.query), candidates],
       );
       return result.rows.map(toInvitation);
     },
 
-    async count(organizationId: string, options?: Pick<SearchInvitationsOptions, "status" | "query">) {
+    async count(organizationId: string, options?: Pick<SearchInvitationsOptions, "status" | "query"> & { limit?: number }) {
+      const candidates = await searchCandidates(db, "invitations", options?.query, organizationId);
       const result = await db.query<{ count: string }>(
         `select count(*)::text as count
-         from uniora.invitations i
-         where i.organization_id = $1
-           and ($2::text is null or i.status = $2)
-           and ($3::text is null or i.email ilike $3)`,
-        [organizationId, options?.status ?? null, likeOrNull(options?.query)],
+         from (
+           select 1
+           from uniora.invitations i
+           where i.organization_id = $1
+             and ($2::text is null or i.status = $2)
+             and ($3::text is null or i.email ilike $3)
+             and ($5::text[] is null or i.id = any($5))
+           limit $4::integer
+         ) matching`,
+        [organizationId, options?.status ?? null, likeOrNull(options?.query), options?.limit ?? null, candidates],
       );
       return Number(result.rows[0]!.count);
     },

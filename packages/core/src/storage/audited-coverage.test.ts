@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { AUDIT_ACTIONS, createAuditedStorage, isStandardAuditAction } from "../index.js";
 import { createMemoryStorage } from "./memory.js";
+import { createTrustedTeamStorage } from "../team/trusted.js";
+import { createTrustedPolicyStorage } from "../policy/trusted.js";
 
 const actor = { provider: "p", subject: "operator" };
 
 /** Methods that only read (or are deliberately not audited). Anything else a repository exposes must be audited. */
-const READ_ONLY = /^(find|list|search|count|is[A-Z]|enabledKeys$|summarizeUsage$|granting|granted|get|resolve|verify|impliedBy$|expand$|activePermissions$)/;
+const READ_ONLY = /^(find|list|search|count|is[A-Z]|enabledKeys$|summarizeUsage$|granting|granted|get|resolve|verify|impliedBy$|expand$|activePermissions$|ancestors$|descendants$|revisions$|activeSet$|setRevision$|activeTeamIds$|pathIds$)/;
 /** Deliberately not audited: a heartbeat, not a change. */
 const NOT_AUDITED = new Set(["memberships.recordActivity", "entitlements.consume", "entitlements.release"]);
 /** Audited by their own service/repository rather than by the wrapper (they already record themselves). */
@@ -16,7 +18,7 @@ describe("createAuditedStorage: every mutation is audited, with standard names",
     const raw = createMemoryStorage();
     const audited = createAuditedStorage(raw, { actor });
     const unwrapped: string[] = [];
-    for (const repository of ["organizations", "memberships", "roles", "permissions", "features", "entitlements", "supportGrants"] as const) {
+    for (const repository of ["organizations", "memberships", "roles", "permissions", "features", "entitlements", "supportGrants", "teams", "teamMemberships", "policies"] as const) {
       for (const method of Object.keys(raw[repository])) {
         const name = `${repository}.${method}`;
         if (READ_ONLY.test(method) || NOT_AUDITED.has(name)) continue;
@@ -29,7 +31,7 @@ describe("createAuditedStorage: every mutation is audited, with standard names",
 
   it("only records action names from the standard catalog, each with the actor", async () => {
     const raw = createMemoryStorage();
-    const audited = createAuditedStorage(raw, { actor });
+    const audited = createTrustedPolicyStorage(createTrustedTeamStorage(createAuditedStorage(raw, { actor }), { actor, reason: "audit coverage test" }), { actor, reason: "audit coverage test" });
     await audited.organizations.create({ id: "org", name: "Acme" });
     await audited.organizations.rename("org", "Acme 2");
     await audited.organizations.update("org", { name: "Acme 3", slug: "acme-3" });
@@ -40,6 +42,12 @@ describe("createAuditedStorage: every mutation is audited, with standard names",
     await audited.supportGrants.create({ id: "g1", organizationId: "org", operator: { provider: "p", subject: "ops" }, grantedBy: actor, reason: "ticket 1", permissions: ["reports.read"], expiresAt: soon });
     await audited.supportGrants.revoke("g1", { by: actor });
     await audited.supportGrants.revoke("g1", { by: actor });
+    const barcelona = await audited.teams.create({ id: "t1", organizationId: "org", name: "Barcelona", externalId: "branch_348" });
+    await audited.teams.update("org", barcelona.id, { name: "Barcelona 2", metadata: { type: "branch" } });
+    await audited.teams.archive("org", barcelona.id, { actor, reason: "closed" });
+    await audited.teams.restore("org", barcelona.id, { actor });
+    await audited.teams.archive("org", barcelona.id, { actor });
+    await audited.teams.delete("org", barcelona.id);
     await audited.entitlements.define({ key: "seats", period: "lifetime", defaultLimit: 3 });
     await audited.entitlements.setLimit("org", "seats", 10);
     await audited.entitlements.clearLimit("org", "seats");
@@ -62,6 +70,18 @@ describe("createAuditedStorage: every mutation is audited, with standard names",
     await audited.roles.delete(copy.id, { members: "reject" });
     const a = await audited.memberships.create({ id: "m-a", organizationId: "org", identity: { provider: "p", subject: "a" } });
     const b = await audited.memberships.create({ id: "m-b", organizationId: "org", identity: { provider: "p", subject: "b" } });
+    const madrid = await audited.teams.create({ id: "t2", organizationId: "org", name: "Madrid" });
+    const invited = await audited.teamMemberships.add({ id: "tm-a", organizationId: "org", teamId: madrid.id, membershipId: a.id, status: "pending" });
+    await audited.teamMemberships.accept("org", invited.id, { actor: { provider: "p", subject: "a" } });
+    await audited.teamMemberships.setStatus("org", invited.id, "suspended", { actor });
+    await audited.teamMemberships.setStatus("org", invited.id, "active", { actor });
+    await audited.teamMemberships.setResponsibility("org", invited.id, "manager");
+    await audited.teamMemberships.setResponsibility("org", invited.id, "owner");
+    await audited.teamMemberships.assignRole("org", invited.id, staff.id);
+    await audited.teamMemberships.unassignRole("org", invited.id, staff.id);
+    await audited.teamMemberships.setStatus("org", invited.id, "removed", { actor });
+    await audited.teamMemberships.add({ id: "tm-a2", organizationId: "org", teamId: madrid.id, membershipId: a.id });
+    await audited.teamMemberships.add({ id: "tm-b", organizationId: "org", teamId: madrid.id, membershipId: b.id });
     await audited.memberships.assignOwnerRole(a.id, owner.id);
     await audited.memberships.assignOwnerRole(b.id, owner.id);
     await audited.memberships.assignRole(a.id, staff.id);
@@ -76,6 +96,16 @@ describe("createAuditedStorage: every mutation is audited, with standard names",
     await audited.features.unregister("agenda_chat");
     await audited.features.unregister("agenda");
     await audited.permissions.unregister("reports.read");
+    const rule = { kind: "access", effect: "deny", actions: ["reports.read"], condition: { not: { exists: "subject.teamIds" } } };
+    await audited.policies.create({ id: "p1", organizationId: "org", key: "needs-team", name: "Needs a team", definition: rule, createdBy: actor });
+    await audited.policies.update("org", "p1", { actor, name: "Needs a team (renamed)" });
+    await audited.policies.update("org", "p1", { actor, definition: { ...rule, denyReason: "no_team" }, note: "explain it" });
+    await audited.policies.activate("org", "p1", { actor });
+    await audited.policies.disable("org", "p1", { actor, reason: "testing" });
+    await audited.policies.activate("org", "p1", { actor });
+    await audited.policies.retire("org", "p1", { actor, reason: "obsolete" });
+    await audited.policies.create({ id: "p2", organizationId: "org", key: "scratch", name: "Scratch", definition: rule, createdBy: actor });
+    await audited.policies.delete("org", "p2");
 
     const entries = await raw.auditLogs.search();
     expect(entries.length).toBeGreaterThanOrEqual(20);
@@ -86,7 +116,7 @@ describe("createAuditedStorage: every mutation is audited, with standard names",
     // Every standard action the wrapper can emit was exercised at least once, none is orphaned from the catalog.
     const emitted = new Set(entries.map((entry) => entry.action));
     for (const action of AUDIT_ACTIONS) {
-      if (action.startsWith("invitation.") || action.startsWith("identity_link.") || action === "membership.left" || action === "audit_log.pruned" || action === "organization.ownership_transferred") continue;
+      if (action.startsWith("platform.") || action.startsWith("api_") || action.startsWith("access.") || action.startsWith("invitation.") || action.startsWith("identity_link.") || action === "membership.left" || action.startsWith("policy.decision_") || action === "audit_log.pruned" || action === "organization.ownership_transferred") continue;
       expect(emitted.has(action), `${action} is in the catalog but never emitted`).toBe(true);
     }
   });

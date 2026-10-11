@@ -46,3 +46,93 @@ grant select on uniora.schema_migrations to uniora_app;
 
 -- Sequences used by inserts (e.g. the audit chain position).
 grant usage, select on all sequences in schema uniora to uniora_app;
+
+-- ---------------------------------------------------------------------------------------------------------------------
+-- Platform scope (optional; only if you use the platform administrators, see guides/platform.md)
+--
+-- The platform tables live in their OWN schema, `uniora_platform`. uniora_app is deliberately given NO access to it: the code
+-- that serves organizations cannot read or change who administers the platform, even if it is compromised. Give the platform
+-- schema to a separate role that only your platform admin service connects as (and build `createPostgresPlatformStorage` over
+-- its own pool). Run this after `uniora migrate` (migration 0037), as uniora_migrator or a superuser.
+--
+--   create role uniora_platform_app login password '...' nosuperuser nocreaterole nocreatedb;
+-- ---------------------------------------------------------------------------------------------------------------------
+--
+-- grant usage on schema uniora_platform to uniora_platform_app;
+-- grant select, insert, update, delete on all tables in schema uniora_platform to uniora_platform_app;
+--
+-- -- Platform changes are audited in the main audit log (global entries), in the same transaction:
+-- grant usage on schema uniora to uniora_platform_app;
+-- grant select, insert on uniora.audit_logs to uniora_platform_app;
+-- grant usage, select on all sequences in schema uniora to uniora_platform_app;
+--
+-- -- And make sure the organization role can NOT reach it:
+-- revoke all on schema uniora_platform from uniora_app;
+
+-- ---------------------------------------------------------------------------------------------------------------------
+-- API credentials (optional; only if you run the UNIORA API server, see design/0001-uniora-server.md)
+--
+-- API clients and their keys live in their OWN schema, `uniora_api` (migration 0043). Two different roles need two different
+-- powers, and uniora_app (the code that serves organizations) needs NONE:
+--   uniora_api_server   what the API server connects as to AUTHENTICATE requests. It can READ clients and keys and refresh a
+--                       key's `last_used_at`, and nothing else: a compromised server cannot mint, widen or un-revoke a key.
+--   uniora_api_admin    what Studio and the CLI connect as to manage clients and keys. Full DML on the schema, plus append to
+--                       the audit log (every change is audited in the same transaction).
+-- Run after `uniora migrate`, as uniora_migrator or a superuser.
+--
+--   create role uniora_api_server login password '...' nosuperuser nocreaterole nocreatedb;
+--   create role uniora_api_admin  login password '...' nosuperuser nocreaterole nocreatedb;
+-- ---------------------------------------------------------------------------------------------------------------------
+
+-- grant usage on schema uniora_api to uniora_api_server, uniora_api_admin;
+--
+-- -- The server: read-only, plus the one column it keeps current.
+-- grant select on uniora_api.clients, uniora_api.keys to uniora_api_server;
+-- grant update (last_used_at) on uniora_api.keys to uniora_api_server;
+-- With `sharedRateLimit` (migration 0044) the server also keeps one token bucket per API key, and only that:
+-- grant select, insert, update on uniora_api.rate_limits to uniora_api_server;
+--
+-- -- Studio / CLI: manage credentials, and write the audit entries that go with each change.
+-- grant select, insert, update on uniora_api.clients, uniora_api.keys to uniora_api_admin;
+-- grant usage on schema uniora to uniora_api_admin;
+-- grant select, insert on uniora.audit_logs to uniora_api_admin;
+-- grant select on uniora.audit_log_checkpoints to uniora_api_admin;
+-- grant usage, select on all sequences in schema uniora to uniora_api_admin;
+--
+-- -- And make sure the organization role can NOT reach credentials:
+-- revoke all on schema uniora_api from uniora_app;
+
+-- ---------------------------------------------------------------------------------------------------------------------
+-- Webhooks (optional; only if you send webhooks, see guides/server.md#webhooks)
+--
+-- Webhook endpoints and their deliveries live in their OWN schema, `uniora_webhooks` (migration 0045), because an endpoint row holds
+-- the SIGNING SECRET: the worker must read it to sign. uniora_app (the code that serves organizations) needs NO access to it.
+--   uniora_webhook_worker  what the dispatcher connects as (inside `uniora server start`, or `uniora webhooks run`). It reads the
+--                          endpoints and their secrets, writes deliveries and records what each attempt did; it reads and completes
+--                          the outbox events it turns into deliveries.
+--   uniora_webhook_admin   what Studio and the CLI connect as to manage endpoints (full DML), plus append to the audit log.
+-- Run after `uniora migrate`, as uniora_migrator or a superuser.
+--
+--   create role uniora_webhook_worker login password '...' nosuperuser nocreaterole nocreatedb;
+--   create role uniora_webhook_admin  login password '...' nosuperuser nocreaterole nocreatedb;
+-- ---------------------------------------------------------------------------------------------------------------------
+
+-- grant usage on schema uniora_webhooks to uniora_webhook_worker, uniora_webhook_admin;
+--
+-- -- The worker: it never creates or deletes an endpoint, it only keeps them current.
+-- grant select on uniora_webhooks.endpoints to uniora_webhook_worker;
+-- grant update (consecutive_failures, last_success_at, last_failure_at, status, disabled_reason, disabled_at, version, updated_at) on uniora_webhooks.endpoints to uniora_webhook_worker;
+-- grant select, insert, update, delete on uniora_webhooks.deliveries to uniora_webhook_worker;
+-- grant usage on schema uniora to uniora_webhook_worker;
+-- grant select, update, delete on uniora.outbox to uniora_webhook_worker;
+--
+-- -- Studio / CLI: manage endpoints, requeue deliveries, and write the audit entries that go with each change.
+-- grant select, insert, update, delete on uniora_webhooks.endpoints to uniora_webhook_admin;
+-- grant select, update on uniora_webhooks.deliveries to uniora_webhook_admin;
+-- grant usage on schema uniora to uniora_webhook_admin;
+-- grant select, insert on uniora.audit_logs to uniora_webhook_admin;
+-- grant select on uniora.audit_log_checkpoints to uniora_webhook_admin;
+-- grant usage, select on all sequences in schema uniora to uniora_webhook_admin;
+--
+-- -- And make sure the organization role can NOT reach the secrets:
+-- revoke all on schema uniora_webhooks from uniora_app;

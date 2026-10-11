@@ -2,6 +2,19 @@ import type { Identity } from "../identity/types.js";
 import type { Membership } from "../membership/types.js";
 import type { UnioraStorage } from "../storage/types.js";
 import { MembershipError } from "../membership/repository.js";
+import { createAuthorizationEngine } from "../authorization/engine.js";
+import type { AuthorizationEngine, AuthorizationEngineOptions } from "../authorization/engine.js";
+import { issueTeamAuthorization } from "../team/authorization.js";
+import type { TeamMembership } from "../team/types.js";
+import { TEAM_PERMISSIONS } from "../team/service.js";
+import { AccessError } from "../access/errors.js";
+import { accessSet, issueAccessAuthorization } from "../access/authorization.js";
+import type { AccessAuthorization } from "../access/authorization.js";
+import { isGuardedStorage } from "../access/guard.js";
+import { ACCESS_PERMISSIONS, accessLockKey } from "../access/permissions.js";
+import type { AccessPermissionKeys } from "../access/permissions.js";
+import { NO_HOLDINGS, covers, holdingsOf, isSameMember, needsOfMembership, needsOfRole } from "../access/power.js";
+import { recordAccessRefusal } from "../access/refusal.js";
 import { InvitationError } from "./repository.js";
 import { generateInvitationToken, hashInvitationToken, randomId } from "./token.js";
 import { isInvitationUsable, type Invitation } from "./types.js";
@@ -10,6 +23,7 @@ import { sendWithRetry, type DeliveryRetryOptions, type InvitationSender } from 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 const MAX_ROLES_PER_INVITATION = 25;
+const MAX_TEAMS_PER_INVITATION = 10;
 const GENERIC_ACCEPT_MESSAGE = "This invitation is invalid or has expired.";
 
 /** Pragmatic address check: one `@`, a dotted domain, no whitespace, RFC 5321 length limits. */
@@ -40,8 +54,21 @@ export interface InvitationRateLimits {
   resendCooldownMs?: number;
 }
 
+/** Settings for the access rules of the invitation service (see `InvitationServiceOptions.access`). */
+export interface InvitationAccessOptions {
+  /** Replace any of the default permission keys (`members.invite` is the one this service asks about). */
+  permissions?: Partial<AccessPermissionKeys>;
+  /**
+   * Enforce the rules on a storage that is not wrapped by `createGuardedStorage`. The service then follows them, but other code
+   * that holds the storage can still write roles and invitations directly. Off by default (`access_storage_not_guarded`).
+   */
+  allowUnguardedStorage?: boolean;
+}
+
 export interface InvitationServiceOptions {
   storage: UnioraStorage;
+  /** Also enqueue an outbox event for each invitation change (created, resent, revoked, accepted...), in the same transaction, e.g. for webhooks. The payload names the invitation and a fingerprint of the address, never the address, the token or the link. Off by default. */
+  outbox?: boolean;
   /**
    * Builds the link the invitee opens, from the raw token — typically
    * `` (token) => `https://app.example.com/invite/${token}` ``. The token is
@@ -55,6 +82,23 @@ export interface InvitationServiceOptions {
    * only shows on accept (`alreadyMember`).
    */
   findIdentitiesByEmail?: (email: string) => Promise<readonly Identity[]>;
+  /** Passed to the engine that checks, for an invitation offering teams, that the inviter may add people to them. */
+  engine?: AuthorizationEngineOptions;
+  /** The permission the inviter needs to offer a team. Default `teams.members.add` (`TEAM_PERMISSIONS.membersAdd`). */
+  teamPermission?: string;
+  /**
+   * Make the service decide who may invite with which roles, instead of leaving it to the host (see `createAccessAdminService`
+   * for the rules): the inviter needs `members.invite` and must hold every permission of every role offered (the Owner holds all);
+   * resending and revoking need the same and a reach over the invitation's roles. Accepting re-checks all of it against what the
+   * inviter holds NOW and gives only the roles they could still give (`rolesSkipped`), none at all to the inviter themselves or to
+   * a member who holds more power than they do. Refusals are `AccessError`s (`invitationErrorToHttp` answers 403).
+   *
+   * Default: on when `storage` is wrapped by `createGuardedStorage` (the guard refuses the writes otherwise), off otherwise,
+   * which keeps the old behaviour "the host authorizes". `false` turns it off on a guarded storage too, which only works with a
+   * trusted one (`createTrustedAccessStorage`). `true` or an object turns it on; on an unguarded storage that also needs
+   * `allowUnguardedStorage`.
+   */
+  access?: boolean | InvitationAccessOptions;
   /** Delivers the e-mail. Without one, invitations are still created and the link is returned for you to hand over. */
   sender?: InvitationSender;
   /** Invitation lifetime. Default 7 days, capped at 30. */
@@ -73,6 +117,13 @@ export interface InviteInput {
   email: string;
   /** At least one regular role of the organization. The Owner role can never be offered by invitation. */
   roleIds: string[];
+  /**
+   * Teams of the organization the invitee joins, as plain members, when they accept (at most 10). The inviter must hold
+   * `teams.members.add` for each (organization-wide, or inside that team) now AND when the invitation is accepted; a team that
+   * is archived or deleted by then, or where the person already has a membership, is skipped and reported, never forced.
+   * Being invited grants no role in the team: assign those afterwards with the team service.
+   */
+  teamIds?: string[];
   /** The member extending the invitation. The host must have authorized this (e.g. a `members.invite` check). */
   invitedBy: Identity;
   /** Language hint passed to the sender (e.g. `"es"`). Not stored. */
@@ -84,6 +135,14 @@ export interface InviteInput {
   allowExistingMember?: boolean;
   /** Lifetime of THIS invitation's link, instead of the service's `ttlMs` (e.g. 24 hours). Greater than zero, 30 days at most. */
   ttlMs?: number;
+  /**
+   * Makes a retry safe: the first call with a key creates the invitation (and sends it); a later call with the same
+   * key and the same request (e-mail, roles, `ttlMs`) creates nothing, sends nothing and returns that invitation with
+   * `replayed: true` and no link (the link can't be recovered; use `resend` for a new one). The same key with a
+   * different request fails with `invitation_idempotency_conflict` (409). Keys are scoped to the organization, 1 to
+   * 128 characters of letters, digits and `._:-`, and live as long as the invitation does.
+   */
+  idempotencyKey?: string;
 }
 
 export interface DeliveryOutcome {
@@ -98,12 +157,25 @@ export interface InviteResult {
   /** The link containing the secret token. Returned exactly once per issue/resend; it can't be recovered later. */
   acceptUrl: string;
   delivery: DeliveryOutcome;
+  replayed?: false;
+}
+
+/** What `invite({ idempotencyKey })` returns when the key was already used for this same request: nothing new was made. */
+export interface InviteReplayResult {
+  invitation: Invitation;
+  /** There is no link: it was shown by the first call and is not stored. `resend` issues a new one. */
+  acceptUrl: null;
+  /** The delivery state of the invitation as it stands now. */
+  delivery: DeliveryOutcome;
+  replayed: true;
 }
 
 export interface InvitationPreview {
   organizationName: string;
   email: string;
   roleNames: string[];
+  /** Names of the teams the invitee will join on accepting (teams that no longer exist are not listed). */
+  teamNames: string[];
   expiresAt: Date;
 }
 
@@ -130,11 +202,18 @@ export interface AcceptInvitationInput {
 export interface AcceptInvitationResult {
   invitation: Invitation;
   membership: Membership;
+  /** Invited roles that were NOT given because the inviter could no longer give them (always empty without `access`). */
+  rolesSkipped: string[];
   /** `true` when the identity was already a member and only gained the invited roles. */
   alreadyMember: boolean;
+  /** Team memberships created because the invitation offered them. */
+  teams: TeamMembership[];
+  /** Offered teams that were NOT joined (the inviter lost the right, the team is archived, or the person already has a membership there). */
+  teamsSkipped: string[];
 }
 
 export interface InvitationService {
+  invite(input: InviteInput & { idempotencyKey: string }): Promise<InviteResult | InviteReplayResult>;
   invite(input: InviteInput): Promise<InviteResult>;
   /**
    * Issues a NEW link (the old one stops working), extends the expiry and sends again. An
@@ -173,6 +252,16 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
   const { storage, sender } = options;
   const now = options.now ?? (() => new Date());
   const generateId = options.generateId ?? randomId;
+  const teamPermission = options.teamPermission ?? TEAM_PERMISSIONS.membersAdd;
+  const accessOptions = typeof options.access === "object" ? options.access : undefined;
+  const accessEnabled = options.access === undefined ? isGuardedStorage(storage) : options.access !== false;
+  if (accessEnabled && !isGuardedStorage(storage) && accessOptions?.allowUnguardedStorage !== true) {
+    throw new AccessError(
+      "The invitation service enforces the access rules only over a storage wrapped by createGuardedStorage(...). Pass access: { allowUnguardedStorage: true } to accept that.",
+      "access_storage_not_guarded",
+    );
+  }
+  const accessKeys: AccessPermissionKeys = { ...ACCESS_PERMISSIONS, ...accessOptions?.permissions };
   const ttlMs = Math.min(positive(options.ttlMs, 7 * DAY_MS, "ttlMs"), 30 * DAY_MS);
   if (ttlMs <= 0) throw new RangeError("ttlMs must be greater than zero.");
 
@@ -200,22 +289,40 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
     return (await hashInvitationToken(`${invitation.organizationId}:${invitation.email}`)).slice(0, 32);
   }
 
+  /** What a sender may echo about the address in a refusal ("550 <ana@example.com>: rejected"): the address and its local part. */
+  function addressSecrets(email: string): string[] {
+    const local = email.split("@")[0] ?? "";
+    return [email, ...(local.length >= 3 ? [local] : [])];
+  }
+
   async function auditEvent(
-    tx: Pick<UnioraStorage, "auditLogs">,
+    tx: Pick<UnioraStorage, "auditLogs"> & Partial<Pick<UnioraStorage, "outbox">>,
     actor: Identity,
     action: string,
     invitation: Invitation,
     metadata: Record<string, unknown> = {},
   ): Promise<void> {
     // Never the token, never the URL: audit history is append-only and long-lived.
-    await tx.auditLogs.record({
+    const entry = {
       id: generateId(),
       organizationId: invitation.organizationId,
       actor,
       action,
       target: { type: "invitation", id: invitation.id },
       metadata: { emailFingerprint: await emailFingerprint(invitation), ...metadata },
-    });
+    };
+    await tx.auditLogs.record(entry);
+    if (options.outbox) {
+      const txOutbox = (tx as Partial<Pick<UnioraStorage, "outbox">>).outbox;
+      if (!txOutbox) throw new InvitationError("The invitation service was asked to emit outbox events but its storage has no outbox.", "bad_request");
+      await txOutbox.enqueue({
+        id: `evt:${generateId()}`,
+        type: action,
+        organizationId: invitation.organizationId,
+        // Without the fingerprint: it is derived from the address and the (public) organization id, so a receiver could test guessed addresses against it.
+        payload: { actor: { provider: actor.provider, subject: actor.subject }, target: entry.target, metadata: Object.fromEntries(Object.entries(entry.metadata).filter(([key]) => key !== "emailFingerprint")) },
+      });
+    }
   }
 
   async function assertInvitableRoles(organizationId: string, roleIds: string[]) {
@@ -239,6 +346,80 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
       }
     }
     return unique.map((id) => byId.get(id)!);
+  }
+
+  /** Whether `inviter` may add people to the team: an organization-wide grant, or one inside that very team. */
+  async function mayAddToTeam(engine: AuthorizationEngine, organizationId: string, inviter: Identity, teamId: string): Promise<boolean> {
+    if (await engine.can({ identity: inviter, organizationId, permission: teamPermission })) return true;
+    return engine.can({ identity: inviter, organizationId, permission: teamPermission, teamId });
+  }
+
+  async function assertOfferableTeams(organizationId: string, inviter: Identity, teamIds: string[] | undefined): Promise<string[]> {
+    const unique = [...new Set(teamIds ?? [])];
+    if (unique.length === 0) return [];
+    if (unique.length > MAX_TEAMS_PER_INVITATION) {
+      throw new InvitationError(`An invitation can offer at most ${MAX_TEAMS_PER_INVITATION} teams.`, "bad_request");
+    }
+    const engine = createAuthorizationEngine(storage, options.engine);
+    for (const teamId of unique) {
+      const team = await storage.teams.findById(organizationId, teamId);
+      if (!team || team.status !== "active") {
+        throw new InvitationError("A chosen team does not exist in this organization or is archived.", "bad_request");
+      }
+      if (!(await mayAddToTeam(engine, organizationId, inviter, teamId))) {
+        throw new InvitationError("The inviter may not add people to a chosen team.", "teams_forbidden");
+      }
+    }
+    return unique.sort();
+  }
+
+  /** The engine the access rules ask, bound to `tx` so the decision and the write see the same data. */
+  const engineOver = (tx: Parameters<Parameters<UnioraStorage["transaction"]>[0]>[0]) =>
+    createAuthorizationEngine({ ...tx, transaction: storage.transaction.bind(storage) } as UnioraStorage, options.engine);
+
+  /**
+   * The access rules for creating, resending or revoking: the inviter needs `members.invite` and must hold everything the
+   * invitation's roles hold. Runs inside `tx`; returns nothing, throws `AccessError`.
+   */
+  async function assertMayInvite(
+    tx: Parameters<Parameters<UnioraStorage["transaction"]>[0]>[0],
+    organizationId: string,
+    inviter: Identity,
+    roleIds: readonly string[],
+  ): Promise<void> {
+    await tx.lock?.(accessLockKey(organizationId));
+    if (!(await engineOver(tx).can({ identity: inviter, organizationId, permission: accessKeys.membersInvite }))) {
+      throw new AccessError("You are not allowed to manage invitations.", "access_forbidden");
+    }
+    const roles = (await tx.roles.findByIds([...roleIds])).filter((role) => role.organizationId === organizationId);
+    const holder = await holdingsOf(tx, organizationId, inviter);
+    for (const role of roles) {
+      if (!covers(holder, needsOfRole(role))) {
+        throw new AccessError("You cannot offer a role that holds permissions you do not hold yourself.", "access_escalation");
+      }
+    }
+  }
+
+  const IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{1,128}$/;
+  function assertIdempotencyKey(key: string): string {
+    if (typeof key !== "string" || !IDEMPOTENCY_KEY.test(key)) {
+      throw new InvitationError("idempotencyKey must be 1 to 128 characters of letters, digits and . _ : -", "bad_request");
+    }
+    return key;
+  }
+
+  function replayResult(invitation: Invitation): InviteReplayResult {
+    const { delivery } = invitation;
+    return {
+      invitation,
+      acceptUrl: null,
+      replayed: true,
+      delivery: {
+        status: delivery.status === "pending" ? "skipped" : delivery.status,
+        attempts: delivery.attempts,
+        ...(delivery.lastError !== undefined ? { error: delivery.lastError } : {}),
+      },
+    };
   }
 
   async function deliver(invitation: Invitation, token: string, locale: string | undefined, actor: Identity): Promise<{ invitation: Invitation; acceptUrl: string; delivery: DeliveryOutcome }> {
@@ -265,7 +446,7 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
         expiresAt: invitation.expiresAt,
         locale,
       },
-      { retry: options.retry, secrets: [token, acceptUrl], sleep: options.sleep, random: options.random },
+      { retry: options.retry, secrets: [token, acceptUrl, ...addressSecrets(invitation.email)], sleep: options.sleep, random: options.random },
     );
 
     await storage.invitations.recordDelivery(invitation.id, {
@@ -323,13 +504,18 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
   }
 
   return {
-    async invite(input) {
+    invite: (async (input: InviteInput): Promise<InviteResult | InviteReplayResult> => {
       const email = normalizeInvitationEmail(input.email);
       const lifetime = lifetimeOf(input.ttlMs);
+      // Who may invite is answered before anything about roles or teams, or the refusal would tell a stranger which role and team ids exist.
+      if (accessEnabled && !(await createAuthorizationEngine(storage, options.engine).can({ identity: input.invitedBy, organizationId: input.organizationId, permission: accessKeys.membersInvite }))) {
+        throw new AccessError("You are not allowed to manage invitations.", "access_forbidden");
+      }
       const roles = await assertInvitableRoles(input.organizationId, input.roleIds);
       if (!(await storage.organizations.findById(input.organizationId))) {
         throw new InvitationError("The organization does not exist.", "bad_request");
       }
+      const teamIds = await assertOfferableTeams(input.organizationId, input.invitedBy, input.teamIds);
 
       if (options.findIdentitiesByEmail && !input.allowExistingMember) {
         for (const candidate of await options.findIdentitiesByEmail(email)) {
@@ -341,31 +527,82 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
 
       const token = generateInvitationToken();
       const tokenHash = await hashInvitationToken(token);
+      const idempotency =
+        input.idempotencyKey === undefined
+          ? undefined
+          : {
+              key: assertIdempotencyKey(input.idempotencyKey),
+              hash: await hashInvitationToken(
+                JSON.stringify(
+                  teamIds.length === 0
+                    ? [email, [...new Set(roles.map((role) => role.id))].sort(), input.ttlMs ?? null]
+                    : [email, [...new Set(roles.map((role) => role.id))].sort(), input.ttlMs ?? null, teamIds],
+                ),
+              ),
+            };
 
-      const invitation = await serialized(() =>
-        storage.transaction(async (tx) => {
+      const outcome = await serialized(() =>
+        storage.transaction(async (tx): Promise<{ replay: Invitation } | { created: Invitation }> => {
           // Cross-process: sorted advisory locks so concurrent invites to the same email/org can't both pass the check.
-          for (const key of [`invite:email:${email}`, `invite:org:${input.organizationId}`].sort()) await tx.lock?.(key);
+          const lockKeys = [`invite:email:${email}`, `invite:org:${input.organizationId}`];
+          if (accessEnabled) lockKeys.push(accessLockKey(input.organizationId));
+          for (const key of lockKeys.sort()) await tx.lock?.(key);
+          // Before the idempotency lookup too: a replay shows an invitation, which only someone allowed to invite may see.
+          if (accessEnabled) await assertMayInvite(tx, input.organizationId, input.invitedBy, roles.map((role) => role.id));
+          if (idempotency) {
+            const earlier = await tx.invitations.findByIdempotencyKey(input.organizationId, idempotency.key);
+            if (earlier) {
+              if (earlier.hash !== idempotency.hash) {
+                throw new InvitationError("This idempotency key was already used for a different invitation.", "idempotency_conflict");
+              }
+              return { replay: earlier.invitation };
+            }
+          }
+          const invitationId = generateId();
+          let authorization: AccessAuthorization | undefined;
+          if (accessEnabled) {
+            authorization = issueAccessAuthorization(input.invitedBy, {
+              operation: "invitation.create",
+              target: invitationId,
+              detail: accessSet(roles.map((role) => role.id)),
+              organizationId: input.organizationId,
+            });
+          }
           await checkRate(tx.invitations, input.organizationId, email);
           const at = now();
           await tx.invitations.expireStale(input.organizationId, email, at);
           const created = await tx.invitations.create({
-            id: generateId(),
+            id: invitationId,
             organizationId: input.organizationId,
             email,
             roleIds: roles.map((role) => role.id),
+            ...(teamIds.length > 0 ? { teamIds } : {}),
             tokenHash,
             invitedBy: input.invitedBy,
             createdAt: at,
             expiresAt: new Date(at.getTime() + lifetime),
+            ...(idempotency ? { idempotency } : {}),
+            ...(authorization ? { authorization } : {}),
           });
-          await auditEvent(tx, input.invitedBy, "invitation.created", created, { roles: roles.map((role) => role.name) });
-          return created;
+          await auditEvent(tx, input.invitedBy, "invitation.created", created, {
+            roles: roles.map((role) => role.name),
+            ...(teamIds.length > 0 ? { teamIds } : {}),
+          });
+          return { created };
         }),
-      );
+      ).catch(async (error: unknown) => {
+        await recordAccessRefusal(storage, error, {
+          organizationId: input.organizationId,
+          actor: input.invitedBy,
+          operation: "invite",
+          target: { type: "organization", id: input.organizationId },
+        });
+        throw error;
+      });
 
-      return deliver(invitation, token, input.locale, input.invitedBy);
-    },
+      if ("replay" in outcome) return replayResult(outcome.replay);
+      return deliver(outcome.created, token, input.locale, input.invitedBy);
+    }) as InvitationService["invite"],
 
     async resend(ref, resendOptions) {
       const existing = await findInOrganization(ref);
@@ -381,14 +618,28 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
       const token = generateInvitationToken();
       const at = now();
       const tokenHash = await hashInvitationToken(token);
-      const rotated = await storage.transaction(async (tx) => {
-        const next = await tx.invitations.rotateToken(existing.id, {
-          tokenHash,
-          expiresAt: new Date(at.getTime() + lifetime),
+      const rotated = await storage
+        .transaction(async (tx) => {
+          if (accessEnabled) await assertMayInvite(tx, existing.organizationId, ref.actor, existing.roleIds);
+          const next = await tx.invitations.rotateToken(existing.id, {
+            tokenHash,
+            expiresAt: new Date(at.getTime() + lifetime),
+            ...(accessEnabled
+              ? { authorization: issueAccessAuthorization(ref.actor, { operation: "invitation.manage", target: existing.id, detail: "rotate" }) }
+              : {}),
+          });
+          if (next) await auditEvent(tx, ref.actor, "invitation.resent", next);
+          return next;
+        })
+        .catch(async (error: unknown) => {
+          await recordAccessRefusal(storage, error, {
+            organizationId: existing.organizationId,
+            actor: ref.actor,
+            operation: "resend",
+            target: { type: "invitation", id: existing.id },
+          });
+          throw error;
         });
-        if (next) await auditEvent(tx, ref.actor, "invitation.resent", next);
-        return next;
-      });
       if (!rotated) throw new InvitationError("Only a pending invitation can be sent again.", "invalid");
       return deliver(rotated, token, resendOptions?.locale, ref.actor);
     },
@@ -396,11 +647,26 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
     async revoke(ref) {
       const existing = await findInOrganization(ref);
       if (!existing) throw new InvitationError("Only a pending invitation can be revoked.", "invalid");
-      const revoked = await storage.transaction(async (tx) => {
-        const result = await tx.invitations.revoke(existing.id, now());
-        if (result) await auditEvent(tx, ref.actor, "invitation.revoked", result);
-        return result;
-      });
+      const revoked = await storage
+        .transaction(async (tx) => {
+          if (accessEnabled) await assertMayInvite(tx, existing.organizationId, ref.actor, existing.roleIds);
+          const result = await tx.invitations.revoke(
+            existing.id,
+            now(),
+            accessEnabled ? { authorization: issueAccessAuthorization(ref.actor, { operation: "invitation.manage", target: existing.id, detail: "revoke" }) } : undefined,
+          );
+          if (result) await auditEvent(tx, ref.actor, "invitation.revoked", result);
+          return result;
+        })
+        .catch(async (error: unknown) => {
+          await recordAccessRefusal(storage, error, {
+            organizationId: existing.organizationId,
+            actor: ref.actor,
+            operation: "revoke",
+            target: { type: "invitation", id: existing.id },
+          });
+          throw error;
+        });
       if (!revoked) throw new InvitationError("Only a pending invitation can be revoked.", "invalid");
       return revoked;
     },
@@ -413,10 +679,16 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
         storage.roles.findSummariesByIds([...invitation.roleIds]),
       ]);
       if (!organization) return null;
+      const teamNames: string[] = [];
+      for (const teamId of invitation.teamIds) {
+        const team = await storage.teams.findById(invitation.organizationId, teamId);
+        if (team && team.status === "active") teamNames.push(team.name);
+      }
       return {
         organizationName: organization.name,
         email: invitation.email,
         roleNames: roles.map((role) => role.name),
+        teamNames,
         expiresAt: invitation.expiresAt,
       };
     },
@@ -449,29 +721,108 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
 
       try {
         return await storage.transaction(async (tx) => {
+          if (accessEnabled) await tx.lock?.(accessLockKey(invitation.organizationId));
+          let membership = await tx.memberships.findByIdentity(invitation.organizationId, input.identity);
+          const alreadyMember = membership !== null;
+
+          // The offer was authorized when it was made; ask again, here, what the inviter can give NOW. Roles they could not give
+          // (they lost the permission, left, or the role grew past them) are skipped and reported, never forced; so is everything
+          // when the invitee is the inviter themselves or already holds more power than the inviter (nobody changes their own
+          // roles, nobody touches someone above them).
+          let grantable = usable;
+          let rolesSkipped: string[] = [];
+          if (accessEnabled) {
+            const inviter = invitation.invitedBy;
+            const mayInvite = await engineOver(tx).can({ identity: inviter, organizationId: invitation.organizationId, permission: accessKeys.membersInvite });
+            const holder = mayInvite ? await holdingsOf(tx, invitation.organizationId, inviter) : NO_HOLDINGS;
+            let reachable = mayInvite;
+            // Nobody gives themselves roles by inviting their own address (a support operator would turn a grant into a membership).
+            if (reachable) {
+              const [a, b] = await Promise.all([tx.identityLinks.resolve(inviter), tx.identityLinks.resolve(input.identity)]);
+              reachable = !(a.provider === b.provider && a.subject === b.subject);
+            }
+            if (reachable && membership) {
+              reachable = !(await isSameMember(tx, inviter, membership)) && covers(holder, await needsOfMembership(tx, membership));
+            }
+            const full = reachable ? await tx.roles.findByIds(usable.map((role) => role.id)) : [];
+            const giveable = new Set(full.filter((role) => role.organizationId === invitation.organizationId && !role.isOwnerRole && covers(holder, needsOfRole(role))).map((role) => role.id));
+            grantable = usable.filter((role) => giveable.has(role.id));
+            rolesSkipped = usable.filter((role) => !giveable.has(role.id)).map((role) => role.id);
+            if (grantable.length === 0) throw fail("roles_unavailable");
+          }
+          // Decided above, before the invitation is claimed: a refusal never uses the invitation up (not even on a backend without rollback).
           const claimed = await tx.invitations.markAccepted({ tokenHash, identity: input.identity, now: at });
           if (!claimed) throw fail("already_accepted"); // lost a race
 
-          let membership = await tx.memberships.findByIdentity(invitation.organizationId, input.identity);
-          const alreadyMember = membership !== null;
+          const proof = (binding: Parameters<typeof issueAccessAuthorization>[1]) =>
+            accessEnabled ? { authorization: issueAccessAuthorization(invitation.invitedBy, binding) } : undefined;
+
           if (membership) {
-            for (const role of usable) await tx.memberships.assignRole(membership.id, role.id);
+            for (const role of grantable) {
+              await tx.memberships.assignRole(membership.id, role.id, proof({ operation: "member.role.assign", target: membership.id, detail: role.id }));
+            }
             membership = (await tx.memberships.findById(membership.id)) ?? membership;
           } else {
+            const membershipId = generateId();
+            const roleIds = grantable.map((role) => role.id);
             membership = await tx.memberships.create({
-              id: generateId(),
+              id: membershipId,
               organizationId: invitation.organizationId,
               identity: input.identity,
-              roleIds: usable.map((role) => role.id),
+              roleIds,
               invitedBy: invitation.invitedBy,
+              ...(proof({ operation: "member.create", target: membershipId, detail: accessSet(roleIds), organizationId: invitation.organizationId }) ?? {}),
             });
+          }
+
+          const joined: TeamMembership[] = [];
+          const teamsSkipped: string[] = [];
+          if (invitation.teamIds.length > 0) {
+            // The offer was authorized when it was made, but the inviter may have lost the right since: ask again, here,
+            // over the same transaction, and join only what they could still do themselves.
+            const engine = createAuthorizationEngine(
+              { ...tx, transaction: storage.transaction.bind(storage) } as UnioraStorage,
+              options.engine,
+            );
+            for (const teamId of invitation.teamIds) {
+              const team = await tx.teams.findById(invitation.organizationId, teamId);
+              const existing = team ? await tx.teamMemberships.find(invitation.organizationId, teamId, membership.id) : null;
+              const usableTeam =
+                team !== null &&
+                team.status === "active" &&
+                (existing === null || existing.status === "removed") &&
+                (await mayAddToTeam(engine, invitation.organizationId, invitation.invitedBy, teamId));
+              if (!usableTeam) {
+                teamsSkipped.push(teamId);
+                continue;
+              }
+              const row = await tx.teamMemberships.add({
+                authorization: issueTeamAuthorization(invitation.organizationId, invitation.invitedBy, ["member.add"]),
+                id: generateId(),
+                organizationId: invitation.organizationId,
+                teamId,
+                membershipId: membership.id,
+                invitedBy: invitation.invitedBy,
+                now: at,
+              });
+              joined.push(row);
+              await tx.auditLogs.record({
+                id: generateId(),
+                organizationId: invitation.organizationId,
+                actor: input.identity,
+                action: "team_member.added",
+                target: { type: "team_member", id: row.id },
+                metadata: { teamId, membershipId: membership.id, viaInvitation: true, invitationId: invitation.id },
+              });
+            }
           }
 
           await auditEvent(tx, input.identity, "invitation.accepted", claimed, {
             membershipId: membership.id,
             alreadyMember,
+            ...(invitation.teamIds.length > 0 ? { teamsJoined: joined.map((row) => row.teamId), teamsSkipped } : {}),
           });
-          return { invitation: claimed, membership, alreadyMember };
+          return { invitation: claimed, membership, rolesSkipped, alreadyMember, teams: joined, teamsSkipped };
         });
       } catch (error) {
         if (error instanceof MembershipError) throw fail("roles_unavailable");

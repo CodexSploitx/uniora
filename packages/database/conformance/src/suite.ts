@@ -11,12 +11,18 @@ import {
   OrganizationError,
   PermissionError,
   RoleError,
+  TEAM_PERMISSIONS,
+  TeamError,
   applyRoleTemplates,
+  createTeamService,
+  createTrustedTeamStorage,
   dispatchOutbox,
   leaveOrganization,
   transferOwnership,
 } from "@uniora/core";
+import { defineAccessScenarios } from "./access-suite.js";
 import type { StorageHarness } from "./harness.js";
+import { definePolicyConformance } from "./policy-suite.js";
 
 const identity = { provider: "supabase", subject: "user-1" };
 
@@ -41,6 +47,10 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
     // tests: an adapter's dialect-specific checks run here instead of in a
     // second `describe`, which would race the shared one for the same tables.
     adapterSpecificTests?.();
+
+    // Who may give which power to whom (guard, rules and invitations), over this very database.
+    defineAccessScenarios(harness);
+    definePolicyConformance(harness);
 
     it("persists organizations, deriving a slug from the name", async () => {
       const storage = harness.storage();
@@ -143,6 +153,22 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
       await expect(storage.roles.create({ id: "role-sales-2", organizationId: "org-1", name: "Sales" })).rejects.toThrow(
         RoleError,
       );
+    });
+
+    it("rechaza reutilizar el id de un role, también el de otra organización o el del Owner, sin tocar el original", async () => {
+      const storage = harness.storage();
+      await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+      await storage.organizations.create({ id: "org-2", name: "Globex" });
+      await storage.roles.createOwnerRole({ id: "role-owner", organizationId: "org-1" });
+      await storage.roles.create({ id: "role-sales", organizationId: "org-2", name: "Sales", permissionKeys: [] });
+      await storage.organizations.create({ id: "org-3", name: "Initech" });
+
+      await expect(storage.roles.create({ id: "role-owner", organizationId: "org-1", name: "Pwn" })).rejects.toMatchObject({ code: "role_exists" });
+      await expect(storage.roles.create({ id: "role-sales", organizationId: "org-1", name: "Mine" })).rejects.toMatchObject({ code: "role_exists" });
+      await expect(storage.roles.createOwnerRole({ id: "role-sales", organizationId: "org-3" })).rejects.toMatchObject({ code: "role_exists" });
+
+      expect((await storage.roles.findByIds(["role-owner"]))[0]).toMatchObject({ organizationId: "org-1", isOwnerRole: true });
+      expect((await storage.roles.findByIds(["role-sales"]))[0]).toMatchObject({ organizationId: "org-2", name: "Sales" });
     });
 
     it("deriva un key único por role a partir del nombre (estándar de creación, constraint real)", async () => {
@@ -324,6 +350,68 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
       expect(await storage.memberships.findById(membership.id)).not.toBeNull();
     });
 
+    it("eliminar al último Owner responde last_owner por cualquier vía y en cualquier estado; solo un id inexistente responde membership_not_found", async () => {
+      const storage = harness.storage();
+      const { ownerRole, membership } = await createOrganizationWithOwner(storage, {
+        organizationId: "org-1",
+        organizationName: "Acme Motors",
+        ownerRoleId: "role-owner",
+        membershipId: "m-1",
+        ownerIdentity: identity,
+      });
+      const admin = { provider: "admin", subject: "root" };
+      const audited = createAuditedStorage(storage, { actor: admin });
+      const refusals = async (label: string) => {
+        const attempts: Array<[string, () => Promise<unknown>]> = [
+          ["delete", () => storage.memberships.delete(membership.id)],
+          ["delete en transacción", () => storage.transaction((tx) => tx.memberships.delete(membership.id))],
+          ["delete auditado", () => audited.memberships.delete(membership.id)],
+          ["unassignOwnerRole", () => storage.memberships.unassignOwnerRole(membership.id, ownerRole.id)],
+        ];
+        for (const [via, attempt] of attempts) {
+          await expect(attempt(), `${label}: ${via}`).rejects.toMatchObject({ code: "last_owner" });
+          await expect(attempt(), `${label}: ${via}`).rejects.toBeInstanceOf(MembershipError);
+        }
+        expect(await storage.memberships.findById(membership.id), label).not.toBeNull(); // nada se borró
+      };
+
+      await refusals("activo");
+      // Un Owner único suspendido o bloqueado sigue siendo el último: la causa es la misma, no "no existe".
+      await storage.memberships.block(membership.id, { actor: admin }).catch(() => undefined);
+      await storage.memberships.unblock(membership.id, { actor: admin });
+      await refusals("tras intentar bloquearlo");
+
+      // Un id que no existe sí es membership_not_found, por las mismas vías.
+      await expect(storage.memberships.delete("no-such")).rejects.toMatchObject({ code: "membership_not_found" });
+      await expect(storage.transaction((tx) => tx.memberships.delete("no-such"))).rejects.toMatchObject({ code: "membership_not_found" });
+      await expect(audited.memberships.delete("no-such")).rejects.toMatchObject({ code: "membership_not_found" });
+
+      // Con un segundo Owner, el primero ya se puede eliminar; entonces el segundo pasa a ser el último y vuelve a ser last_owner.
+      await storage.memberships.create({ id: "m-2", organizationId: "org-1", identity: { provider: "supabase", subject: "user-2" }, roleIds: [ownerRole.id] });
+      await storage.memberships.delete(membership.id);
+      await expect(storage.memberships.delete(membership.id)).rejects.toMatchObject({ code: "membership_not_found" }); // ya no existe
+      await expect(storage.memberships.delete("m-2")).rejects.toMatchObject({ code: "last_owner" });
+    });
+
+    it("dos eliminaciones simultáneas de los dos Owners nunca dejan la organización sin Owner y la rechazada responde last_owner", async () => {
+      const storage = harness.storage();
+      const { ownerRole } = await createOrganizationWithOwner(storage, {
+        organizationId: "org-1",
+        organizationName: "Acme Motors",
+        ownerRoleId: "role-owner",
+        membershipId: "m-1",
+        ownerIdentity: identity,
+      });
+      await storage.memberships.create({ id: "m-2", organizationId: "org-1", identity: { provider: "supabase", subject: "user-2" }, roleIds: [ownerRole.id] });
+      const results = await Promise.allSettled([storage.memberships.delete("m-1"), storage.memberships.delete("m-2")]);
+      const rejected = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0]!.reason).toMatchObject({ code: "last_owner" });
+      const remaining = (await storage.memberships.findById("m-1")) ?? (await storage.memberships.findById("m-2"));
+      expect(remaining?.roleIds).toEqual([ownerRole.id]);
+    });
+
     it("permite unassignRole/delete del Owner role cuando otro membership también lo tiene", async () => {
       const storage = harness.storage();
       const { ownerRole, membership } = await createOrganizationWithOwner(storage, {
@@ -454,6 +542,34 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         // Registrar de nuevo sin defaultEnabled lo resetea (upsert completo).
         await storage.features.register({ key: "agenda", name: "Agenda" });
         expect((await storage.features.listCatalog()).find((f) => f.key === "agenda")).toMatchObject({ defaultEnabled: false });
+      });
+
+      it("version del override: expectedVersion 0 = aún sin override; sube con cada enable/disable; una versión vieja se rechaza", async () => {
+        const storage = harness.storage();
+        await seedOrganizations(storage, ["org-1"]);
+        await storage.features.register({ key: "reports", name: "Reports" });
+        const overrideVersion = async () => (await storage.features.listEffective("org-1")).find((f) => f.key === "reports")!.override?.version;
+
+        expect(await overrideVersion()).toBeUndefined();
+        await storage.features.enable("org-1", "reports", { expectedVersion: 0 });
+        expect(await overrideVersion()).toBe(1);
+        // Otro operador ya creó el override: quien creía que no existía pierde.
+        await expect(storage.features.disable("org-1", "reports", { expectedVersion: 0 })).rejects.toMatchObject({ code: "feature_version_conflict" });
+        expect(await storage.features.isEnabled("org-1", "reports")).toBe(true);
+        await storage.features.disable("org-1", "reports", { expectedVersion: 1 });
+        expect(await overrideVersion()).toBe(2);
+        await expect(storage.features.enable("org-1", "reports", { expectedVersion: 1 })).rejects.toMatchObject({ code: "feature_version_conflict" });
+        expect(await storage.features.isEnabled("org-1", "reports")).toBe(false);
+        // Sin expectedVersion sigue siendo incondicional, pero sube la versión.
+        await storage.features.enable("org-1", "reports");
+        expect(await overrideVersion()).toBe(3);
+
+        const results = await Promise.allSettled([
+          storage.features.disable("org-1", "reports", { expectedVersion: 3 }),
+          storage.features.disable("org-1", "reports", { expectedVersion: 3 }),
+        ]);
+        expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+        expect(await overrideVersion()).toBe(4);
       });
 
       it("access.check y los snapshots respetan el valor por defecto", async () => {
@@ -635,6 +751,91 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         expect((await storage.memberships.findById("m-alice"))!.updatedAt.getTime()).toBeGreaterThan(afterAssign.updatedAt.getTime());
       });
 
+      it("version: nace en 1, sube con cada cambio real y expectedVersion rechaza una copia vieja sin tocar nada", async () => {
+        const { storage, a } = await seed();
+        expect(a.version).toBe(1);
+        expect((await storage.memberships.findById("m-alice"))!.version).toBe(1);
+        await storage.roles.create({ id: "other", organizationId: "org-1", name: "Other" });
+
+        await storage.memberships.assignRole("m-alice", "other", { expectedVersion: 1 });
+        expect((await storage.memberships.findById("m-alice"))!.version).toBe(2);
+        await expect(storage.memberships.unassignRole("m-alice", "other", { expectedVersion: 1 })).rejects.toMatchObject({ code: "membership_version_conflict" });
+        expect((await storage.memberships.findById("m-alice"))!.roleIds).toContain("other");
+        await storage.memberships.unassignRole("m-alice", "other", { expectedVersion: 2 });
+        expect((await storage.memberships.findById("m-alice"))!.version).toBe(3);
+
+        await expect(storage.memberships.block("m-alice", { actor: admin, expectedVersion: 2 })).rejects.toMatchObject({ code: "membership_version_conflict" });
+        expect((await storage.memberships.findById("m-alice"))!.status).toBe("active");
+        const blocked = await storage.memberships.block("m-alice", { actor: admin, expectedVersion: 3 });
+        expect(blocked.version).toBe(4);
+        await expect(storage.memberships.unblock("m-alice", { actor: admin, expectedVersion: 3 })).rejects.toMatchObject({ code: "membership_version_conflict" });
+        expect((await storage.memberships.findById("m-alice"))!.status).toBe("blocked");
+        const unblocked = await storage.memberships.unblock("m-alice", { actor: admin, expectedVersion: 4 });
+        expect(unblocked.version).toBe(5);
+        // Sin expectedVersion sigue funcionando (last-write-wins), y la otra membresía no se tocó.
+        await storage.memberships.assignRole("m-alice", "other");
+        expect((await storage.memberships.findById("m-alice"))!.version).toBe(6);
+        expect((await storage.memberships.findById("m-bob"))!.version).toBe(2);
+      });
+
+      it("las lecturas devuelven copias: una membresía leída no cambia con escrituras posteriores y permite reproducir membership_version_conflict", async () => {
+        const { storage, a } = await seed();
+        await storage.roles.create({ id: "other", organizationId: "org-1", name: "Other" });
+        const byId = (await storage.memberships.findById("m-alice"))!;
+        const byIdentity = (await storage.memberships.findByIdentity("org-1", alice))!;
+        const listed = (await storage.memberships.listByOrganization("org-1")).find((m) => m.id === "m-alice")!;
+        const searched = (await storage.memberships.search({ organizationId: "org-1" })).find((m) => m.id === "m-alice")!;
+
+        await storage.memberships.assignRole(a.id, "other");
+        await storage.memberships.block(a.id, { actor: admin, reason: "impago" });
+
+        for (const stale of [byId, byIdentity, listed, searched]) {
+          expect(stale).toMatchObject({ status: "active", roleIds: ["staff"], version: 1 });
+          expect(stale.blocked).toBeUndefined();
+        }
+        await expect(storage.memberships.unblock(a.id, { actor: admin, expectedVersion: byId.version })).rejects.toMatchObject({
+          code: "membership_version_conflict",
+        });
+        // Mutar lo leído no toca lo guardado.
+        const fresh = (await storage.memberships.findById("m-alice"))!;
+        fresh.roleIds.push("fantasma");
+        (fresh.identity as { subject: string }).subject = "otra-persona";
+        const after = (await storage.memberships.findById("m-alice"))!;
+        expect([...after.roleIds].sort()).toEqual(["other", "staff"]);
+        expect(after.identity).toEqual(alice);
+      });
+
+      it("las lecturas de permisos y funciones devuelven copias", async () => {
+        const { storage } = await seed();
+        await storage.permissions.register({ key: "reports.write", implies: ["reports.read"] });
+        const permission = (await storage.permissions.findByKey("reports.write"))!;
+        permission.implies!.push("fantasma");
+        expect((await storage.permissions.list()).find((p) => p.key === "reports.write")!.implies).toEqual(["reports.read"]);
+
+        await storage.features.enable("org-1", "agenda");
+        const override = (await storage.features.listByOrganization("org-1"))[0]!;
+        const catalogEntry = (await storage.features.listCatalog()).find((f) => f.key === "agenda")!;
+        await storage.features.disable("org-1", "agenda");
+        expect(override).toMatchObject({ enabled: true, version: 1 });
+        expect(catalogEntry.defaultEnabled).toBe(true);
+        catalogEntry.defaultEnabled = false;
+        expect((await storage.features.listCatalog()).find((f) => f.key === "agenda")!.defaultEnabled).toBe(true);
+      });
+
+      it("version: dos asignaciones concurrentes con la misma versión esperada — solo una gana", async () => {
+        const { storage } = await seed();
+        await storage.roles.create({ id: "r1", organizationId: "org-1", name: "R1" });
+        await storage.roles.create({ id: "r2", organizationId: "org-1", name: "R2" });
+        const results = await Promise.allSettled([
+          storage.memberships.assignRole("m-alice", "r1", { expectedVersion: 1 }),
+          storage.memberships.assignRole("m-alice", "r2", { expectedVersion: 1 }),
+        ]);
+        expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+        const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+        expect(rejected.reason).toMatchObject({ code: "membership_version_conflict" });
+        expect((await storage.memberships.findById("m-alice"))!.version).toBe(2);
+      });
+
       it("bloquear no elimina: conserva roles pero el motor lo deniega todo; desbloquear lo restaura", async () => {
         const { storage, a } = await seed();
         const engine = createAuthorizationEngine(storage);
@@ -707,6 +908,99 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         await storage.memberships.assignOwnerRole(a.id, owner.id);
         await storage.memberships.suspend(b.id, { actor: admin, until: future });
         await expect(storage.memberships.block(a.id, { actor: admin })).rejects.toMatchObject({ code: "last_owner" });
+      });
+
+      it("auditoría de la suspensión: fecha demasiado lejana, suspensiones de milisegundos y bloqueo sobre una suspensión", async () => {
+        const { storage, a, b, owner } = await seed();
+        // SQLite compara texto ISO-8601: un año de cinco cifras ordenaría mal y la suspensión se leería como ya vencida.
+        for (const until of [new Date(Date.UTC(10000, 0, 1)), new Date(Date.UTC(20000, 0, 1)), new Date(8.64e15)]) {
+          await expect(storage.memberships.suspend(a.id, { actor: admin, until })).rejects.toMatchObject({ code: "membership_block_until_invalid" });
+        }
+        expect((await storage.memberships.findById(a.id))!.status).toBe("active");
+        const farthest = new Date("9999-12-31T23:59:59.999Z");
+        expect(await storage.memberships.suspend(a.id, { actor: admin, until: farthest })).toMatchObject({ status: "suspended" });
+        expect((await storage.memberships.findById(a.id))!.blocked!.until!.getTime()).toBe(farthest.getTime());
+        await storage.memberships.unblock(a.id, { actor: admin });
+
+        // Una suspensión que vence casi al instante es válida: nunca debe salir como `last_owner` ni dejar un estado a medias.
+        // Con 1 a 3 ms de margen el reloj de la base de datos ya puede haber pasado la fecha cuando se escribe la fila.
+        for (let i = 0; i < 60; i++) {
+          const result = await storage.memberships.suspend(a.id, { actor: admin, until: new Date(Date.now() + 1 + (i % 3)) }).catch((error) => error);
+          // On a slow machine the date can already be in the past when the write is validated: that is refused with the stable
+          // code, and the membership must stay as it was. What may never happen is `last_owner` or a half-written state.
+          if (result.code !== undefined) {
+            expect(result.code).toBe("membership_block_until_invalid");
+            expect((await storage.memberships.findById(a.id))!.status).toBe("active");
+            continue;
+          }
+          expect(["suspended", "active"]).toContain(result.status);
+          await storage.memberships.unblock(a.id, { actor: admin });
+        }
+
+        // `block` sobre una suspensión la convierte en bloqueo indefinido: no vence a la fecha anterior.
+        const soon = new Date(Date.now() + 700);
+        const suspended = await storage.memberships.suspend(a.id, { actor: admin, reason: "temporal", until: soon });
+        const escalated = await storage.memberships.block(a.id, { actor: bob, reason: "definitivo", expectedVersion: suspended.version });
+        expect(escalated).toMatchObject({ status: "blocked", blocked: { by: bob, reason: "definitivo" }, version: suspended.version + 1 });
+        expect(escalated.blocked!.until).toBeUndefined();
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        expect(await createAuthorizationEngine(storage).can({ identity: alice, organizationId: "org-1", permission: "reports.read" })).toBe(false);
+        expect((await storage.memberships.findById(a.id))!).toMatchObject({ status: "blocked" });
+        expect(await storage.memberships.count({ organizationId: "org-1", status: "blocked" })).toBe(1);
+        // Al revés, suspender a quien ya está bloqueado no lo acorta.
+        expect((await storage.memberships.suspend(a.id, { actor: admin, until: new Date(Date.now() + 60_000) })).status).toBe("blocked");
+        await storage.memberships.unblock(a.id, { actor: admin });
+
+        // Un Owner suspendido puede escalarse a bloqueo aunque no quede otro Owner activo (ya estaba inactivo), y vence igual el resto.
+        await storage.memberships.assignOwnerRole(a.id, owner.id);
+        await storage.memberships.suspend(b.id, { actor: admin, until: new Date(Date.now() + 60_000) });
+        expect(await storage.memberships.block(b.id, { actor: admin })).toMatchObject({ status: "blocked" });
+      });
+
+      it("el último Owner activo no se quita ni se elimina mientras los demás Owners están suspendidos o bloqueados", async () => {
+        const { storage, owner, a, b } = await seed();
+        await storage.memberships.assignOwnerRole(a.id, owner.id);
+        await storage.memberships.suspend(a.id, { actor: admin, until: new Date(Date.now() + 60_000) });
+        await expect(storage.memberships.unassignOwnerRole(b.id, owner.id)).rejects.toMatchObject({ code: "last_owner" });
+        await expect(storage.memberships.delete(b.id)).rejects.toMatchObject({ code: "last_owner" });
+        await expect(leaveOrganization(storage, { organizationId: "org-1", identity: bob })).rejects.toMatchObject({ code: "last_owner" });
+        expect(await storage.memberships.findById(b.id)).toMatchObject({ roleIds: [owner.id], status: "active" });
+        // Quitar al que ya no puede actuar sí se puede: no reduce los Owners activos.
+        await storage.memberships.unassignOwnerRole(a.id, owner.id);
+        expect((await storage.memberships.findById(a.id))!.roleIds).not.toContain(owner.id);
+        // Con otro Owner activo, el primero ya se puede quitar (y con el bloqueado de por medio, también eliminar al bloqueado).
+        await storage.memberships.assignOwnerRole(a.id, owner.id);
+        await storage.memberships.unblock(a.id, { actor: admin });
+        await storage.memberships.block(b.id, { actor: admin });
+        await storage.memberships.delete(b.id);
+        expect(await storage.memberships.findById(b.id)).toBeNull();
+        await expect(storage.memberships.delete(a.id)).rejects.toMatchObject({ code: "last_owner" });
+      });
+
+      it("auditoría de la suspensión: quien está sancionado no puede salir de la organización ni recibir la propiedad, y las llamadas sin efecto no se auditan", async () => {
+        const { storage, a, b, owner } = await seed();
+        const audited = createAuditedStorage(storage, { actor: admin });
+        await audited.memberships.suspend(a.id, { actor: admin, until: new Date(Date.now() + 60_000) });
+        await audited.memberships.suspend(a.id, { actor: bob, until: new Date(Date.now() + 120_000) }); // sin efecto
+        await audited.memberships.unblock(b.id, { actor: bob }); // sin efecto: b está activo
+        await audited.memberships.block(a.id, { actor: bob, reason: "definitivo" });
+        await audited.memberships.block(a.id, { actor: bob, reason: "otra vez" }); // sin efecto
+        const log = (await storage.auditLogs.listByOrganization("org-1")).filter((e) => e.action.startsWith("membership.") && /blocked|suspended|unblocked/.test(e.action));
+        expect(log.map((e) => e.action).sort()).toEqual(["membership.blocked", "membership.suspended"]);
+        expect(log.find((e) => e.action === "membership.blocked")!.metadata).toMatchObject({ replacedSuspension: true, requestedBy: "supabase:bob" });
+
+        await storage.memberships.unblock(a.id, { actor: admin });
+        await storage.memberships.suspend(a.id, { actor: admin, until: new Date(Date.now() + 60_000) });
+        // Quien tiene una sanción no la evita saliendo de la organización...
+        await expect(leaveOrganization(storage, { organizationId: "org-1", identity: alice })).rejects.toMatchObject({ code: "membership_blocked" });
+        expect(await storage.memberships.findByIdentity("org-1", alice)).toMatchObject({ status: "suspended" });
+        // ...ni se traspasa la propiedad a quien no podría ejercerla.
+        await expect(
+          transferOwnership(storage, { organizationId: "org-1", fromMembershipId: b.id, toMembershipId: a.id, actor: bob }),
+        ).rejects.toMatchObject({ code: "membership_blocked" });
+        expect(await storage.memberships.findById(b.id)).toMatchObject({ roleIds: [owner.id] });
+        await storage.memberships.unblock(a.id, { actor: admin });
+        expect(await leaveOrganization(storage, { organizationId: "org-1", identity: alice })).toBe(true);
       });
 
       it("bloquear y desbloquear son idempotentes; el primer bloqueo conserva autor y motivo; ids desconocidos fallan con código", async () => {
@@ -833,6 +1127,127 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         await expect(storage.roles.update("ghost", { name: "X" })).rejects.toMatchObject({ code: "role_not_found" });
         await expect(storage.roles.update("role-owner", { name: "Jefe" })).rejects.toBeInstanceOf(RoleError);
         await expect(storage.roles.update("role-owner", { description: "x" })).rejects.toBeInstanceOf(RoleError);
+      });
+
+      it("el nombre es único normalizado: mayúsculas, acentos y espacios no crean un rol distinto, ni siquiera en carrera", async () => {
+        const storage = await seed();
+        await storage.roles.create({ id: "n-1", organizationId: "org-1", name: "Recepción" });
+        for (const [index, variant] of ["recepción", "Recepcion", " RECEPCIÓN ", "Re  cepción"].entries()) {
+          if (variant === "Re  cepción") continue; // different word once whitespace is collapsed
+          await expect(
+            storage.roles.create({ id: `n-dup-${index}`, organizationId: "org-1", name: variant, key: `dup-${index}` }),
+          ).rejects.toBeInstanceOf(RoleError);
+        }
+        // Another organization may use the same name; the display name keeps its spelling.
+        await storage.organizations.create({ id: "org-n2", name: "Segunda" });
+        expect(await storage.roles.create({ id: "n-other", organizationId: "org-n2", name: "recepcion" })).toMatchObject({ name: "recepcion" });
+        expect((await storage.roles.findByIds(["n-1"]))[0]).toMatchObject({ name: "Recepción" });
+
+        // rename / update / clone follow the same rule, and a role may change the case of its own name.
+        await storage.roles.create({ id: "n-2", organizationId: "org-1", name: "Otro" });
+        await expect(storage.roles.rename("n-2", "RECEPCION")).rejects.toBeInstanceOf(RoleError);
+        await expect(storage.roles.update("n-2", { name: "recepcion" })).rejects.toBeInstanceOf(RoleError);
+        await expect(storage.roles.clone("n-1", { id: "n-3", name: "recepciÓn", key: "copy" })).rejects.toBeInstanceOf(RoleError);
+        expect((await storage.roles.rename("n-1", "RECEPCIÓN")).name).toBe("RECEPCIÓN");
+        expect((await storage.roles.update("n-1", { name: "Recepción" })).name).toBe("Recepción");
+
+        // The protected Owner role keeps its name against look-alikes ("ÓWNER" has another key but reads the same).
+        await expect(storage.roles.create({ id: "n-own", organizationId: "org-1", name: "OWNER", key: "jefe" })).rejects.toBeInstanceOf(RoleError);
+        await expect(storage.roles.create({ id: "n-own2", organizationId: "org-1", name: "Ówner", key: "jefe-2" })).rejects.toBeInstanceOf(RoleError);
+
+        // Concurrent creations of look-alike names: exactly one wins (the unique index, not a check-then-insert).
+        const outcomes = await Promise.allSettled(
+          ["Ventas", "ventas", "VENTAS", "Véntas"].map((name, index) =>
+            storage.roles.create({ id: `race-${index}`, organizationId: "org-1", name, key: `race-${index}` }),
+          ),
+        );
+        expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+      });
+
+      it("version sube con cada cambio real y expectedVersion rechaza una edición hecha desde una copia vieja", async () => {
+        const storage = await seed();
+        const role = await storage.roles.create({ id: "r-v", organizationId: "org-1", name: "Versionado", permissionKeys: ["a.read"] });
+        expect(role.version).toBe(1);
+
+        // update: sube; con la versión correcta pasa, con una vieja falla y no cambia nada.
+        expect((await storage.roles.update("r-v", { description: "uno" })).version).toBe(2);
+        expect((await storage.roles.update("r-v", { description: "dos", expectedVersion: 2 })).version).toBe(3);
+        await expect(storage.roles.update("r-v", { description: "viejo", expectedVersion: 2 })).rejects.toMatchObject({ code: "role_version_conflict" });
+        expect((await storage.roles.findByIds(["r-v"]))[0]).toMatchObject({ description: "dos", version: 3 });
+
+        // setPermissions: solo sube si algo cambió; el conflicto no toca nada.
+        await storage.roles.setPermissions("r-v", ["a.read"], { expectedVersion: 3 });
+        expect((await storage.roles.findByIds(["r-v"]))[0]!.version).toBe(3);
+        await storage.roles.setPermissions("r-v", ["a.read", "a.write"], { expectedVersion: 3 });
+        expect((await storage.roles.findByIds(["r-v"]))[0]).toMatchObject({ version: 4, permissionKeys: ["a.read", "a.write"] });
+        await expect(storage.roles.setPermissions("r-v", ["b.read"], { expectedVersion: 3 })).rejects.toMatchObject({ code: "role_version_conflict" });
+        expect((await storage.roles.findByIds(["r-v"]))[0]).toMatchObject({ version: 4, permissionKeys: ["a.read", "a.write"] });
+
+        // grant / revoke / rename: suben solo si hubo cambio.
+        await storage.roles.grantPermission("r-v", "a.read");
+        await storage.roles.revokePermission("r-v", "b.read");
+        expect((await storage.roles.findByIds(["r-v"]))[0]!.version).toBe(4);
+        await storage.roles.grantPermission("r-v", "b.read");
+        await storage.roles.revokePermission("r-v", "b.read");
+        expect((await storage.roles.findByIds(["r-v"]))[0]!.version).toBe(6);
+        expect((await storage.roles.rename("r-v", "Renombrado")).version).toBe(7);
+
+        // Valores que nunca coinciden son un error del llamador, no un conflicto.
+        await expect(storage.roles.update("r-v", { description: "x", expectedVersion: 0 })).rejects.toBeInstanceOf(TypeError);
+        await expect(storage.roles.setPermissions("r-v", [], { expectedVersion: 1.5 })).rejects.toBeInstanceOf(TypeError);
+        // Un rol inexistente sigue siendo role_not_found aunque se pase expectedVersion.
+        await expect(storage.roles.update("ghost", { name: "X", expectedVersion: 1 })).rejects.toMatchObject({ code: "role_not_found" });
+      });
+
+      it("update y rename que no cambian nada no suben la versión (Role.version)", async () => {
+        const storage = await seed();
+        await storage.roles.create({ id: "r-n", organizationId: "org-1", name: "Estable", description: "igual" });
+
+        expect((await storage.roles.update("r-n", { name: "Estable", description: "igual" })).version).toBe(1);
+        expect((await storage.roles.update("r-n", { description: "igual" })).version).toBe(1);
+        expect((await storage.roles.update("r-n", { name: "  Estable  " })).version).toBe(1);
+        expect((await storage.roles.rename("r-n", "Estable")).version).toBe(1);
+        expect((await storage.roles.findByIds(["r-n"]))[0]!.version).toBe(1);
+        // Un update sin cambios sigue validando expectedVersion, y no consume la versión.
+        await expect(storage.roles.update("r-n", { description: "igual", expectedVersion: 2 })).rejects.toMatchObject({ code: "role_version_conflict" });
+        expect((await storage.roles.update("r-n", { description: "igual", expectedVersion: 1 })).version).toBe(1);
+
+        // Un cambio real sí cuenta, aunque la otra mitad del update no cambie.
+        expect((await storage.roles.update("r-n", { name: "Estable", description: "otra" })).version).toBe(2);
+        expect((await storage.roles.update("r-n", { name: "Otro nombre", description: "otra" })).version).toBe(3);
+        // Borrar la descripción también es un cambio; borrarla otra vez no.
+        expect((await storage.roles.update("r-n", { description: null })).version).toBe(4);
+        expect((await storage.roles.update("r-n", { description: null })).version).toBe(4);
+      });
+
+      it("las lecturas devuelven copias: un rol leído no cambia con escrituras posteriores y permite reproducir role_version_conflict", async () => {
+        const storage = await seed();
+        await storage.roles.create({ id: "r-c", organizationId: "org-1", name: "Copia", permissionKeys: ["a.read"] });
+        const byList = (await storage.roles.listByOrganization("org-1")).find((role) => role.id === "r-c")!;
+        const byIds = (await storage.roles.findByIds(["r-c"]))[0]!;
+        expect(byList).toMatchObject({ version: 1, permissionKeys: ["a.read"] });
+
+        await storage.roles.update("r-c", { description: "nueva" });
+        await storage.roles.grantPermission("r-c", "a.write");
+        await storage.roles.rename("r-c", "Copia renombrada");
+
+        for (const stale of [byList, byIds]) {
+          expect(stale).toMatchObject({ name: "Copia", version: 1, permissionKeys: ["a.read"] });
+          expect(stale.description).toBeUndefined();
+        }
+        // La copia vieja lleva la versión vieja: guardarla desde ahí es un conflicto, no un pisotón.
+        await expect(storage.roles.update("r-c", { description: "pisada", expectedVersion: byList.version })).rejects.toMatchObject({ code: "role_version_conflict" });
+        await expect(storage.roles.setPermissions("r-c", [], { expectedVersion: byIds.version })).rejects.toMatchObject({ code: "role_version_conflict" });
+
+        // Y al revés: mutar lo leído no toca lo guardado.
+        const fresh = (await storage.roles.findByIds(["r-c"]))[0]!;
+        fresh.permissionKeys.push("a.admin");
+        fresh.name = "Manoseado";
+        expect((await storage.roles.findByIds(["r-c"]))[0]).toMatchObject({ name: "Copia renombrada", permissionKeys: ["a.read", "a.write"] });
+        // Lo que devuelve una escritura tampoco está vivo.
+        const written = await storage.roles.update("r-c", { description: "otra" });
+        await storage.roles.update("r-c", { description: "última" });
+        expect(written).toMatchObject({ description: "otra", version: 5 });
       });
 
       it("setPermissions deja EXACTAMENTE esas claves, devuelve lo que cambió y es todo o nada", async () => {
@@ -1170,6 +1585,67 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         await expect(storage.organizations.update("org-1", { slug: "Not Valid" })).rejects.toMatchObject({ code: "organization_slug_invalid" });
         await expect(storage.organizations.update("org-1", { name: "  " })).rejects.toMatchObject({ code: "organization_name_invalid" });
         expect(await storage.organizations.findById("org-1")).toMatchObject({ name: "Solo nombre", slug: "solo-slug" });
+      });
+
+      it("version sube con cada cambio y expectedVersion rechaza una edición hecha desde una copia vieja", async () => {
+        const storage = harness.storage();
+        const created = await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+        expect(created.version).toBe(1);
+
+        expect((await storage.organizations.rename("org-1", "Acme Uno"))?.version).toBe(2);
+        expect((await storage.organizations.update("org-1", { name: "Acme Dos", expectedVersion: 2 }))?.version).toBe(3);
+        await expect(storage.organizations.update("org-1", { name: "Viejo", expectedVersion: 2 })).rejects.toMatchObject({
+          code: "organization_version_conflict",
+        });
+        expect(await storage.organizations.findById("org-1")).toMatchObject({ name: "Acme Dos", version: 3 });
+
+        // setStatus sube solo cuando el estado cambia de verdad.
+        const actor = { provider: "test", subject: "admin" };
+        expect((await storage.organizations.setStatus("org-1", { status: "suspended", actor }))?.version).toBe(4);
+        expect((await storage.organizations.setStatus("org-1", { status: "suspended", actor }))?.version).toBe(4);
+        expect((await storage.organizations.update("org-1", { slug: "acme-dos", expectedVersion: 4 }))?.version).toBe(5);
+
+        // Un conflicto de slug no consume versión, y una organización inexistente sigue devolviendo null.
+        await storage.organizations.create({ id: "org-2", name: "Otra", slug: "otra" });
+        await expect(storage.organizations.update("org-1", { slug: "otra", expectedVersion: 5 })).rejects.toMatchObject({ code: "organization_slug_taken" });
+        expect((await storage.organizations.findById("org-1"))!.version).toBe(5);
+        expect(await storage.organizations.update("ghost", { name: "X", expectedVersion: 1 })).toBeNull();
+        await expect(storage.organizations.update("org-1", { name: "X", expectedVersion: 0 })).rejects.toBeInstanceOf(TypeError);
+      });
+
+      it("update y rename que no cambian nada no suben la versión", async () => {
+        const storage = harness.storage();
+        await storage.organizations.create({ id: "org-1", name: "Acme Motors", slug: "acme" });
+
+        expect((await storage.organizations.rename("org-1", "Acme Motors"))?.version).toBe(1);
+        expect((await storage.organizations.update("org-1", { name: "Acme Motors", slug: "acme" }))?.version).toBe(1);
+        expect((await storage.organizations.update("org-1", { slug: "acme" }))?.version).toBe(1);
+        // Sigue validando expectedVersion, y un cambio real sí cuenta.
+        await expect(storage.organizations.update("org-1", { name: "Acme Motors", expectedVersion: 2 })).rejects.toMatchObject({ code: "organization_version_conflict" });
+        expect((await storage.organizations.update("org-1", { name: "Acme Motors", slug: "acme-2", expectedVersion: 1 }))?.version).toBe(2);
+        expect((await storage.organizations.findById("org-1"))!.version).toBe(2);
+      });
+
+      it("las lecturas devuelven copias: una organización leída no cambia con escrituras posteriores", async () => {
+        const storage = harness.storage();
+        await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+        const actor = { provider: "test", subject: "admin" };
+        const byId = (await storage.organizations.findById("org-1"))!;
+        const listed = (await storage.organizations.list())[0]!;
+        const byIds = (await storage.organizations.findByIds(["org-1"]))[0]!;
+
+        await storage.organizations.rename("org-1", "Acme Dos");
+        await storage.organizations.setStatus("org-1", { status: "suspended", actor });
+
+        for (const stale of [byId, listed, byIds]) {
+          expect(stale).toMatchObject({ name: "Acme Motors", status: "active", version: 1 });
+          expect(stale.statusChange).toBeUndefined();
+        }
+        await expect(storage.organizations.update("org-1", { name: "Pisada", expectedVersion: byId.version })).rejects.toMatchObject({
+          code: "organization_version_conflict",
+        });
+        byId.name = "Manoseada";
+        expect((await storage.organizations.findById("org-1"))!.name).toBe("Acme Dos");
       });
 
       it("con createAuditedStorage queda registrado quién, de qué a qué y por qué", async () => {
@@ -1726,6 +2202,438 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         const entries = await raw.auditLogs.search({ actionPrefix: "support_grant." });
         expect(entries.map((entry) => entry.action).sort()).toEqual(["support_grant.created", "support_grant.revoked"]);
         expect(entries.find((entry) => entry.action === "support_grant.created")?.metadata).toMatchObject({ operator: ops, permissions: ["reports.read"], reason: "ticket 7" });
+      });
+    });
+
+    describe("teams — grupos organizativos, membresías de equipo y aislamiento por organización", () => {
+      const admin = { provider: "supabase", subject: "admin" };
+      const ana = { provider: "supabase", subject: "ana" };
+
+      /** The plain storage, whose team writes refuse anything without an authorization. */
+      async function seedRaw() {
+        const storage = harness.storage();
+        await createOrganizationWithOwner(storage, {
+          organizationId: "org-1",
+          organizationName: "Acme",
+          ownerRoleId: "role-owner",
+          membershipId: "m-owner",
+          ownerIdentity: identity,
+        });
+        await createOrganizationWithOwner(storage, {
+          organizationId: "org-2",
+          organizationName: "Otra",
+          ownerRoleId: "role-owner-2",
+          membershipId: "m-owner-2",
+          ownerIdentity: admin,
+        });
+        await storage.roles.create({ id: "role-sales", organizationId: "org-1", name: "Sales" });
+        await storage.roles.create({ id: "role-sales-2", organizationId: "org-2", name: "Sales" });
+        await storage.memberships.create({ id: "m-ana", organizationId: "org-1", identity: ana });
+        return storage;
+      }
+
+      /** Fixtures and direct repository checks go through the trusted wrapper; `.raw` is the storage as it is. */
+      async function seed() {
+        const raw = await seedRaw();
+        return Object.assign(createTrustedTeamStorage(raw, { actor: admin, reason: "conformance fixtures" }), { raw });
+      }
+
+      const team = (storage: Awaited<ReturnType<typeof seed>>, overrides: Record<string, unknown> = {}) =>
+        storage.teams.create({ id: "t-bcn", organizationId: "org-1", name: "  Barcelona   Sales ", ...overrides });
+
+      it("crea un equipo con slug derivado, metadata y settings, y lo encuentra por id, slug y externalId", async () => {
+        const storage = await seed();
+        const created = await team(storage, { externalId: " branch_348 ", metadata: { type: "branch", country: "ES", nested: { a: [1, 2] } }, settings: { timezone: "Europe/Madrid" } });
+        expect(created).toMatchObject({
+          id: "t-bcn",
+          organizationId: "org-1",
+          name: "Barcelona Sales",
+          slug: "barcelona-sales",
+          status: "active",
+          externalId: "branch_348",
+          metadata: { type: "branch", country: "ES", nested: { a: [1, 2] } },
+          settings: { timezone: "Europe/Madrid" },
+          version: 1,
+        });
+        expect(created.createdAt).toBeInstanceOf(Date);
+        expect(await storage.teams.findById("org-1", "t-bcn")).toEqual(created);
+        expect(await storage.teams.findBySlug("org-1", "barcelona-sales")).toEqual(created);
+        expect(await storage.teams.findByExternalId("org-1", "branch_348")).toEqual(created);
+        const bare = await storage.teams.create({ id: "t-bare", organizationId: "org-1", name: "Madrid", slug: "mad" });
+        expect(bare).toMatchObject({ slug: "mad", metadata: {}, settings: {} });
+        expect(bare.externalId).toBeUndefined();
+      });
+
+      it("rechaza datos inválidos, duplicados y organizaciones desconocidas con códigos estables", async () => {
+        const storage = await seed();
+        await team(storage, { externalId: "x1" });
+        const code = async (promise: Promise<unknown>) => promise.then(() => "ok", (error: unknown) => (error instanceof TeamError ? error.code : String(error)));
+        expect(await code(team(storage))).toBe("team_exists");
+        expect(await code(team(storage, { id: "t2" }))).toBe("team_slug_taken");
+        expect(await code(team(storage, { id: "t2", name: "Otro", externalId: "x1" }))).toBe("team_external_id_taken");
+        expect(await code(team(storage, { id: "t2", organizationId: "nope" }))).toBe("team_organization_unknown");
+        expect(await code(team(storage, { id: "t2", name: "   " }))).toBe("team_name_invalid");
+        expect(await code(team(storage, { id: "t2", name: "Otro", slug: "Mal Slug" }))).toBe("team_slug_invalid");
+        expect(await code(team(storage, { id: "t2", name: "Otro", metadata: { when: new Date() } }))).toBe("team_data_invalid");
+        expect(await code(team(storage, { id: "t2", name: "Otro", settings: { big: "x".repeat(17 * 1024) } }))).toBe("team_data_invalid");
+        // El mismo slug y externalId en OTRA organización es válido: la unicidad es por organización.
+        await storage.teams.create({ id: "t-other", organizationId: "org-2", name: "Barcelona Sales", externalId: "x1" });
+      });
+
+      describe("jerarquía de equipos", () => {
+        const codeOf = (promise: Promise<unknown>) =>
+          promise.then(() => "ok", (error: unknown) => (error instanceof TeamError ? error.code : String(error)));
+        const node = (storage: Awaited<ReturnType<typeof seed>>, id: string, parentId?: string, organizationId = "org-1") =>
+          storage.teams.create({ id, organizationId, name: id, ...(parentId !== undefined ? { parentId } : {}) });
+
+        it("anida equipos, y lista ancestros, descendientes y subequipos directos", async () => {
+          const storage = await seed();
+          await node(storage, "region");
+          expect((await node(storage, "branch", "region")).parentId).toBe("region");
+          await node(storage, "squad", "branch");
+          await node(storage, "other-branch", "region");
+          expect((await storage.teams.findById("org-1", "squad"))?.parentId).toBe("branch");
+          expect((await storage.teams.findById("org-1", "region"))?.parentId).toBeUndefined();
+
+          expect((await storage.teams.ancestors("org-1", "squad")).map((t) => t.id)).toEqual(["region", "branch"]);
+          expect(await storage.teams.ancestors("org-1", "region")).toEqual([]);
+          expect((await storage.teams.descendants("org-1", "region")).map((t) => t.id)).toEqual(["branch", "other-branch", "squad"]);
+          expect((await storage.teams.search({ organizationId: "org-1", parentId: "region" })).map((t) => t.id)).toEqual(["branch", "other-branch"]);
+          expect((await storage.teams.search({ organizationId: "org-1", parentId: null })).map((t) => t.id)).toEqual(["region"]);
+          expect(await storage.teams.count({ organizationId: "org-1", parentId: "branch" })).toBe(1);
+          // Otra organización no ve el árbol.
+          expect(await codeOf(storage.teams.ancestors("org-2", "squad"))).toBe("team_not_found");
+          expect(await codeOf(storage.teams.descendants("org-2", "region"))).toBe("team_not_found");
+        });
+
+        it("rechaza un padre inexistente, de otra organización, archivado, uno mismo, un bucle y más de 8 niveles", async () => {
+          const storage = await seed();
+          await node(storage, "a");
+          await node(storage, "b", "a");
+          await node(storage, "c", "b");
+          await node(storage, "foreign", undefined, "org-2");
+          expect(await codeOf(node(storage, "x", "nope"))).toBe("team_parent_invalid");
+          expect(await codeOf(node(storage, "x", "foreign"))).toBe("team_parent_invalid");
+          expect(await codeOf(storage.teams.update("org-1", "a", { parentId: "foreign" }))).toBe("team_parent_invalid");
+          expect(await codeOf(storage.teams.update("org-1", "a", { parentId: "a" }))).toBe("team_cycle");
+          expect(await codeOf(storage.teams.update("org-1", "a", { parentId: "c" }))).toBe("team_cycle");
+
+          // Ocho niveles caben; el noveno no, ni mover un subárbol que lo superaría.
+          let parent = "c";
+          for (const id of ["d", "e", "f", "g", "h"]) {
+            await node(storage, id, parent);
+            parent = id;
+          }
+          expect(await codeOf(node(storage, "i", "h"))).toBe("team_too_deep");
+          await node(storage, "side");
+          await node(storage, "side-child", "side");
+          expect(await codeOf(storage.teams.update("org-1", "side", { parentId: "h" }))).toBe("team_too_deep");
+          expect(await codeOf(storage.teams.update("org-1", "side-child", { parentId: "g" }))).toBe("ok");
+        });
+
+        it("mover un equipo conserva su subárbol, sube la versión solo si cambia y null lo deja en la raíz", async () => {
+          const storage = await seed();
+          await node(storage, "a");
+          await node(storage, "b");
+          await node(storage, "c", "a");
+          await node(storage, "d", "c");
+          const same = await storage.teams.update("org-1", "c", { parentId: "a" });
+          expect(same.version).toBe(1);
+          const moved = await storage.teams.update("org-1", "c", { parentId: "b" });
+          expect(moved).toMatchObject({ parentId: "b", version: 2 });
+          expect((await storage.teams.descendants("org-1", "b")).map((t) => t.id)).toEqual(["c", "d"]);
+          expect(await storage.teams.descendants("org-1", "a")).toEqual([]);
+          const root = await storage.teams.update("org-1", "c", { parentId: null });
+          expect(root.parentId).toBeUndefined();
+          expect(root.version).toBe(3);
+          expect((await storage.teams.ancestors("org-1", "d")).map((t) => t.id)).toEqual(["c"]);
+        });
+
+        it("no archiva un equipo con subequipos activos, no restaura bajo un padre archivado y no borra un padre", async () => {
+          const storage = await seed();
+          const actor = admin;
+          await node(storage, "a");
+          await node(storage, "b", "a");
+          expect(await codeOf(storage.teams.archive("org-1", "a", { actor }))).toBe("team_has_children");
+          await storage.teams.archive("org-1", "b", { actor });
+          await storage.teams.archive("org-1", "a", { actor });
+          expect(await codeOf(storage.teams.restore("org-1", "b", { actor }))).toBe("team_parent_invalid");
+          expect(await codeOf(storage.teams.update("org-1", "b", { name: "B" }))).toBe("team_archived");
+          // Un padre archivado no admite hijos nuevos.
+          expect(await codeOf(node(storage, "late", "a"))).toBe("team_parent_invalid");
+          expect(await codeOf(storage.teams.delete("org-1", "a")) ).toBe("team_has_children");
+          await storage.teams.delete("org-1", "b");
+          await storage.teams.delete("org-1", "a");
+          expect(await storage.teams.findById("org-1", "a")).toBeNull();
+        });
+      });
+
+      it("un teamId de otra organización se trata como inexistente en toda operación", async () => {
+        const storage = await seed();
+        await team(storage);
+        expect(await storage.teams.findById("org-2", "t-bcn")).toBeNull();
+        expect(await storage.teams.findBySlug("org-2", "barcelona-sales")).toBeNull();
+        expect(await storage.teams.search({ organizationId: "org-2" })).toEqual([]);
+        const code = async (promise: Promise<unknown>) => promise.then(() => "ok", (error: unknown) => (error instanceof TeamError ? error.code : String(error)));
+        expect(await code(storage.teams.update("org-2", "t-bcn", { name: "Hack" }))).toBe("team_not_found");
+        expect(await code(storage.teams.archive("org-2", "t-bcn", { actor: admin }))).toBe("team_not_found");
+        expect(await code(storage.teams.delete("org-2", "t-bcn"))).toBe("team_not_found");
+        // Una membresía de la organización 1 no puede entrar en un equipo de la 2, ni al revés.
+        await storage.teams.create({ id: "t-2", organizationId: "org-2", name: "Dos" });
+        expect(await code(storage.teamMemberships.add({ id: "tm1", organizationId: "org-1", teamId: "t-2", membershipId: "m-ana" }))).toBe("team_not_found");
+        expect(await code(storage.teamMemberships.add({ id: "tm1", organizationId: "org-2", teamId: "t-2", membershipId: "m-ana" }))).toBe("team_member_unknown");
+        expect(await code(storage.teamMemberships.add({ id: "tm1", organizationId: "org-1", teamId: "t-bcn", membershipId: "m-owner-2" }))).toBe("team_member_unknown");
+        expect(await storage.teamMemberships.count({ organizationId: "org-1" })).toBe(0);
+      });
+
+      it("update cambia lo pedido, sube la versión solo si algo cambia y detecta versiones viejas", async () => {
+        const storage = await seed();
+        await team(storage, { externalId: "x1", metadata: { a: 1 } });
+        const same = await storage.teams.update("org-1", "t-bcn", { name: "Barcelona Sales", metadata: { a: 1 } });
+        expect(same.version).toBe(1);
+        const renamed = await storage.teams.update("org-1", "t-bcn", { name: "BCN", slug: "bcn", externalId: null, metadata: { a: 2 }, settings: { s: true }, expectedVersion: 1 });
+        expect(renamed).toMatchObject({ name: "BCN", slug: "bcn", metadata: { a: 2 }, settings: { s: true }, version: 2 });
+        expect(renamed.externalId).toBeUndefined();
+        expect(await storage.teams.findByExternalId("org-1", "x1")).toBeNull();
+        const code = async (promise: Promise<unknown>) => promise.then(() => "ok", (error: unknown) => (error instanceof TeamError ? error.code : String(error)));
+        expect(await code(storage.teams.update("org-1", "t-bcn", { name: "Viejo", expectedVersion: 1 }))).toBe("team_version_conflict");
+        expect(await code(storage.teams.update("org-1", "t-bcn", {}))).toBe("team_update_empty");
+        await storage.teams.create({ id: "t-2", organizationId: "org-1", name: "Dos", externalId: "x2" });
+        expect(await code(storage.teams.update("org-1", "t-2", { slug: "bcn" }))).toBe("team_slug_taken");
+        expect(await code(storage.teams.update("org-1", "t-2", { externalId: "x2" }))).toBe("ok");
+      });
+
+      it("search pagina por id con filtros, y count coincide", async () => {
+        const storage = await seed();
+        for (const [id, name] of [["t-1", "Alpha"], ["t-2", "Beta"], ["t-3", "Gamma"]] as const) await storage.teams.create({ id, organizationId: "org-1", name, externalId: `ext-${id}` });
+        await storage.teams.archive("org-1", "t-2", { actor: admin });
+        const ids = async (options: Record<string, unknown>) => (await storage.teams.search({ organizationId: "org-1", ...options })).map((entry) => entry.id);
+        expect(await ids({})).toEqual(["t-1", "t-2", "t-3"]);
+        expect(await ids({ limit: 2 })).toEqual(["t-1", "t-2"]);
+        expect(await ids({ limit: 2, after: "t-2" })).toEqual(["t-3"]);
+        expect(await ids({ status: "archived" })).toEqual(["t-2"]);
+        expect(await ids({ query: "AMM" })).toEqual(["t-3"]);
+        expect(await ids({ externalId: "ext-t-1" })).toEqual(["t-1"]);
+        expect(await storage.teams.count({ organizationId: "org-1" })).toBe(3);
+        expect(await storage.teams.count({ organizationId: "org-1", status: "active" })).toBe(2);
+        expect(await storage.teams.count({ organizationId: "org-2" })).toBe(0);
+      });
+
+      it("archivar conserva el equipo y sus miembros, bloquea cambios y altas, y restaurar los reabre", async () => {
+        const storage = await seed();
+        await team(storage);
+        await storage.teamMemberships.add({ id: "tm1", organizationId: "org-1", teamId: "t-bcn", membershipId: "m-ana" });
+        const archived = await storage.teams.archive("org-1", "t-bcn", { actor: admin, reason: "  sucursal cerrada " });
+        expect(archived).toMatchObject({ status: "archived", version: 2, archived: { by: admin, reason: "sucursal cerrada" } });
+        expect(archived.archived?.at).toBeInstanceOf(Date);
+        expect((await storage.teams.archive("org-1", "t-bcn", { actor: admin })).version).toBe(2);
+        const code = async (promise: Promise<unknown>) => promise.then(() => "ok", (error: unknown) => (error instanceof TeamError ? error.code : String(error)));
+        expect(await code(storage.teams.update("org-1", "t-bcn", { name: "Nuevo" }))).toBe("team_archived");
+        expect(await code(storage.teamMemberships.add({ id: "tm2", organizationId: "org-1", teamId: "t-bcn", membershipId: "m-owner" }))).toBe("team_archived");
+        expect(await storage.teamMemberships.findById("org-1", "tm1")).toMatchObject({ status: "active" });
+        const restored = await storage.teams.restore("org-1", "t-bcn", { actor: admin });
+        expect(restored).toMatchObject({ status: "active", version: 3 });
+        expect(restored.archived).toBeUndefined();
+        expect((await storage.teams.restore("org-1", "t-bcn", { actor: admin })).version).toBe(3);
+        expect(await code(storage.teams.archive("org-1", "t-bcn", { actor: admin, expectedVersion: 1 }))).toBe("team_version_conflict");
+      });
+
+      it("solo se borra un equipo archivado, con sus membresías de equipo, y las de la organización siguen", async () => {
+        const storage = await seed();
+        await team(storage);
+        await storage.teamMemberships.add({ id: "tm1", organizationId: "org-1", teamId: "t-bcn", membershipId: "m-ana" });
+        const code = async (promise: Promise<unknown>) => promise.then(() => "ok", (error: unknown) => (error instanceof TeamError ? error.code : String(error)));
+        expect(await code(storage.teams.delete("org-1", "t-bcn"))).toBe("team_not_archived");
+        await storage.teams.archive("org-1", "t-bcn", { actor: admin });
+        await storage.teams.delete("org-1", "t-bcn");
+        expect(await storage.teams.findById("org-1", "t-bcn")).toBeNull();
+        expect(await storage.teamMemberships.findById("org-1", "tm1")).toBeNull();
+        expect(await storage.memberships.findById("m-ana")).not.toBeNull();
+        // El slug queda libre para un equipo nuevo.
+        await team(storage, { id: "t-new" });
+      });
+
+      it("un usuario puede estar en varios equipos o en ninguno, con responsabilidad y roles propios por equipo", async () => {
+        const storage = await seed();
+        await team(storage);
+        await storage.teams.create({ id: "t-mad", organizationId: "org-1", name: "Madrid" });
+        expect(await storage.teamMemberships.search({ organizationId: "org-1", membershipId: "m-ana" })).toEqual([]);
+        const inBcn = await storage.teamMemberships.add({ id: "tm-bcn", organizationId: "org-1", teamId: "t-bcn", membershipId: "m-ana", responsibility: "manager", roleIds: ["role-sales"], invitedBy: admin });
+        const inMad = await storage.teamMemberships.add({ id: "tm-mad", organizationId: "org-1", teamId: "t-mad", membershipId: "m-ana" });
+        expect(inBcn).toMatchObject({ teamId: "t-bcn", membershipId: "m-ana", status: "active", responsibility: "manager", roleIds: ["role-sales"], invitedBy: admin, version: 1 });
+        expect(inBcn.joinedAt).toBeInstanceOf(Date);
+        expect(inMad).toMatchObject({ responsibility: "member", roleIds: [] });
+        expect((await storage.teamMemberships.find("org-1", "t-bcn", "m-ana"))?.id).toBe("tm-bcn");
+        expect(await storage.teamMemberships.find("org-2", "t-bcn", "m-ana")).toBeNull();
+        expect((await storage.teamMemberships.search({ organizationId: "org-1", identity: ana })).map((row) => row.id)).toEqual(["tm-bcn", "tm-mad"]);
+        expect((await storage.teamMemberships.search({ organizationId: "org-1", teamId: "t-bcn", responsibility: "manager" })).map((row) => row.id)).toEqual(["tm-bcn"]);
+        expect((await storage.teamMemberships.search({ organizationId: "org-1", limit: 1, after: "tm-bcn" })).map((row) => row.id)).toEqual(["tm-mad"]);
+        expect(await storage.teamMemberships.count({ organizationId: "org-1", membershipId: "m-ana" })).toBe(2);
+        const code = async (promise: Promise<unknown>) => promise.then(() => "ok", (error: unknown) => (error instanceof TeamError ? error.code : String(error)));
+        expect(await code(storage.teamMemberships.add({ id: "tm-x", organizationId: "org-1", teamId: "t-bcn", membershipId: "m-ana" }))).toBe("team_membership_exists");
+      });
+
+      it("el ciclo de vida pending → active → suspended → removed solo admite saltos válidos y es idempotente", async () => {
+        const storage = await seed();
+        await team(storage);
+        const invited = await storage.teamMemberships.add({ id: "tm1", organizationId: "org-1", teamId: "t-bcn", membershipId: "m-ana", status: "pending", invitedBy: admin });
+        expect(invited).toMatchObject({ status: "pending" });
+        expect(invited.joinedAt).toBeUndefined();
+        const code = async (promise: Promise<unknown>) => promise.then(() => "ok", (error: unknown) => (error instanceof TeamError ? error.code : String(error)));
+        expect(await code(storage.teamMemberships.setStatus("org-1", "tm1", "suspended", { actor: admin }))).toBe("team_membership_transition_invalid");
+        // Nobody but the invited person can accept: not an admin, not another member, not through setStatus.
+        expect(await code(storage.teamMemberships.setStatus("org-1", "tm1", "active", { actor: ana }))).toBe("team_membership_transition_invalid");
+        expect(await code(storage.teamMemberships.accept("org-1", "tm1", { actor: admin }))).toBe("team_accept_forbidden");
+        expect(await code(storage.teamMemberships.accept("org-1", "tm1", { actor: identity }))).toBe("team_accept_forbidden");
+        expect(await code(storage.teamMemberships.accept("org-2", "tm1", { actor: ana }))).toBe("team_membership_not_found");
+        expect((await storage.teamMemberships.findById("org-1", "tm1"))?.status).toBe("pending");
+        const accepted = await storage.teamMemberships.accept("org-1", "tm1", { actor: ana });
+        expect(accepted).toMatchObject({ status: "active", version: 2, statusChange: { by: ana } });
+        expect(accepted.joinedAt).toBeInstanceOf(Date);
+        expect((await storage.teamMemberships.accept("org-1", "tm1", { actor: ana })).version).toBe(2);
+        const suspended = await storage.teamMemberships.setStatus("org-1", "tm1", "suspended", { actor: admin, reason: " baja temporal " });
+        expect(suspended).toMatchObject({ status: "suspended", statusChange: { by: admin, reason: "baja temporal" } });
+        expect((await storage.teamMemberships.setStatus("org-1", "tm1", "active", { actor: admin })).status).toBe("active");
+        await storage.teamMemberships.setStatus("org-1", "tm1", "removed", { actor: admin });
+        expect(await code(storage.teamMemberships.setStatus("org-1", "tm1", "active", { actor: admin }))).toBe("team_membership_transition_invalid");
+        expect(await code(storage.teamMemberships.setStatus("org-1", "tm1", "bogus" as never, { actor: admin }))).toBe("team_membership_invalid");
+        expect(await code(storage.teamMemberships.setStatus("org-2", "tm1", "removed", { actor: admin }))).toBe("team_membership_not_found");
+        // Volver a añadir a un miembro quitado reutiliza la fila: el historial (id, alta, joinedAt) se conserva.
+        const back = await storage.teamMemberships.add({ id: "tm-new", organizationId: "org-1", teamId: "t-bcn", membershipId: "m-ana", responsibility: "manager" });
+        expect(back).toMatchObject({ id: "tm1", status: "active", responsibility: "manager", roleIds: [] });
+        expect(back.joinedAt).toEqual(accepted.joinedAt);
+        expect(back.version).toBeGreaterThan(accepted.version);
+        expect(await storage.teamMemberships.count({ organizationId: "org-1", teamId: "t-bcn" })).toBe(1);
+      });
+
+      it("responsabilidad y roles del equipo: misma organización, nunca el rol Owner, idempotentes y con control de versión", async () => {
+        const storage = await seed();
+        await team(storage);
+        const added = await storage.teamMemberships.add({ id: "tm1", organizationId: "org-1", teamId: "t-bcn", membershipId: "m-ana" });
+        const code = async (promise: Promise<unknown>) => promise.then(() => "ok", (error: unknown) => (error instanceof TeamError ? error.code : String(error)));
+        const manager = await storage.teamMemberships.setResponsibility("org-1", "tm1", "manager", { expectedVersion: 1 });
+        expect(manager).toMatchObject({ responsibility: "manager", version: 2 });
+        expect((await storage.teamMemberships.setResponsibility("org-1", "tm1", "manager")).version).toBe(2);
+        expect(await code(storage.teamMemberships.setResponsibility("org-1", "tm1", "owner", { expectedVersion: 1 }))).toBe("team_membership_version_conflict");
+        expect(await code(storage.teamMemberships.setResponsibility("org-1", "tm1", "boss" as never))).toBe("team_membership_invalid");
+        const withRole = await storage.teamMemberships.assignRole("org-1", "tm1", "role-sales");
+        expect(withRole).toMatchObject({ roleIds: ["role-sales"], version: 3 });
+        expect((await storage.teamMemberships.assignRole("org-1", "tm1", "role-sales")).version).toBe(3);
+        expect(await code(storage.teamMemberships.assignRole("org-1", "tm1", "role-sales-2"))).toBe("team_role_invalid");
+        expect(await code(storage.teamMemberships.assignRole("org-1", "tm1", "nope"))).toBe("team_role_invalid");
+        expect(await code(storage.teamMemberships.assignRole("org-1", "tm1", "role-owner"))).toBe("team_role_owner_protected");
+        expect(await code(storage.teamMemberships.add({ id: "tm2", organizationId: "org-1", teamId: "t-bcn", membershipId: "m-owner", roleIds: ["role-owner"] }))).toBe("team_role_owner_protected");
+        expect((await storage.teamMemberships.unassignRole("org-1", "tm1", "role-sales")).roleIds).toEqual([]);
+        expect((await storage.teamMemberships.unassignRole("org-1", "tm1", "role-sales")).version).toBe(4);
+        expect(added.roleIds).toEqual([]);
+      });
+
+      it("borrar la membresía de la organización o un rol limpia las membresías de equipo que dependían de ello", async () => {
+        const storage = await seed();
+        await team(storage);
+        await storage.roles.create({ id: "role-temp", organizationId: "org-1", name: "Temp" });
+        await storage.teamMemberships.add({ id: "tm1", organizationId: "org-1", teamId: "t-bcn", membershipId: "m-ana", roleIds: ["role-sales", "role-temp"] });
+        await storage.roles.delete("role-temp");
+        expect((await storage.teamMemberships.findById("org-1", "tm1"))?.roleIds).toEqual(["role-sales"]);
+        await storage.memberships.delete("m-ana");
+        expect(await storage.teamMemberships.findById("org-1", "tm1")).toBeNull();
+        expect(await storage.teams.findById("org-1", "t-bcn")).not.toBeNull();
+      });
+
+      it("la base de datos nunca acepta una escritura de equipos sin autorización válida (ni con una falsificada)", async () => {
+        const { raw } = await seed();
+        const bads = [undefined, null, {}, "token", { organizationId: "org-1", actor: admin }] as never[];
+        const attempts: Array<[string, (authorization: never) => Promise<unknown>]> = [
+          ["teams.create", (a) => raw.teams.create({ id: "t9", organizationId: "org-1", name: "Nueve", authorization: a })],
+          ["teams.update", (a) => raw.teams.update("org-1", "t9", { name: "x", authorization: a })],
+          ["teams.archive", (a) => raw.teams.archive("org-1", "t9", { actor: admin, authorization: a })],
+          ["teams.restore", (a) => raw.teams.restore("org-1", "t9", { actor: admin, authorization: a })],
+          ["teams.delete", (a) => raw.teams.delete("org-1", "t9", { authorization: a })],
+          ["teamMemberships.add", (a) => raw.teamMemberships.add({ id: "x", organizationId: "org-1", teamId: "t9", membershipId: "m-ana", authorization: a })],
+          ["teamMemberships.setStatus", (a) => raw.teamMemberships.setStatus("org-1", "x", "suspended", { actor: admin, authorization: a })],
+          ["teamMemberships.accept", (a) => raw.teamMemberships.accept("org-1", "x", { actor: ana, authorization: a })],
+          ["teamMemberships.setResponsibility", (a) => raw.teamMemberships.setResponsibility("org-1", "x", "manager", { authorization: a })],
+          ["teamMemberships.assignRole", (a) => raw.teamMemberships.assignRole("org-1", "x", "role-sales", { authorization: a })],
+          ["teamMemberships.unassignRole", (a) => raw.teamMemberships.unassignRole("org-1", "x", "role-sales", { authorization: a })],
+        ];
+        for (const [name, attempt] of attempts) {
+          for (const bad of bads) {
+            await expect(attempt(bad), name).rejects.toMatchObject({ code: "team_authorization_required" });
+          }
+        }
+        expect(await raw.teams.count({ organizationId: "org-1" })).toBe(0);
+      });
+
+      it("el servicio de equipos: nadie cambia de equipo sin permiso, con el motor y la escritura en la misma transacción", async () => {
+        const storage = await seed();
+        const service = createTeamService({ storage: storage.raw });
+        const engine = createAuthorizationEngine(storage.raw);
+        const lead = { provider: "supabase", subject: "lead" };
+        for (const key of [...Object.values(TEAM_PERMISSIONS), "vehicles.read"]) await storage.permissions.register({ key });
+        await storage.roles.create({ id: "role-hr", organizationId: "org-1", name: "HR", permissionKeys: Object.values(TEAM_PERMISSIONS) });
+        await storage.roles.create({ id: "role-lead", organizationId: "org-1", name: "Lead", permissionKeys: [TEAM_PERMISSIONS.membersAdd, "vehicles.read"] });
+        await storage.roles.create({ id: "role-read", organizationId: "org-1", name: "Reader", permissionKeys: ["vehicles.read"] });
+        await storage.memberships.create({ id: "m-hr", organizationId: "org-1", identity: admin, roleIds: ["role-hr"] });
+        await storage.memberships.create({ id: "m-lead", organizationId: "org-1", identity: lead });
+        await storage.teams.create({ id: "t-bcn", organizationId: "org-1", name: "Barcelona" });
+        await storage.teams.create({ id: "t-mad", organizationId: "org-1", name: "Madrid" });
+        await storage.teamMemberships.add({ id: "tm-lead", organizationId: "org-1", teamId: "t-bcn", membershipId: "m-lead", responsibility: "manager", roleIds: ["role-lead"] });
+        await storage.teamMemberships.add({ id: "tm-ana", organizationId: "org-1", teamId: "t-bcn", membershipId: "m-ana", roleIds: ["role-read"] });
+        const code = async (promise: Promise<unknown>) => promise.then(() => "ok", (error: unknown) => (error instanceof TeamError ? error.code : String(error)));
+
+        // Contexto de equipo: lo que da un rol de equipo vale solo dentro de ese equipo.
+        expect(await engine.can({ identity: ana, organizationId: "org-1", permission: "vehicles.read", teamId: "t-bcn" })).toBe(true);
+        expect(await engine.can({ identity: ana, organizationId: "org-1", permission: "vehicles.read", teamId: "t-mad" })).toBe(false);
+        expect(await engine.can({ identity: ana, organizationId: "org-1", permission: "vehicles.read" })).toBe(false);
+        expect(await engine.can({ identity: identity, organizationId: "org-1", permission: "vehicles.read", teamId: "t-bcn" })).toBe(false);
+
+        // Ana no puede cambiarse de equipo, ni el responsable de Barcelona sacarla a Madrid.
+        const move = (actor: typeof ana) => service.moveMember({ actor, organizationId: "org-1", membershipId: "m-ana", fromTeamId: "t-bcn", toTeamId: "t-mad", id: "tm-moved" });
+        expect(await code(service.addMember({ actor: ana, id: "self", organizationId: "org-1", teamId: "t-mad", membershipId: "m-ana" }))).toBe("team_forbidden");
+        expect(await code(move(ana))).toBe("team_forbidden");
+        expect(await code(move(lead))).toBe("team_forbidden");
+        expect(await code(service.addMember({ actor: lead, id: "x", organizationId: "org-1", teamId: "t-mad", membershipId: "m-hr" }))).toBe("team_forbidden");
+        expect((await storage.teamMemberships.find("org-1", "t-bcn", "m-ana"))?.status).toBe("active");
+        expect(await storage.teamMemberships.find("org-1", "t-mad", "m-ana")).toBeNull();
+
+        // Con el permiso organizativo sí, y queda auditado con quien lo hizo.
+        expect((await move(admin)).teamId).toBe("t-mad");
+        expect((await storage.teamMemberships.find("org-1", "t-bcn", "m-ana"))?.status).toBe("removed");
+        const entries = await storage.auditLogs.search({ organizationId: "org-1", actionPrefix: "team_member." });
+        expect(entries.map((entry) => [entry.action, entry.actor.subject]).sort()).toEqual([["team_member.added", "admin"], ["team_member.removed", "admin"]]);
+
+        // Un movimiento que falla (destino archivado) no cambia nada, y la transacción lo deshace si algo se escribió.
+        await storage.teams.archive("org-1", "t-mad", { actor: admin });
+        await storage.teamMemberships.add({ id: "tm-back", organizationId: "org-1", teamId: "t-bcn", membershipId: "m-ana" });
+        expect(await code(service.moveMember({ actor: admin, organizationId: "org-1", membershipId: "m-ana", fromTeamId: "t-bcn", toTeamId: "t-mad", id: "tm-again" }))).toBe("team_archived");
+        expect((await storage.teamMemberships.find("org-1", "t-bcn", "m-ana"))?.status).toBe("active");
+      });
+
+      it("un storage auditado deja rastro de cada cambio, con nombres estándar y una sola vez", async () => {
+        const raw = await seedRaw();
+        const audited = createTrustedTeamStorage(createAuditedStorage(raw, { actor: admin }), { actor: admin, reason: "conformance audit check" });
+        await audited.teams.create({ id: "t-a", organizationId: "org-1", name: "Auditado" });
+        await audited.teams.update("org-1", "t-a", { name: "Auditado 2", metadata: { type: "project" } });
+        await audited.teams.update("org-1", "t-a", { name: "Auditado 2" });
+        await audited.teamMemberships.add({ id: "tma", organizationId: "org-1", teamId: "t-a", membershipId: "m-ana", status: "pending" });
+        await audited.teamMemberships.accept("org-1", "tma", { actor: ana });
+        await audited.teamMemberships.setResponsibility("org-1", "tma", "manager");
+        await audited.teamMemberships.setResponsibility("org-1", "tma", "owner");
+        await audited.teamMemberships.assignRole("org-1", "tma", "role-sales");
+        await audited.teamMemberships.assignRole("org-1", "tma", "role-sales");
+        await audited.teamMemberships.setStatus("org-1", "tma", "removed", { actor: admin });
+        await audited.teams.archive("org-1", "t-a", { actor: admin });
+        await audited.teams.archive("org-1", "t-a", { actor: admin });
+        await audited.teams.restore("org-1", "t-a", { actor: admin });
+        await audited.teams.archive("org-1", "t-a", { actor: admin });
+        await audited.teams.delete("org-1", "t-a");
+        const entries = await raw.auditLogs.search({ organizationId: "org-1", actionPrefix: "team" });
+        expect(entries.map((entry) => entry.action).sort()).toEqual([
+          "team.archived", "team.archived", "team.created", "team.deleted", "team.manager_changed", "team.owner_changed", "team.restored", "team.updated",
+          "team_member.accepted", "team_member.invited", "team_member.removed", "team_member.role_assigned",
+        ]);
+        expect(entries.find((entry) => entry.action === "team_member.invited")).toMatchObject({ target: { type: "team_member", id: "tma" }, metadata: { teamId: "t-a", membershipId: "m-ana" } });
+        expect(entries.find((entry) => entry.action === "team.updated")?.metadata).toEqual({ changed: { name: { from: "Auditado", to: "Auditado 2" }, metadata: true } });
       });
     });
 
@@ -2908,6 +3816,23 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         await expect(storage.invitations.create(base({ id: "inv-3", tokenHash: "hash-3" }))).resolves.toBeDefined();
       });
 
+      it("stores an idempotency key per organization, finds it back and refuses a second use, enforced by the database", async () => {
+        const storage = await seed();
+        expect(await storage.invitations.findByIdempotencyKey("org-1", "k-1")).toBeNull();
+        const first = await storage.invitations.create(base({ idempotency: { key: "k-1", hash: "h-1" } }));
+        const found = await storage.invitations.findByIdempotencyKey("org-1", "k-1");
+        expect(found).toMatchObject({ hash: "h-1", invitation: { id: first.id } });
+        expect(await storage.invitations.findByIdempotencyKey("org-1", "other")).toBeNull();
+
+        // The same key can't belong to a second invitation of the organization, even for another e-mail.
+        await expect(
+          storage.invitations.create(base({ id: "inv-2", tokenHash: "hash-2", email: "otro@x.com", idempotency: { key: "k-1", hash: "h-2" } })),
+        ).rejects.toMatchObject({ reason: "idempotency_conflict" });
+        // Invitations without a key never collide, and another organization has its own keys.
+        await expect(storage.invitations.create(base({ id: "inv-3", tokenHash: "hash-3", email: "tres@x.com" }))).resolves.toBeDefined();
+        await expect(storage.invitations.create(base({ id: "inv-4", tokenHash: "hash-4", email: "cuatro@x.com" }))).resolves.toBeDefined();
+      });
+
       it("rejects unknown organizations and roles with an InvitationError", async () => {
         const storage = await seed();
         await expect(storage.invitations.create(base({ organizationId: "ghost" }))).rejects.toThrow(InvitationError);
@@ -3028,6 +3953,58 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         expect(await harness.probe.countAuditEntries("invitation.accepted")).toBe(1);
       });
 
+      it("offers teams with an invitation: stored with the roles, isolated per organization, and joined only on accept", async () => {
+        const storage = await seed();
+        const teams = createTrustedTeamStorage(storage, { actor: owner, reason: "conformance fixtures" });
+        await teams.teams.create({ id: "team-a", organizationId: "org-1", name: "Alpha" });
+        await storage.organizations.create({ id: "org-2", name: "Other" });
+        await teams.teams.create({ id: "team-x", organizationId: "org-2", name: "Foreign" });
+
+        // The database refuses a team of another organization.
+        await expect(storage.invitations.create(base({ teamIds: ["team-x"] }))).rejects.toMatchObject({ reason: "bad_request" });
+
+        const created = await storage.invitations.create(base({ teamIds: ["team-a", "team-a"] }));
+        expect(created.teamIds).toEqual(["team-a"]);
+        expect((await storage.invitations.findByTokenHash("hash-1"))?.teamIds).toEqual(["team-a"]);
+        expect((await storage.invitations.create(base({ id: "inv-2", email: "b@example.com", tokenHash: "hash-2" }))).teamIds).toEqual([]);
+
+        // The offer goes away with its team.
+        await teams.teams.archive("org-1", "team-a", { actor: owner });
+        await teams.teams.delete("org-1", "team-a", { actor: owner });
+        expect((await storage.invitations.findById("inv-1"))?.teamIds).toEqual([]);
+      });
+
+      it("joins offered teams through the service only while the inviter still may add people to them", async () => {
+        const storage = await seed();
+        const teams = createTrustedTeamStorage(storage, { actor: owner, reason: "conformance fixtures" });
+        await teams.teams.create({ id: "team-a", organizationId: "org-1", name: "Alpha" });
+        await teams.teams.create({ id: "team-b", organizationId: "org-1", name: "Beta" });
+        const service = createInvitationService({ storage, acceptUrl: (token) => `https://app.test/invite/${token}` });
+        const accept = async (email: string, teamIds: string[], identity = newcomer) => {
+          const { acceptUrl } = await service.invite({ organizationId: "org-1", email, roleIds: ["role-editor"], invitedBy: owner, teamIds });
+          return service.accept({ token: acceptUrl.split("/invite/")[1]!, identity, verifiedEmail: email });
+        };
+
+        const result = await accept("ana@example.com", ["team-a", "team-b"]);
+        expect(result.teamsSkipped).toEqual([]);
+        expect(result.teams.map((row) => [row.teamId, row.status, row.responsibility]).sort()).toEqual([
+          ["team-a", "active", "member"],
+          ["team-b", "active", "member"],
+        ]);
+        expect(await harness.probe.countAuditEntries("team_member.added")).toBe(2);
+
+        // A team that was archived before accepting is skipped, not forced.
+        const { acceptUrl } = await service.invite({ organizationId: "org-1", email: "bo@example.com", roleIds: ["role-editor"], invitedBy: owner, teamIds: ["team-a"] });
+        await teams.teams.archive("org-1", "team-a", { actor: owner });
+        const second = await service.accept({
+          token: acceptUrl.split("/invite/")[1]!,
+          identity: { provider: "supabase", subject: "bo" },
+          verifiedEmail: "bo@example.com",
+        });
+        expect(second.teams).toEqual([]);
+        expect(second.teamsSkipped).toEqual(["team-a"]);
+      });
+
       it("rolls the claim back when the membership step fails inside the transaction", async () => {
         const storage = await seed();
         await storage.invitations.create(base({ roleIds: ["role-viewer"] }));
@@ -3099,6 +4076,82 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         expect(await storage.memberships.findByIdentity("org-1", alice)).not.toBeNull();
         expect(await harness.probe.countAuditEntries("membership.left")).toBe(1);
       });
+    });
+
+    describe("text search and capped counts", () => {
+      const person = (subject: string) => ({ provider: "auth0", subject });
+
+      it("finds a substring anywhere, ignoring case, and reads literally what looks like a wildcard", async () => {
+        const storage = harness.storage();
+        await storage.organizations.create({ id: "org-1", name: "Search Org" });
+        await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity: person("ana.perez@example.com") });
+        await storage.memberships.create({ id: "m-2", organizationId: "org-1", identity: person("bob@Example.com") });
+        await storage.memberships.create({ id: "m-3", organizationId: "org-1", identity: person("carlos_100%@other.io") });
+
+        const ids = async (query: string) => (await storage.memberships.searchListing({ organizationId: "org-1", query, rolesPerMember: 1 })).map((m) => m.id);
+        expect(await ids("EXAMPLE.com")).toEqual(["m-1", "m-2"]);
+        expect(await ids("a.pe")).toEqual(["m-1"]);
+        expect(await ids("ob@")).toEqual(["m-2"]);
+        expect(await ids("bo")).toEqual(["m-2"]); // shorter than a trigram: the exact predicate alone
+        expect(await ids("_100%")).toEqual(["m-3"]);
+        expect(await ids("%")).toEqual(["m-3"]);
+        expect(await ids("zzz")).toEqual([]);
+        expect(await storage.memberships.count({ organizationId: "org-1", query: "example.com" })).toBe(2);
+        expect((await storage.memberships.search({ query: "other.io" })).map((m) => m.id)).toEqual(["m-3"]);
+      });
+
+      it("keeps the search current when rows change or disappear", async () => {
+        const storage = harness.storage();
+        await storage.organizations.create({ id: "org-1", name: "Initial Name" });
+        await storage.memberships.create({ id: "m-1", organizationId: "org-1", identity: person("temp.user@example.com") });
+        await storage.invitations.create({
+          id: "inv-1", organizationId: "org-1", email: "invitee@example.com", roleIds: [], tokenHash: "hash-1",
+          invitedBy: person("temp.user@example.com"), createdAt: new Date(), expiresAt: new Date(Date.now() + 86_400_000),
+        }).catch(() => undefined);
+
+        expect(await storage.organizations.count({ query: "initial name" })).toBe(1);
+        await storage.organizations.rename("org-1", "Renamed Corp");
+        expect(await storage.organizations.count({ query: "initial name" })).toBe(0);
+        expect(await storage.organizations.count({ query: "renamed" })).toBe(1);
+
+        await storage.memberships.delete("m-1");
+        expect(await storage.memberships.count({ query: "temp.user" })).toBe(0);
+        expect(await storage.memberships.search({ query: "temp.user" })).toEqual([]);
+      });
+
+      it("count({ limit }) stops at the limit and is exact below it", async () => {
+        const storage = harness.storage();
+        await storage.organizations.create({ id: "org-1", name: "Count Org" });
+        for (let i = 0; i < 5; i++) await storage.memberships.create({ id: `m-${i}`, organizationId: "org-1", identity: person(`u${i}@count.io`) });
+
+        expect(await storage.memberships.count({ organizationId: "org-1" })).toBe(5);
+        expect(await storage.memberships.count({ organizationId: "org-1", limit: 3 })).toBe(3);
+        expect(await storage.memberships.count({ organizationId: "org-1", limit: 50 })).toBe(5);
+        expect(await storage.memberships.count({ query: "count.io", limit: 2 })).toBe(2);
+        expect(await storage.organizations.count({ limit: 1 })).toBe(1);
+        expect(await storage.memberships.countByOrganization(["org-1", "nope"], { limit: 3 })).toEqual({ "org-1": 3, nope: 0 });
+        expect(await storage.memberships.countByOrganization(["org-1", "nope"])).toEqual({ "org-1": 5, nope: 0 });
+        expect(await storage.roles.countByOrganization(["org-1"], { limit: 1 })).toEqual({ "org-1": 0 });
+      });
+
+      it("pages a term that matches thousands of rows, in order and without gaps", async () => {
+        const storage = harness.storage();
+        await storage.organizations.create({ id: "org-1", name: "Big Org" });
+        const total = 10_040; // more matches than any index prefilter keeps: the ordinary ordered scan must serve it
+        await storage.transaction(async (tx) => {
+          for (let i = 0; i < total; i++) {
+            await tx.memberships.create({ id: `m-${String(i).padStart(6, "0")}`, organizationId: "org-1", identity: person(`user${i}@common-domain.io`) });
+          }
+        });
+
+        const first = await storage.memberships.searchListing({ query: "common-domain", limit: 25, rolesPerMember: 1 });
+        expect(first.map((m) => m.id)).toEqual(Array.from({ length: 25 }, (_, i) => `m-${String(i).padStart(6, "0")}`));
+        const next = await storage.memberships.searchListing({ query: "common-domain", limit: 25, after: first[24]!.id, rolesPerMember: 1 });
+        expect(next[0]!.id).toBe("m-000025");
+        expect(await storage.memberships.count({ query: "common-domain", limit: 10_001 })).toBe(10_001);
+        expect(await storage.memberships.count({ query: "user10039@" })).toBe(1);
+        expect((await storage.memberships.search({ query: "user10039@" })).map((m) => m.id)).toEqual(["m-010039"]);
+      }, 120_000);
     });
   });
 }

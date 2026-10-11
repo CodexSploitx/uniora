@@ -5,8 +5,12 @@ import { InvitationsTab, type InvitationMailKey } from "@/components/organizatio
 import { MembersTable } from "@/components/organizations/members-table";
 import { OrgFeaturesList } from "@/components/organizations/org-features-list";
 import { OrgTabs, parseOrgTab } from "@/components/organizations/org-tabs";
+import { OrganizationStatusDialog } from "@/components/organizations/organization-status-dialog";
+import { StatusBadge } from "@/components/shared/status";
 import { RenameOrganizationDialog } from "@/components/organizations/rename-organization-dialog";
 import { RolesTab } from "@/components/organizations/roles-tab";
+import { PoliciesTab } from "@/components/organizations/policies-tab";
+import { TeamsTab } from "@/components/organizations/teams-tab";
 import { ActivityFeed } from "@/components/shared/activity-feed";
 import { CopyButton } from "@/components/shared/copy-button";
 import { PageHeader } from "@/components/shell/page-header";
@@ -21,8 +25,12 @@ import {
   getOrgHeader,
   getOrgInvitationsPage,
   getOrgMembersPage,
+  getOrgPoliciesPage,
+  getPolicyDetail,
   getOrgRolesPage,
+  getOrgTeamsPage,
   getRolePermissionsPage,
+  getTeamDetail,
 } from "@/lib/queries";
 import { getInvitationSetup, type MailStatus } from "@/lib/invitations";
 import { getDefaultAuthProvider, isReadOnly } from "@/lib/session";
@@ -50,6 +58,11 @@ export default async function OrganizationPage(props: PageProps<"/organizations/
   const tab = parseOrgTab(param(searchParams.tab));
   const q = param(searchParams.q) ?? "";
   const after = param(searchParams.after);
+  const rawStatus = param(searchParams.status);
+  const memberStatus = rawStatus === "active" || rawStatus === "suspended" || rawStatus === "blocked" ? rawStatus : undefined;
+
+  const rawPolicyStatus = param(searchParams.pstatus);
+  const policyStatus = rawPolicyStatus === "draft" || rawPolicyStatus === "active" || rawPolicyStatus === "disabled" || rawPolicyStatus === "retired" ? rawPolicyStatus : undefined;
 
   return (
     <>
@@ -61,9 +74,11 @@ export default async function OrganizationPage(props: PageProps<"/organizations/
             <IconBuildingSkyscraper />
           </IconTile>
         }
-        description={t("orgs.created", { date: formatDate(organization.createdAt, locale) })}
+        description={`${t("orgs.created", { date: formatDate(organization.createdAt, locale) })}${organization.statusReason ? ` · ${organization.statusReason}` : ""}`}
         actions={
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+            {organization.status !== "active" && <StatusBadge status={organization.status} />}
+            {!readOnly && <OrganizationStatusDialog organizationId={organization.id} status={organization.status} />}
             {!readOnly && <RenameOrganizationDialog organizationId={organization.id} name={organization.name} />}
             <Badge variant="outline">{organization.slug}</Badge>
             <span className="hidden font-mono sm:inline">{organization.id}</span>
@@ -75,7 +90,7 @@ export default async function OrganizationPage(props: PageProps<"/organizations/
       <OrgTabs organizationId={organization.id} active={tab} header={header} />
 
       {tab === "members" && (
-        <MembersTab organizationId={organization.id} orgPath={orgPath} q={q} after={after} readOnly={readOnly} />
+        <MembersTab organizationId={organization.id} orgPath={orgPath} q={q} after={after} status={memberStatus} readOnly={readOnly} />
       )}
       {tab === "roles" && (
         <RolesSection
@@ -88,6 +103,28 @@ export default async function OrganizationPage(props: PageProps<"/organizations/
           permissionQuery={param(searchParams.pq) ?? ""}
           permissionAfter={param(searchParams.pafter)}
           grantedOnly={param(searchParams.pshow) === "granted"}
+        />
+      )}
+      {tab === "teams" && (
+        <TeamsSection
+          organizationId={organization.id}
+          orgPath={orgPath}
+          readOnly={readOnly}
+          q={q}
+          after={after}
+          teamId={param(searchParams.team)}
+          memberAfter={param(searchParams.mafter)}
+        />
+      )}
+      {tab === "policies" && (
+        <PoliciesSection
+          organizationId={organization.id}
+          orgPath={orgPath}
+          q={q}
+          after={after}
+          status={policyStatus}
+          policyId={param(searchParams.policy)}
+          revisionsBefore={param(searchParams.rbefore)}
         />
       )}
       {tab === "features" && (
@@ -110,16 +147,17 @@ export default async function OrganizationPage(props: PageProps<"/organizations/
   );
 }
 
-async function MembersTab({ organizationId, orgPath, q, after, readOnly }: { organizationId: string; orgPath: string; q: string; after?: string; readOnly: boolean }) {
-  const page = await getOrgMembersPage(organizationId, { query: q, cursor: after });
+async function MembersTab({ organizationId, orgPath, q, after, status, readOnly }: { organizationId: string; orgPath: string; q: string; after?: string; status?: "active" | "suspended" | "blocked"; readOnly: boolean }) {
+  const page = await getOrgMembersPage(organizationId, { query: q, cursor: after, status });
   return (
     <MembersTable
       organizationId={organizationId}
       members={page.items}
       total={page.total}
       query={q}
+      status={status}
       basePath={tabHref(orgPath, "members", {})}
-      nextHref={page.nextCursor ? tabHref(orgPath, "members", { q, after: page.nextCursor }) : null}
+      nextHref={page.nextCursor ? tabHref(orgPath, "members", { q, status, after: page.nextCursor }) : null}
       ownerRoleId={page.ownerRoleId}
       ownerCount={page.ownerCount}
       readOnly={readOnly}
@@ -172,6 +210,55 @@ async function RolesSection(props: {
             }
           : null
       }
+    />
+  );
+}
+
+async function TeamsSection(props: { organizationId: string; orgPath: string; readOnly: boolean; q: string; after?: string; teamId?: string; memberAfter?: string }) {
+  const page = await getOrgTeamsPage(props.organizationId, { query: props.q, cursor: props.after });
+  // No team chosen yet -> show the first one, so the panel is never empty when teams exist.
+  const selectedTeamId = props.teamId ?? page.items[0]?.id ?? null;
+  const detail = selectedTeamId ? await getTeamDetail(props.organizationId, selectedTeamId, { cursor: props.memberAfter }) : null;
+  return (
+    <TeamsTab
+      organizationId={props.organizationId}
+      orgPath={props.orgPath}
+      readOnly={props.readOnly}
+      teams={page.items}
+      total={page.total}
+      query={props.q}
+      nextCursor={page.nextCursor}
+      selectedTeamId={detail ? selectedTeamId : null}
+      detail={detail}
+      defaultProvider={getDefaultAuthProvider()}
+    />
+  );
+}
+
+async function PoliciesSection(props: {
+  organizationId: string;
+  orgPath: string;
+  q: string;
+  after?: string;
+  status?: "draft" | "active" | "disabled" | "retired";
+  policyId?: string;
+  revisionsBefore?: string;
+}) {
+  const page = await getOrgPoliciesPage(props.organizationId, { query: props.q, cursor: props.after, status: props.status });
+  // No policy chosen yet -> show the first one, so the panel is never empty when policies exist.
+  const selectedId = props.policyId ?? page.items[0]?.id ?? null;
+  const before = props.revisionsBefore ? Number(props.revisionsBefore) : undefined;
+  const detail = selectedId ? await getPolicyDetail(props.organizationId, selectedId, { before }) : null;
+  return (
+    <PoliciesTab
+      orgPath={props.orgPath}
+      policies={page.items}
+      total={page.total}
+      query={props.q}
+      status={props.status}
+      nextCursor={page.nextCursor}
+      selectedPolicyId={detail ? selectedId : null}
+      detail={detail}
     />
   );
 }

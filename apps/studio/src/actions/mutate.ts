@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import type { Identity, UnioraTransaction } from "@uniora/core";
 import { getStorage } from "@/lib/db";
+import { clearCachedTotals } from "@/lib/totals-cache";
 import { getStudioEnv } from "@/lib/env";
 import { StudioAuthError, StudioReadOnlyError, requireWrite } from "@/lib/session";
 import { getT } from "@/i18n/server";
@@ -37,7 +38,7 @@ export async function audit(
 
 // Matched by `name`, not `instanceof`: Next bundles Server Actions and page renders in separate module layers, so
 // the same Core class can exist twice and an error thrown by a service built in one layer would fail `instanceof` in the other.
-const DOMAIN_ERROR_NAMES = new Set(["FeatureError", "IdentityLinkError", "InvitationError", "MembershipError", "OrganizationError", "PermissionError", "RoleError"]);
+const DOMAIN_ERROR_NAMES = new Set(["ApiCredentialError", "WebhookError", "FeatureError", "IdentityLinkError", "InvitationError", "MembershipError", "OrganizationError", "PermissionError", "RoleError", "TeamError"]);
 
 /** Studio's own failures are translated to the viewer's language; Core's domain errors are shown verbatim (Core has no i18n). */
 async function describeError(error: unknown): Promise<string> {
@@ -64,6 +65,7 @@ export async function mutate<T = undefined>(
   try {
     await requireWrite();
     const data = await getStorage().transaction(work);
+    clearCachedTotals();
     for (const path of paths) revalidatePath(path);
     return (data === undefined ? { ok: true } : { ok: true, data }) as ActionResult<T>;
   } catch (error) {

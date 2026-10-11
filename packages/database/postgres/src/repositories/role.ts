@@ -7,12 +7,15 @@ import type {
   RoleRepository,
   RoleSummary,
   SearchRolesOptions,
+  SetRolePermissionsOptions,
   SetRolePermissionsResult,
   UpdateRoleInput,
 } from "@uniora/core";
 import {
   RoleError,
+  assertExpectedVersion,
   assertNonEmptyPermissionKey,
+  normalizeRoleName,
   resolveRoleKey,
   sanitizeRoleDescription,
   sanitizeRoleName,
@@ -32,6 +35,7 @@ interface RoleRow {
   is_system: boolean;
   description: string | null;
   permission_keys: string[];
+  version: number;
 }
 
 function toRole(row: RoleRow): Role {
@@ -44,11 +48,12 @@ function toRole(row: RoleRow): Role {
     name: row.name,
     ...(row.description !== null ? { description: row.description } : {}),
     permissionKeys: row.permission_keys,
+    version: row.version,
   };
 }
 
 const SELECT_ROLE_WITH_PERMISSIONS = `
-  select r.id, r.organization_id, r.name, r.key, r.is_owner_role, r.is_system, r.description,
+  select r.id, r.organization_id, r.name, r.key, r.is_owner_role, r.is_system, r.description, r.version,
          coalesce(array_agg(rp.permission_key) filter (where rp.permission_key is not null), '{}') as permission_keys
   from uniora.roles r
   left join uniora.role_permissions rp on rp.role_id = r.id
@@ -104,10 +109,11 @@ export function createRoleRepository(db: Queryable): RoleRepository {
       const description = sanitizeRoleDescription(input.description);
 
       try {
-        await db.query(`insert into uniora.roles (id, organization_id, name, key, is_system, description) values ($1, $2, $3, $4, $5, $6)`, [
+        await db.query(`insert into uniora.roles (id, organization_id, name, name_normalized, key, is_system, description) values ($1, $2, $3, $4, $5, $6, $7)`, [
           input.id,
           input.organizationId,
           name,
+          normalizeRoleName(name),
           key,
           input.isSystem === true,
           description ?? null,
@@ -146,15 +152,16 @@ export function createRoleRepository(db: Queryable): RoleRepository {
         name,
         ...(description !== undefined ? { description } : {}),
         permissionKeys,
+        version: 1,
       };
     },
 
     async createOwnerRole(input: CreateOwnerRoleInput) {
       try {
         const result = await db.query<RoleRow>(
-          `insert into uniora.roles (id, organization_id, name, key, is_owner_role)
-           values ($1, $2, 'Owner', 'owner', true)
-           returning id, organization_id, name, key, is_owner_role, is_system, description, '{}'::text[] as permission_keys`,
+          `insert into uniora.roles (id, organization_id, name, name_normalized, key, is_owner_role)
+           values ($1, $2, 'Owner', 'owner', 'owner', true)
+           returning id, organization_id, name, key, is_owner_role, is_system, description, version, '{}'::text[] as permission_keys`,
           [input.id, input.organizationId],
         );
         return toRole(result.rows[0]!);
@@ -281,8 +288,8 @@ export function createRoleRepository(db: Queryable): RoleRepository {
       return result.rows.map((row) => row.permission_key);
     },
 
-    async countByOrganization(organizationIds: string[]) {
-      return countByOrganization(db, "roles", organizationIds);
+    async countByOrganization(organizationIds: string[], options?: { limit?: number }) {
+      return countByOrganization(db, "roles", organizationIds, options?.limit);
     },
 
     async grantPermission(roleId: string, permissionKey: string) {
@@ -290,8 +297,12 @@ export function createRoleRepository(db: Queryable): RoleRepository {
       if (!role) throw new RoleError(`Role not found: ${roleId}`);
       if (role.isOwnerRole) throw new RoleError("Cannot modify permissions on the protected Owner role.");
       assertNonEmptyPermissionKey(permissionKey);
+      // One statement: the version only goes up when the permission was really added.
       await db.query(
-        `insert into uniora.role_permissions (role_id, permission_key) values ($1, $2) on conflict do nothing`,
+        `with added as (
+           insert into uniora.role_permissions (role_id, permission_key) values ($1, $2) on conflict do nothing returning 1
+         )
+         update uniora.roles set version = version + 1 where id = $1 and exists (select 1 from added)`,
         [roleId, permissionKey],
       );
     },
@@ -300,10 +311,13 @@ export function createRoleRepository(db: Queryable): RoleRepository {
       const role = await findRoleHead(db, roleId);
       if (!role) throw new RoleError(`Role not found: ${roleId}`);
       if (role.isOwnerRole) throw new RoleError("Cannot modify permissions on the protected Owner role.");
-      await db.query(`delete from uniora.role_permissions where role_id = $1 and permission_key = $2`, [
-        roleId,
-        permissionKey,
-      ]);
+      await db.query(
+        `with removed as (
+           delete from uniora.role_permissions where role_id = $1 and permission_key = $2 returning 1
+         )
+         update uniora.roles set version = version + 1 where id = $1 and exists (select 1 from removed)`,
+        [roleId, permissionKey],
+      );
     },
 
     async rename(roleId: string, name: string) {
@@ -313,14 +327,18 @@ export function createRoleRepository(db: Queryable): RoleRepository {
       if (role.isSystem) throw new RoleError("Cannot rename a system role.", "role_system_protected");
       const sanitized = sanitizeRoleName(name);
       try {
-        await db.query(`update uniora.roles set name = $2 where id = $1`, [roleId, sanitized]);
+        // The version goes up only when the name really changes.
+        await db.query(
+          `update uniora.roles set name = $2, name_normalized = $3, version = version + (case when name is distinct from $2 then 1 else 0 end) where id = $1`,
+          [roleId, sanitized, normalizeRoleName(sanitized)],
+        );
       } catch (error) {
         if (isUniqueViolation(error)) {
           throw new RoleError(`A role named "${sanitized}" already exists in this organization.`);
         }
         throw error;
       }
-      return { ...role, name: sanitized };
+      return { ...role, name: sanitized, version: sanitized === role.name ? role.version : role.version + 1 };
     },
 
     async update(roleId: string, input: UpdateRoleInput) {
@@ -330,17 +348,22 @@ export function createRoleRepository(db: Queryable): RoleRepository {
       const name = input.name === undefined ? null : sanitizeRoleName(input.name);
       const setDescription = input.description !== undefined;
       const description = setDescription ? (sanitizeRoleDescription(input.description) ?? null) : null;
+      const expectedVersion = assertExpectedVersion(input.expectedVersion) ?? null;
       const role = await findRoleHead(db, roleId);
       if (!role) throw new RoleError(`Role not found: ${roleId}`);
       if (name !== null && role.isOwnerRole) throw new RoleError("Cannot rename the protected Owner role.");
       if (name !== null && role.isSystem) throw new RoleError("Cannot rename a system role.", "role_system_protected");
       if (setDescription && name === null && role.isOwnerRole) throw new RoleError("Cannot modify the protected Owner role.");
       try {
-        await db.query(
-          `update uniora.roles set name = coalesce($2, name), description = case when $3::boolean then $4 else description end
-           where id = $1 and not is_owner_role and (not is_system or $2::text is null)`,
-          [roleId, name, setDescription, description],
+        const changed = await db.query(
+          `update uniora.roles set name = coalesce($2, name), name_normalized = coalesce($6, name_normalized), description = case when $3::boolean then $4 else description end,
+             version = version + (case when name is distinct from coalesce($2, name) or description is distinct from (case when $3::boolean then $4 else description end) then 1 else 0 end)
+           where id = $1 and not is_owner_role and (not is_system or $2::text is null) and ($5::integer is null or version = $5)`,
+          [roleId, name, setDescription, description, expectedVersion, name === null ? null : normalizeRoleName(name)],
         );
+        if (changed.rowCount === 0 && expectedVersion !== null) {
+          throw new RoleError("The role changed since it was read.", "role_version_conflict");
+        }
       } catch (error) {
         if (isUniqueViolation(error)) throw new RoleError(`A role named "${name}" already exists in this organization.`);
         throw error;
@@ -350,31 +373,44 @@ export function createRoleRepository(db: Queryable): RoleRepository {
       return updated;
     },
 
-    async setPermissions(roleId: string, permissionKeys: string[]): Promise<SetRolePermissionsResult> {
+    async setPermissions(roleId: string, permissionKeys: string[], options?: SetRolePermissionsOptions): Promise<SetRolePermissionsResult> {
       const wanted = sanitizeRolePermissionKeys(permissionKeys);
+      const expectedVersion = assertExpectedVersion(options?.expectedVersion) ?? null;
       const role = await findRoleHead(db, roleId);
       if (!role) throw new RoleError(`Role not found: ${roleId}`);
       if (role.isOwnerRole) throw new RoleError("Cannot modify permissions on the protected Owner role.");
       try {
         // ONE statement: the removals and the additions are applied together or not at all (a failed foreign key,
         // i.e. an unregistered key, rolls the whole statement back).
-        const result = await db.query<{ granted: string[] | null; revoked: string[] | null }>(
-          `with revoked as (
+        // `locked` takes the role row (and checks the version) first; nothing else runs when it is empty. The version
+        // goes up only when something was really granted or revoked.
+        const result = await db.query<{ granted: string[] | null; revoked: string[] | null; matched: boolean }>(
+          `with locked as (
+             select id from uniora.roles where id = $1 and ($3::integer is null or version = $3) for update
+           ),
+           revoked as (
              delete from uniora.role_permissions rp
-             where rp.role_id = $1 and rp.permission_key <> all($2::text[])
+             where rp.role_id = $1 and rp.permission_key <> all($2::text[]) and exists (select 1 from locked)
              returning rp.permission_key
            ),
            granted as (
              insert into uniora.role_permissions (role_id, permission_key)
-             select $1, k from unnest($2::text[]) as k
+             select $1, k from unnest($2::text[]) as k where exists (select 1 from locked)
              on conflict do nothing
              returning permission_key
+           ),
+           bumped as (
+             update uniora.roles set version = version + 1
+             where id = $1 and (exists (select 1 from granted) or exists (select 1 from revoked))
+             returning 1
            )
            select (select array_agg(permission_key order by permission_key) from granted) as granted,
-                  (select array_agg(permission_key order by permission_key) from revoked) as revoked`,
-          [roleId, wanted],
+                  (select array_agg(permission_key order by permission_key) from revoked) as revoked,
+                  exists (select 1 from locked) as matched`,
+          [roleId, wanted, expectedVersion],
         );
         const row = result.rows[0];
+        if (row && !row.matched) throw new RoleError("The role changed since it was read.", "role_version_conflict");
         return { granted: row?.granted ?? [], revoked: row?.revoked ?? [] };
       } catch (error) {
         if ((error as { code?: string }).code === "23503") {
@@ -398,11 +434,11 @@ export function createRoleRepository(db: Queryable): RoleRepository {
         // Role and permission copy in one statement, so a clone is never left without its permissions.
         await db.query(
           `with new_role as (
-             insert into uniora.roles (id, organization_id, name, key, description) values ($1, $2, $3, $4, $5) returning id
+             insert into uniora.roles (id, organization_id, name, name_normalized, key, description) values ($1, $2, $3, $7, $4, $5) returning id
            )
            insert into uniora.role_permissions (role_id, permission_key)
            select $1, rp.permission_key from uniora.role_permissions rp, new_role where rp.role_id = $6`,
-          [input.id, organizationId, name, key, description ?? null, roleId],
+          [input.id, organizationId, name, key, description ?? null, roleId, normalizeRoleName(name)],
         );
       } catch (error) {
         if (isUniqueViolation(error)) {
@@ -428,6 +464,7 @@ export function createRoleRepository(db: Queryable): RoleRepository {
         name,
         ...(description !== undefined ? { description } : {}),
         permissionKeys: [...source.permissionKeys],
+        version: 1,
       };
     },
 
@@ -459,7 +496,8 @@ export function createRoleRepository(db: Queryable): RoleRepository {
         const result = await db.query(
           `delete from uniora.roles r
            where r.id = $1 and not r.is_owner_role and not r.is_system
-             and not exists (select 1 from uniora.membership_roles mr where mr.role_id = r.id)`,
+             and not exists (select 1 from uniora.membership_roles mr where mr.role_id = r.id)
+             and not exists (select 1 from uniora.team_membership_roles tr where tr.role_id = r.id)`,
           [roleId],
         );
         if ((result.rowCount ?? 0) > 0) return;
