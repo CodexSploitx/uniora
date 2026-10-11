@@ -1,5 +1,7 @@
 <div align="center">
 
+<a href="https://codexsploitx.github.io/uniora/"><img src="site/assets/og.png" alt="UNIORA" width="760"></a>
+
 # UNIORA
 
 **Universal Organization & Authorization**
@@ -8,10 +10,12 @@ Organizations, teams, roles, permissions and feature flags — for any auth prov
 
 [![GitHub stars](https://img.shields.io/github/stars/CodexSploitx/uniora?style=social)](https://github.com/CodexSploitx/uniora)
 ![status](https://img.shields.io/badge/status-early%20development-orange)
+[![npm](https://img.shields.io/npm/v/@uniora/core?label=%40uniora%2Fcore&color=efb100)](https://www.npmjs.com/org/uniora)
+![license](https://img.shields.io/badge/license-PolyForm%20Shield%201.0.0-blue)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)
 ![pnpm](https://img.shields.io/badge/monorepo-pnpm%20workspaces-yellow)
 
-[Español](README.es.md) · [Website](https://codexsploitx.github.io/uniora/)
+[Español](README.es.md) · [Website](https://codexsploitx.github.io/uniora/) · [Documentation](guides/README.md)
 
 </div>
 
@@ -40,6 +44,80 @@ Auth Provider                    UNIORA
 - **Organizations can't be orphaned.** Every organization is born with a protected Owner, and `MembershipRepository` refuses to unassign the Owner role or delete a membership if it's the last one holding it — enforced with a real database constraint, not just application code.
 - **Organizations *and* entitlements.** Permissions answer "what can this user do"; features answer "what has this organization unlocked." Two different questions, modeled separately, so you don't have to fake one with the other.
 - **Framework-independent core.** `@uniora/core` has zero dependency on Next.js, Express, or any specific database driver — adapters plug in around it.
+
+## Two ways to run UNIORA
+
+The same engine, rules and data model. Choose how it reaches your code:
+
+| | Embedded library | Standalone server |
+| --- | --- | --- |
+| **Runs** | Inside your backend process | As a separate service you operate |
+| **You call it with** | `uniora.can()` | HTTPS and an API key (`POST /v1/check`), or the typed `@uniora/client` |
+| **Network hop** | None | One request per decision |
+| **Languages** | TypeScript and Node.js | Any language over REST ([OpenAPI](guides/openapi.json)) |
+| **Data** | Your database, in a dedicated `uniora.*` schema | Its own dedicated database |
+| **Access control** | Your application code | API clients with scopes and organization lists |
+| **Start** | `npm install @uniora/core` | `npx uniora server start` |
+| **Guide** | [Getting started](guides/getting-started.md) | [The server](guides/server.md) |
+
+There is no UNIORA cloud. In both modes you run it and you own the data.
+
+## What is included
+
+- **Organizations, members, roles and permissions.** Custom roles per organization, a permission catalog with groups and implications, a protected Owner, blocked and suspended members.
+- **Teams.** A hierarchy with responsibilities. A team gives context, never access ([guide](guides/teams.md)).
+- **Policies.** Conditional rules on top of permissions: resource attributes, team scope and hierarchy, time and request context, and step-up (recent MFA). Simulate before you publish ([guide](guides/policies.md)).
+- **Features and quotas.** What each organization has unlocked, and how many seats or reports it may use ([guide](guides/entitlements.md)).
+- **Invitations.** Single-use links, e-mail delivery with retries, resend and revoke ([guide](guides/invitations.md)).
+- **Delegated administration.** Let team leads invite and assign roles without privilege escalation ([guide](guides/access-admin.md)).
+- **Audit log.** Append-only and hash-chained, with an integrity check ([guide](guides/audit-log.md)).
+- **Webhooks and outbox.** Events written in the same transaction as the change, then delivered signed, with retries ([outbox](guides/outbox.md)).
+- **Platform administrators and support grants.** Staff power kept outside any organization, and temporary, audited access to a customer's data ([platform](guides/platform.md), [support grants](guides/support-grants.md)).
+- **PostgreSQL row-level security.** SQL functions that give your own tables the same answers as the engine ([guide](guides/rls.md)).
+- **Tooling.** A CLI with a migration ledger, a typed client, and Studio, a local admin UI. Measured on 5,000,000 memberships ([performance](guides/performance.md)).
+
+## UNIORA Studio
+
+A local-first admin UI over your own database. Run it with `npx uniora studio`. It listens on `127.0.0.1` only, is unlocked by a random per-launch token and sends data nowhere. Every change it makes is audited, and `--read-only` makes it a safe viewer. Screenshots show a demo database.
+
+<p align="center"><a href="assets/readme/en/overview.webp"><img src="assets/readme/en/overview.webp" alt="UNIORA Studio overview" width="900"></a></p>
+
+<table>
+<tr>
+<td width="50%"><a href="assets/readme/en/members.webp"><img src="assets/readme/en/members.webp" alt="Members"></a><br><sub><b>Members</b>. Identities from any provider with their roles. The protected Owner cannot be removed.</sub></td>
+<td width="50%"><a href="assets/readme/en/roles.webp"><img src="assets/readme/en/roles.webp" alt="Roles and permissions"></a><br><sub><b>Roles and permissions</b>. A permission checklist per role, per organization.</sub></td>
+</tr>
+<tr>
+<td width="50%"><a href="assets/readme/en/teams.webp"><img src="assets/readme/en/teams.webp" alt="Teams"></a><br><sub><b>Teams</b>. A hierarchy with responsibilities. A team is context, not authority.</sub></td>
+<td width="50%"><a href="assets/readme/en/policies.webp"><img src="assets/readme/en/policies.webp" alt="Policies"></a><br><sub><b>Policies</b>. Conditional rules with revision history. Read-only in Studio.</sub></td>
+</tr>
+<tr>
+<td width="50%"><a href="assets/readme/en/invitations.webp"><img src="assets/readme/en/invitations.webp" alt="Invitations"></a><br><sub><b>Invitations</b>. Invite, resend and revoke. Links are single-use.</sub></td>
+<td width="50%"><a href="assets/readme/en/features.webp"><img src="assets/readme/en/features.webp" alt="Features"></a><br><sub><b>Features</b>. Which organizations have each feature unlocked.</sub></td>
+</tr>
+<tr>
+<td width="50%"><a href="assets/readme/en/api-clients.webp"><img src="assets/readme/en/api-clients.webp" alt="API clients"></a><br><sub><b>API clients</b>. Scoped clients and keys for the standalone server. A key is shown once.</sub></td>
+<td width="50%"><a href="assets/readme/en/webhooks.webp"><img src="assets/readme/en/webhooks.webp" alt="Webhooks"></a><br><sub><b>Webhooks</b>. Signed events with retries and secret rotation.</sub></td>
+</tr>
+<tr>
+<td width="50%"><a href="assets/readme/en/platform.webp"><img src="assets/readme/en/platform.webp" alt="Platform"></a><br><sub><b>Platform</b>. Who administers the platform, apart from any organization. Read-only in Studio.</sub></td>
+<td width="50%"><a href="assets/readme/en/activity.webp"><img src="assets/readme/en/activity.webp" alt="Audit log"></a><br><sub><b>Audit log</b>. Every change across organizations, newest first.</sub></td>
+</tr>
+</table>
+
+<details>
+<summary>More screens</summary>
+
+<p><b>Organizations</b></p>
+<img src="assets/readme/en/organizations.webp" alt="Studio organizations list" width="700">
+
+<p><b>Permission catalog</b>. The global list of actions your app can check, and how many roles hold each.</p>
+<img src="assets/readme/en/permissions.webp" alt="Studio permission catalog" width="700">
+
+<p><b>Features per organization</b>. Switch features on and off for one organization.</p>
+<img src="assets/readme/en/org-features.webp" alt="Studio organization features" width="700">
+
+</details>
 
 ## Quick look
 
