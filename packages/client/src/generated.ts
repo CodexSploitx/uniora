@@ -655,6 +655,328 @@ export interface Operations {
       nextCursor: string | null;
     };
   };
+  /** Add a platform member */
+  "platformMembers.add": {
+    input: {
+    /** A platform provider label; defaults to the operator's. */
+    provider?: string;
+    /** The person's stable id in the staff identity provider. */
+    subject: string;
+    roleIds: string[];
+  };
+    output: {
+      id: string;
+      identity: Identity;
+      status: "active" | "suspended";
+      roleIds: string[];
+      createdAt: string;
+      updatedAt: string;
+      addedBy: Identity;
+      statusChange?: {
+        at: string;
+        by: Identity;
+        reason?: string;
+      };
+      /** Send it back as `If-Match` to refuse changes made from a stale copy. */
+      version: number;
+    };
+  };
+  /** Give a platform member a role */
+  "platformMembers.assignRole": {
+    input: {
+    /** A platform member. */
+    memberId: string;
+    /** A platform role. */
+    roleId: string;
+  };
+    output: {
+      id: string;
+      identity: Identity;
+      status: "active" | "suspended";
+      roleIds: string[];
+      createdAt: string;
+      updatedAt: string;
+      addedBy: Identity;
+      statusChange?: {
+        at: string;
+        by: Identity;
+        reason?: string;
+      };
+      /** Send it back as `If-Match` to refuse changes made from a stale copy. */
+      version: number;
+    };
+  };
+  /** List platform members */
+  "platformMembers.list": {
+    input: {
+    /** Items per page. At most the server's maximum (100 unless configured). */
+    limit?: number;
+    /** The `nextCursor` of the previous page. */
+    cursor?: string;
+    status?: "active" | "suspended";
+    /** Only members holding this role. */
+    roleId?: string;
+  };
+    output: {
+      items: ({
+        id: string;
+        identity: Identity;
+        status: "active" | "suspended";
+        roleIds: string[];
+        createdAt: string;
+        updatedAt: string;
+        addedBy: Identity;
+        statusChange?: {
+          at: string;
+          by: Identity;
+          reason?: string;
+        };
+        /** Send it back as `If-Match` to refuse changes made from a stale copy. */
+        version: number;
+      })[];
+      nextCursor: string | null;
+    };
+  };
+  /** Reactivate a platform member */
+  "platformMembers.reactivate": {
+    input: {
+    /** A platform member. */
+    memberId: string;
+  };
+    output: {
+      id: string;
+      identity: Identity;
+      status: "active" | "suspended";
+      roleIds: string[];
+      createdAt: string;
+      updatedAt: string;
+      addedBy: Identity;
+      statusChange?: {
+        at: string;
+        by: Identity;
+        reason?: string;
+      };
+      /** Send it back as `If-Match` to refuse changes made from a stale copy. */
+      version: number;
+    };
+  };
+  /** Remove a platform member */
+  "platformMembers.remove": {
+    input: {
+    /** A platform member. */
+    memberId: string;
+  };
+    output: {
+      removed: boolean;
+    };
+  };
+  /** Suspend a platform member */
+  "platformMembers.suspend": {
+    input: {
+    /** A platform member. */
+    memberId: string;
+    /** Why. Kept in the audit log. */
+    reason?: string;
+  };
+    output: {
+      id: string;
+      identity: Identity;
+      status: "active" | "suspended";
+      roleIds: string[];
+      createdAt: string;
+      updatedAt: string;
+      addedBy: Identity;
+      statusChange?: {
+        at: string;
+        by: Identity;
+        reason?: string;
+      };
+      /** Send it back as `If-Match` to refuse changes made from a stale copy. */
+      version: number;
+    };
+  };
+  /** Take a role from a platform member */
+  "platformMembers.unassignRole": {
+    input: {
+    /** A platform member. */
+    memberId: string;
+    /** A platform role. */
+    roleId: string;
+  };
+    output: {
+      id: string;
+      identity: Identity;
+      status: "active" | "suspended";
+      roleIds: string[];
+      createdAt: string;
+      updatedAt: string;
+      addedBy: Identity;
+      statusChange?: {
+        at: string;
+        by: Identity;
+        reason?: string;
+      };
+      /** Send it back as `If-Match` to refuse changes made from a stale copy. */
+      version: number;
+    };
+  };
+  /** List every organization */
+  "platformOrganizations.list": {
+    input: {
+    /** Items per page. At most the server's maximum (100 unless configured). */
+    limit?: number;
+    /** The `nextCursor` of the previous page. */
+    cursor?: string;
+    /** Case-insensitive text to look for. */
+    q?: string;
+    status?: "active" | "suspended" | "archived";
+  };
+    output: {
+      items: Organization[];
+      nextCursor: string | null;
+    };
+  };
+  /** Suspend, archive or reactivate an organization */
+  "platformOrganizations.setStatus": {
+    input: {
+    /** The organization. */
+    organizationId: string;
+    status: "active" | "suspended" | "archived";
+    /** Why. Kept in the audit log. */
+    reason?: string;
+  };
+    output: Organization;
+  };
+  /** Create a platform role */
+  "platformRoles.create": {
+    input: {
+    /** Stable handle, unique across the platform. */
+    key: string;
+    name: string;
+    description?: string;
+    /** `platform.*` keys. */
+    permissions: string[];
+  };
+    output: {
+      id: string;
+      key: string;
+      name: string;
+      description?: string;
+      /** `platform.*` keys. A trailing `.*` covers everything under that prefix. */
+      permissions: string[];
+      /** Created by UNIORA itself (`platform_admin`); it cannot be edited, renamed or deleted. */
+      isSystem: boolean;
+      createdAt: string;
+      updatedAt: string;
+      /** Send it back as `If-Match` to refuse changes made from a stale copy. */
+      version: number;
+    };
+  };
+  /** Delete a platform role */
+  "platformRoles.delete": {
+    input: {
+    /** A platform role. */
+    roleId: string;
+  };
+    output: {
+      deleted: boolean;
+    };
+  };
+  /** List platform roles */
+  "platformRoles.list": {
+    input: {
+    /** Items per page. At most the server's maximum (100 unless configured). */
+    limit?: number;
+    /** The `nextCursor` of the previous page. */
+    cursor?: string;
+  };
+    output: {
+      items: {
+        id: string;
+        key: string;
+        name: string;
+        description?: string;
+        /** `platform.*` keys. A trailing `.*` covers everything under that prefix. */
+        permissions: string[];
+        /** Created by UNIORA itself (`platform_admin`); it cannot be edited, renamed or deleted. */
+        isSystem: boolean;
+        createdAt: string;
+        updatedAt: string;
+        /** Send it back as `If-Match` to refuse changes made from a stale copy. */
+        version: number;
+      }[];
+      nextCursor: string | null;
+    };
+  };
+  /** Edit a platform role */
+  "platformRoles.update": {
+    input: {
+    /** A platform role. */
+    roleId: string;
+    name?: string;
+    description?: string | null;
+    /** The role will hold exactly these `platform.*` keys. */
+    permissions?: string[];
+  };
+    output: {
+      id: string;
+      key: string;
+      name: string;
+      description?: string;
+      /** `platform.*` keys. A trailing `.*` covers everything under that prefix. */
+      permissions: string[];
+      /** Created by UNIORA itself (`platform_admin`); it cannot be edited, renamed or deleted. */
+      isSystem: boolean;
+      createdAt: string;
+      updatedAt: string;
+      /** Send it back as `If-Match` to refuse changes made from a stale copy. */
+      version: number;
+    };
+  };
+  /** Open support access to an organization */
+  "platformSupport.grant": {
+    input: {
+    /** The organization to open. */
+    organizationId: string;
+    /** Registered organization permission keys. */
+    permissions: string[];
+    /** Why, in the operator's words. Kept in both audit trails. */
+    reason: string;
+    /** When the grant ends: in the future and at most 30 days away. */
+    expiresAt: string | Date;
+  };
+    output: {
+      id: string;
+      organizationId: string;
+      operator: Identity;
+      grantedBy: Identity;
+      reason: string;
+      permissions: string[];
+      createdAt: string;
+      expiresAt: string;
+      revokedAt?: string;
+      revokedBy?: Identity;
+    };
+  };
+  /** End a support grant now */
+  "platformSupport.revoke": {
+    input: {
+    /** A support grant. */
+    grantId: string;
+  };
+    output: {
+      id: string;
+      organizationId: string;
+      operator: Identity;
+      grantedBy: Identity;
+      reason: string;
+      permissions: string[];
+      createdAt: string;
+      expiresAt: string;
+      revokedAt?: string;
+      revokedBy?: Identity;
+    };
+  };
   /** Put a policy live */
   "policies.activate": {
     input: {
@@ -1250,6 +1572,7 @@ export const OPERATIONS = {
     scope: "audit:read",
     delegated: false,
     actorToken: false,
+    platform: false,
     safe: true,
     ifMatch: false,
     idempotent: false,
@@ -1265,6 +1588,7 @@ export const OPERATIONS = {
     scope: "check",
     delegated: false,
     actorToken: true,
+    platform: false,
     safe: true,
     ifMatch: false,
     idempotent: false,
@@ -1280,6 +1604,7 @@ export const OPERATIONS = {
     scope: "check",
     delegated: false,
     actorToken: true,
+    platform: false,
     safe: true,
     ifMatch: false,
     idempotent: false,
@@ -1295,6 +1620,7 @@ export const OPERATIONS = {
     scope: "check",
     delegated: false,
     actorToken: true,
+    platform: false,
     safe: true,
     ifMatch: false,
     idempotent: false,
@@ -1310,6 +1636,7 @@ export const OPERATIONS = {
     scope: "check",
     delegated: false,
     actorToken: true,
+    platform: false,
     safe: true,
     ifMatch: false,
     idempotent: false,
@@ -1325,6 +1652,7 @@ export const OPERATIONS = {
     scope: "organizations:read",
     delegated: false,
     actorToken: false,
+    platform: false,
     safe: true,
     ifMatch: false,
     idempotent: false,
@@ -1340,6 +1668,7 @@ export const OPERATIONS = {
     scope: "invitations:write",
     delegated: false,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -1355,6 +1684,7 @@ export const OPERATIONS = {
     scope: "invitations:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: true,
@@ -1370,6 +1700,7 @@ export const OPERATIONS = {
     scope: "invitations:write",
     delegated: false,
     actorToken: false,
+    platform: false,
     safe: true,
     ifMatch: false,
     idempotent: false,
@@ -1385,6 +1716,7 @@ export const OPERATIONS = {
     scope: "invitations:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -1400,6 +1732,7 @@ export const OPERATIONS = {
     scope: "invitations:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -1415,6 +1748,7 @@ export const OPERATIONS = {
     scope: "members:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: true,
     idempotent: false,
@@ -1430,6 +1764,7 @@ export const OPERATIONS = {
     scope: "members:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: true,
     idempotent: false,
@@ -1445,6 +1780,7 @@ export const OPERATIONS = {
     scope: "organizations:read",
     delegated: false,
     actorToken: false,
+    platform: false,
     safe: true,
     ifMatch: false,
     idempotent: false,
@@ -1460,6 +1796,7 @@ export const OPERATIONS = {
     scope: "organizations:read",
     delegated: false,
     actorToken: false,
+    platform: false,
     safe: true,
     ifMatch: false,
     idempotent: false,
@@ -1475,6 +1812,7 @@ export const OPERATIONS = {
     scope: "members:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -1490,6 +1828,7 @@ export const OPERATIONS = {
     scope: "members:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: true,
     idempotent: false,
@@ -1505,6 +1844,7 @@ export const OPERATIONS = {
     scope: "members:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: true,
     idempotent: false,
@@ -1520,6 +1860,7 @@ export const OPERATIONS = {
     scope: "members:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: true,
     idempotent: false,
@@ -1535,6 +1876,7 @@ export const OPERATIONS = {
     scope: "organizations:create",
     delegated: false,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: true,
@@ -1550,6 +1892,7 @@ export const OPERATIONS = {
     scope: "organizations:read",
     delegated: false,
     actorToken: false,
+    platform: false,
     safe: true,
     ifMatch: false,
     idempotent: false,
@@ -1565,6 +1908,7 @@ export const OPERATIONS = {
     scope: "organizations:read",
     delegated: false,
     actorToken: false,
+    platform: false,
     safe: true,
     ifMatch: false,
     idempotent: false,
@@ -1580,6 +1924,7 @@ export const OPERATIONS = {
     scope: "organizations:read",
     delegated: false,
     actorToken: false,
+    platform: false,
     safe: true,
     ifMatch: false,
     idempotent: false,
@@ -1595,7 +1940,248 @@ export const OPERATIONS = {
     scope: "organizations:read",
     delegated: false,
     actorToken: false,
+    platform: false,
     safe: true,
+    ifMatch: false,
+    idempotent: false,
+    status: 200,
+  },
+  "platformMembers.add": {
+    method: "POST",
+    path: "/v1/platform/members",
+    pathParams: [],
+    query: [],
+    body: ["provider","subject","roleIds"],
+    hasBody: true,
+    scope: "platform:admin",
+    delegated: false,
+    actorToken: false,
+    platform: true,
+    safe: false,
+    ifMatch: false,
+    idempotent: false,
+    status: 201,
+  },
+  "platformMembers.assignRole": {
+    method: "PUT",
+    path: "/v1/platform/members/:memberId/roles/:roleId",
+    pathParams: ["memberId","roleId"],
+    query: [],
+    body: [],
+    hasBody: false,
+    scope: "platform:admin",
+    delegated: false,
+    actorToken: false,
+    platform: true,
+    safe: false,
+    ifMatch: true,
+    idempotent: false,
+    status: 200,
+  },
+  "platformMembers.list": {
+    method: "GET",
+    path: "/v1/platform/members",
+    pathParams: [],
+    query: ["limit","cursor","status","roleId"],
+    body: [],
+    hasBody: false,
+    scope: "platform:admin",
+    delegated: false,
+    actorToken: false,
+    platform: true,
+    safe: true,
+    ifMatch: false,
+    idempotent: false,
+    status: 200,
+  },
+  "platformMembers.reactivate": {
+    method: "POST",
+    path: "/v1/platform/members/:memberId/reactivate",
+    pathParams: ["memberId"],
+    query: [],
+    body: [],
+    hasBody: false,
+    scope: "platform:admin",
+    delegated: false,
+    actorToken: false,
+    platform: true,
+    safe: false,
+    ifMatch: true,
+    idempotent: false,
+    status: 200,
+  },
+  "platformMembers.remove": {
+    method: "DELETE",
+    path: "/v1/platform/members/:memberId",
+    pathParams: ["memberId"],
+    query: [],
+    body: [],
+    hasBody: false,
+    scope: "platform:admin",
+    delegated: false,
+    actorToken: false,
+    platform: true,
+    safe: false,
+    ifMatch: false,
+    idempotent: false,
+    status: 200,
+  },
+  "platformMembers.suspend": {
+    method: "POST",
+    path: "/v1/platform/members/:memberId/suspend",
+    pathParams: ["memberId"],
+    query: [],
+    body: ["reason"],
+    hasBody: true,
+    scope: "platform:admin",
+    delegated: false,
+    actorToken: false,
+    platform: true,
+    safe: false,
+    ifMatch: true,
+    idempotent: false,
+    status: 200,
+  },
+  "platformMembers.unassignRole": {
+    method: "DELETE",
+    path: "/v1/platform/members/:memberId/roles/:roleId",
+    pathParams: ["memberId","roleId"],
+    query: [],
+    body: [],
+    hasBody: false,
+    scope: "platform:admin",
+    delegated: false,
+    actorToken: false,
+    platform: true,
+    safe: false,
+    ifMatch: true,
+    idempotent: false,
+    status: 200,
+  },
+  "platformOrganizations.list": {
+    method: "GET",
+    path: "/v1/platform/organizations",
+    pathParams: [],
+    query: ["limit","cursor","q","status"],
+    body: [],
+    hasBody: false,
+    scope: "platform:admin",
+    delegated: false,
+    actorToken: false,
+    platform: true,
+    safe: true,
+    ifMatch: false,
+    idempotent: false,
+    status: 200,
+  },
+  "platformOrganizations.setStatus": {
+    method: "PUT",
+    path: "/v1/platform/organizations/:organizationId/status",
+    pathParams: ["organizationId"],
+    query: [],
+    body: ["status","reason"],
+    hasBody: true,
+    scope: "platform:admin",
+    delegated: false,
+    actorToken: false,
+    platform: true,
+    safe: false,
+    ifMatch: false,
+    idempotent: false,
+    status: 200,
+  },
+  "platformRoles.create": {
+    method: "POST",
+    path: "/v1/platform/roles",
+    pathParams: [],
+    query: [],
+    body: ["key","name","description","permissions"],
+    hasBody: true,
+    scope: "platform:admin",
+    delegated: false,
+    actorToken: false,
+    platform: true,
+    safe: false,
+    ifMatch: false,
+    idempotent: false,
+    status: 201,
+  },
+  "platformRoles.delete": {
+    method: "DELETE",
+    path: "/v1/platform/roles/:roleId",
+    pathParams: ["roleId"],
+    query: [],
+    body: [],
+    hasBody: false,
+    scope: "platform:admin",
+    delegated: false,
+    actorToken: false,
+    platform: true,
+    safe: false,
+    ifMatch: false,
+    idempotent: false,
+    status: 200,
+  },
+  "platformRoles.list": {
+    method: "GET",
+    path: "/v1/platform/roles",
+    pathParams: [],
+    query: ["limit","cursor"],
+    body: [],
+    hasBody: false,
+    scope: "platform:admin",
+    delegated: false,
+    actorToken: false,
+    platform: true,
+    safe: true,
+    ifMatch: false,
+    idempotent: false,
+    status: 200,
+  },
+  "platformRoles.update": {
+    method: "PATCH",
+    path: "/v1/platform/roles/:roleId",
+    pathParams: ["roleId"],
+    query: [],
+    body: ["name","description","permissions"],
+    hasBody: true,
+    scope: "platform:admin",
+    delegated: false,
+    actorToken: false,
+    platform: true,
+    safe: false,
+    ifMatch: true,
+    idempotent: false,
+    status: 200,
+  },
+  "platformSupport.grant": {
+    method: "POST",
+    path: "/v1/platform/support-grants",
+    pathParams: [],
+    query: [],
+    body: ["organizationId","permissions","reason","expiresAt"],
+    hasBody: true,
+    scope: "platform:admin",
+    delegated: false,
+    actorToken: false,
+    platform: true,
+    safe: false,
+    ifMatch: false,
+    idempotent: false,
+    status: 201,
+  },
+  "platformSupport.revoke": {
+    method: "POST",
+    path: "/v1/platform/support-grants/:grantId/revoke",
+    pathParams: ["grantId"],
+    query: [],
+    body: [],
+    hasBody: false,
+    scope: "platform:admin",
+    delegated: false,
+    actorToken: false,
+    platform: true,
+    safe: false,
     ifMatch: false,
     idempotent: false,
     status: 200,
@@ -1610,6 +2196,7 @@ export const OPERATIONS = {
     scope: "policies:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: true,
     idempotent: false,
@@ -1625,6 +2212,7 @@ export const OPERATIONS = {
     scope: "policies:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -1640,6 +2228,7 @@ export const OPERATIONS = {
     scope: "policies:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -1655,6 +2244,7 @@ export const OPERATIONS = {
     scope: "policies:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: true,
     idempotent: false,
@@ -1670,6 +2260,7 @@ export const OPERATIONS = {
     scope: "organizations:read",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: true,
     ifMatch: false,
     idempotent: false,
@@ -1685,6 +2276,7 @@ export const OPERATIONS = {
     scope: "organizations:read",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: true,
     ifMatch: false,
     idempotent: false,
@@ -1700,6 +2292,7 @@ export const OPERATIONS = {
     scope: "policies:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: true,
     idempotent: false,
@@ -1715,6 +2308,7 @@ export const OPERATIONS = {
     scope: "organizations:read",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: true,
     ifMatch: false,
     idempotent: false,
@@ -1730,6 +2324,7 @@ export const OPERATIONS = {
     scope: "organizations:read",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: true,
     ifMatch: false,
     idempotent: false,
@@ -1745,6 +2340,7 @@ export const OPERATIONS = {
     scope: "policies:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: true,
     idempotent: false,
@@ -1760,6 +2356,7 @@ export const OPERATIONS = {
     scope: "organizations:read",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: true,
     ifMatch: false,
     idempotent: false,
@@ -1775,6 +2372,7 @@ export const OPERATIONS = {
     scope: "roles:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -1790,6 +2388,7 @@ export const OPERATIONS = {
     scope: "roles:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -1805,6 +2404,7 @@ export const OPERATIONS = {
     scope: "roles:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -1820,6 +2420,7 @@ export const OPERATIONS = {
     scope: "roles:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -1835,6 +2436,7 @@ export const OPERATIONS = {
     scope: "organizations:read",
     delegated: false,
     actorToken: false,
+    platform: false,
     safe: true,
     ifMatch: false,
     idempotent: false,
@@ -1850,6 +2452,7 @@ export const OPERATIONS = {
     scope: "organizations:read",
     delegated: false,
     actorToken: false,
+    platform: false,
     safe: true,
     ifMatch: false,
     idempotent: false,
@@ -1865,6 +2468,7 @@ export const OPERATIONS = {
     scope: "roles:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -1880,6 +2484,7 @@ export const OPERATIONS = {
     scope: "roles:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: true,
     idempotent: false,
@@ -1895,6 +2500,7 @@ export const OPERATIONS = {
     scope: "roles:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: true,
     idempotent: false,
@@ -1910,6 +2516,7 @@ export const OPERATIONS = {
     scope: "teams:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -1925,6 +2532,7 @@ export const OPERATIONS = {
     scope: "teams:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -1940,6 +2548,7 @@ export const OPERATIONS = {
     scope: "teams:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -1955,6 +2564,7 @@ export const OPERATIONS = {
     scope: "teams:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -1970,6 +2580,7 @@ export const OPERATIONS = {
     scope: "teams:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -1985,6 +2596,7 @@ export const OPERATIONS = {
     scope: "teams:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -2000,6 +2612,7 @@ export const OPERATIONS = {
     scope: "teams:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -2015,6 +2628,7 @@ export const OPERATIONS = {
     scope: "teams:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -2030,6 +2644,7 @@ export const OPERATIONS = {
     scope: "teams:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -2045,6 +2660,7 @@ export const OPERATIONS = {
     scope: "teams:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: true,
     idempotent: false,
@@ -2060,6 +2676,7 @@ export const OPERATIONS = {
     scope: "teams:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -2075,6 +2692,7 @@ export const OPERATIONS = {
     scope: "teams:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -2090,6 +2708,7 @@ export const OPERATIONS = {
     scope: "organizations:read",
     delegated: false,
     actorToken: false,
+    platform: false,
     safe: true,
     ifMatch: false,
     idempotent: false,
@@ -2105,6 +2724,7 @@ export const OPERATIONS = {
     scope: "teams:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: false,
     idempotent: false,
@@ -2120,6 +2740,7 @@ export const OPERATIONS = {
     scope: "organizations:read",
     delegated: false,
     actorToken: false,
+    platform: false,
     safe: true,
     ifMatch: false,
     idempotent: false,
@@ -2135,6 +2756,7 @@ export const OPERATIONS = {
     scope: "organizations:read",
     delegated: false,
     actorToken: false,
+    platform: false,
     safe: true,
     ifMatch: false,
     idempotent: false,
@@ -2150,6 +2772,7 @@ export const OPERATIONS = {
     scope: "teams:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: true,
     idempotent: false,
@@ -2165,6 +2788,7 @@ export const OPERATIONS = {
     scope: "teams:write",
     delegated: true,
     actorToken: false,
+    platform: false,
     safe: false,
     ifMatch: true,
     idempotent: false,

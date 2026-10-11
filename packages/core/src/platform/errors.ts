@@ -16,6 +16,8 @@ export type PlatformErrorCode =
   | "platform_member_invalid"
   | "platform_member_exists"
   | "platform_member_not_found"
+  | "platform_grant_not_found"
+  | "platform_organization_not_found"
   | "platform_last_admin"
   | "platform_self_change"
   | "platform_escalation"

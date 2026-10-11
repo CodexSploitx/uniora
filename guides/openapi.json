@@ -49,6 +49,10 @@
       "description": "Conditional rules that restrict what roles allow."
     },
     {
+      "name": "Platform",
+      "description": "Administer the platform itself: staff roles and members, organization status, support access. The operator's own token and a recent second factor."
+    },
+    {
       "name": "Invitations",
       "description": "Invite people, and the accept flow your server relays."
     }
@@ -74,6 +78,7 @@
         ],
         "x-uniora-scope": "check",
         "x-uniora-delegated": false,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "parameters": [
           {
@@ -469,6 +474,7 @@
         ],
         "x-uniora-scope": "check",
         "x-uniora-delegated": false,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "parameters": [
           {
@@ -695,6 +701,7 @@
         ],
         "x-uniora-scope": "check",
         "x-uniora-delegated": false,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "parameters": [
           {
@@ -946,6 +953,7 @@
         ],
         "x-uniora-scope": "organizations:read",
         "x-uniora-delegated": false,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "parameters": [
           {
@@ -1154,6 +1162,7 @@
         ],
         "x-uniora-scope": "invitations:write",
         "x-uniora-delegated": false,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "requestBody": {
           "required": true,
@@ -1389,6 +1398,7 @@
         ],
         "x-uniora-scope": "invitations:write",
         "x-uniora-delegated": false,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "requestBody": {
           "required": true,
@@ -1607,6 +1617,7 @@
         ],
         "x-uniora-scope": "organizations:read",
         "x-uniora-delegated": false,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "parameters": [
           {
@@ -1799,6 +1810,7 @@
         ],
         "x-uniora-scope": "organizations:create",
         "x-uniora-delegated": false,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -2026,6 +2038,7 @@
         ],
         "x-uniora-scope": "organizations:read",
         "x-uniora-delegated": false,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "parameters": [
           {
@@ -2171,6 +2184,7 @@
         ],
         "x-uniora-scope": "audit:read",
         "x-uniora-delegated": false,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "parameters": [
           {
@@ -2414,6 +2428,7 @@
         ],
         "x-uniora-scope": "organizations:read",
         "x-uniora-delegated": false,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "parameters": [
           {
@@ -2657,6 +2672,7 @@
         ],
         "x-uniora-scope": "invitations:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -2970,6 +2986,7 @@
         ],
         "x-uniora-scope": "invitations:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -3149,6 +3166,7 @@
         ],
         "x-uniora-scope": "invitations:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -3420,6 +3438,7 @@
         ],
         "x-uniora-scope": "organizations:read",
         "x-uniora-delegated": false,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "parameters": [
           {
@@ -3639,6 +3658,7 @@
         ],
         "x-uniora-scope": "members:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -3845,6 +3865,7 @@
         ],
         "x-uniora-scope": "organizations:read",
         "x-uniora-delegated": false,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "parameters": [
           {
@@ -4005,6 +4026,7 @@
         ],
         "x-uniora-scope": "members:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -4242,6 +4264,7 @@
         ],
         "x-uniora-scope": "members:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -4453,6 +4476,7 @@
         ],
         "x-uniora-scope": "members:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -4666,6 +4690,7 @@
         ],
         "x-uniora-scope": "members:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -4911,6 +4936,7 @@
         ],
         "x-uniora-scope": "members:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -5109,6 +5135,7 @@
         ],
         "x-uniora-scope": "organizations:read",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "parameters": [
           {
@@ -5374,6 +5401,7 @@
         ],
         "x-uniora-scope": "policies:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -5644,6 +5672,7 @@
         ],
         "x-uniora-scope": "policies:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -5840,6 +5869,7 @@
         ],
         "x-uniora-scope": "organizations:read",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "parameters": [
           {
@@ -6033,6 +6063,7 @@
         ],
         "x-uniora-scope": "policies:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -6304,6 +6335,7 @@
         ],
         "x-uniora-scope": "policies:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -6551,6 +6583,7 @@
         ],
         "x-uniora-scope": "policies:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -6798,6 +6831,7 @@
         ],
         "x-uniora-scope": "policies:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -7045,6 +7079,7 @@
         ],
         "x-uniora-scope": "organizations:read",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "parameters": [
           {
@@ -7283,6 +7318,7 @@
         ],
         "x-uniora-scope": "organizations:read",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "parameters": [
           {
@@ -7721,6 +7757,7 @@
         ],
         "x-uniora-scope": "organizations:read",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "parameters": [
           {
@@ -7958,6 +7995,7 @@
         ],
         "x-uniora-scope": "organizations:read",
         "x-uniora-delegated": false,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "parameters": [
           {
@@ -8162,6 +8200,7 @@
         ],
         "x-uniora-scope": "roles:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -8414,6 +8453,7 @@
         ],
         "x-uniora-scope": "roles:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -8646,6 +8686,7 @@
         ],
         "x-uniora-scope": "roles:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -8890,6 +8931,7 @@
         ],
         "x-uniora-scope": "roles:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -9152,6 +9194,7 @@
         ],
         "x-uniora-scope": "organizations:read",
         "x-uniora-delegated": false,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "parameters": [
           {
@@ -9401,6 +9444,7 @@
         ],
         "x-uniora-scope": "roles:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -9662,6 +9706,7 @@
         ],
         "x-uniora-scope": "roles:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -9870,6 +9915,7 @@
         ],
         "x-uniora-scope": "roles:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -10080,6 +10126,7 @@
         ],
         "x-uniora-scope": "teams:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -10287,6 +10334,7 @@
         ],
         "x-uniora-scope": "teams:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -10482,6 +10530,7 @@
         ],
         "x-uniora-scope": "teams:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -10677,6 +10726,7 @@
         ],
         "x-uniora-scope": "teams:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -10916,6 +10966,7 @@
         ],
         "x-uniora-scope": "teams:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -11124,6 +11175,7 @@
         ],
         "x-uniora-scope": "teams:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -11334,6 +11386,7 @@
         ],
         "x-uniora-scope": "teams:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -11568,6 +11621,7 @@
         ],
         "x-uniora-scope": "teams:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -11835,6 +11889,7 @@
         ],
         "x-uniora-scope": "organizations:read",
         "x-uniora-delegated": false,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "parameters": [
           {
@@ -12063,6 +12118,7 @@
         ],
         "x-uniora-scope": "teams:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -12331,6 +12387,7 @@
         ],
         "x-uniora-scope": "teams:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -12537,6 +12594,7 @@
         ],
         "x-uniora-scope": "organizations:read",
         "x-uniora-delegated": false,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "parameters": [
           {
@@ -12701,6 +12759,7 @@
         ],
         "x-uniora-scope": "teams:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -12989,6 +13048,7 @@
         ],
         "x-uniora-scope": "teams:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -13236,6 +13296,7 @@
         ],
         "x-uniora-scope": "teams:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -13431,6 +13492,7 @@
         ],
         "x-uniora-scope": "organizations:read",
         "x-uniora-delegated": false,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "parameters": [
           {
@@ -13665,6 +13727,7 @@
         ],
         "x-uniora-scope": "teams:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -13949,6 +14012,7 @@
         ],
         "x-uniora-scope": "teams:write",
         "x-uniora-delegated": true,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": true,
         "parameters": [
           {
@@ -14157,6 +14221,7 @@
         ],
         "x-uniora-scope": "organizations:read",
         "x-uniora-delegated": false,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "parameters": [
           {
@@ -14353,6 +14418,3881 @@
         }
       }
     },
+    "/v1/platform/members": {
+      "get": {
+        "operationId": "platformMembers.list",
+        "tags": [
+          "Platform"
+        ],
+        "summary": "List platform members",
+        "description": "The people who administer the platform, unrelated to any organization's members. Ordered by id. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-uniora-scope": "platform:admin",
+        "x-uniora-delegated": false,
+        "x-uniora-platform": true,
+        "x-uniora-changes-data": false,
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "description": "Items per page. At most the server's maximum (100 unless configured).",
+              "examples": [
+                25
+              ]
+            },
+            "description": "Items per page. At most the server's maximum (100 unless configured)."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 600,
+              "minLength": 1,
+              "description": "The `nextCursor` of the previous page."
+            },
+            "description": "The `nextCursor` of the previous page."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "suspended"
+              ]
+            }
+          },
+          {
+            "name": "roleId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1,
+              "description": "Only members holding this role."
+            },
+            "description": "Only members holding this role."
+          },
+          {
+            "$ref": "#/components/parameters/ActorToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "maxLength": 200
+                          },
+                          "identity": {
+                            "$ref": "#/components/schemas/Identity"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "suspended"
+                            ]
+                          },
+                          "roleIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            "maxItems": 100
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "updatedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "addedBy": {
+                            "$ref": "#/components/schemas/Identity"
+                          },
+                          "statusChange": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "at": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "by": {
+                                "$ref": "#/components/schemas/Identity"
+                              },
+                              "reason": {
+                                "type": "string",
+                                "maxLength": 500
+                              }
+                            },
+                            "required": [
+                              "at",
+                              "by"
+                            ]
+                          },
+                          "version": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991,
+                            "description": "Send it back as `If-Match` to refuse changes made from a stale copy."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "identity",
+                          "status",
+                          "roleIds",
+                          "createdAt",
+                          "updatedAt",
+                          "addedBy",
+                          "version"
+                        ]
+                      },
+                      "maxItems": 1000
+                    },
+                    "nextCursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "maxLength": 600,
+                      "description": "Pass it back as `cursor` for the next page; `null` on the last one."
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "nextCursor"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request. `code` is one of: `invalid_cursor`, `invalid_request`, `unexpected_body`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized. `code` is one of: `actor_token_invalid`, `unauthenticated`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. `code` is one of: `actor_token_required`, `forbidden`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests. `code` is one of: `rate_limited`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error. `code` is one of: `internal_error`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Not Implemented. `code` is one of: `platform_not_configured`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable. `code` is one of: `actor_token_unavailable`, `overloaded`, `timeout`, `unavailable`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "platformMembers.add",
+        "tags": [
+          "Platform"
+        ],
+        "summary": "Add a platform member",
+        "description": "`provider` is the label of one of the server's platform providers; omit it to use the operator's own. Nobody can add themselves. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-uniora-scope": "platform:admin",
+        "x-uniora-delegated": false,
+        "x-uniora-platform": true,
+        "x-uniora-changes-data": true,
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ActorToken"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "provider": {
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$",
+                    "description": "A platform provider label; defaults to the operator's.",
+                    "examples": [
+                      "staff"
+                    ]
+                  },
+                  "subject": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "minLength": 1,
+                    "description": "The person's stable id in the staff identity provider.",
+                    "examples": [
+                      "ana-staff"
+                    ]
+                  },
+                  "roleIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 200,
+                      "minLength": 1,
+                      "description": "A platform role."
+                    },
+                    "maxItems": 10
+                  }
+                },
+                "required": [
+                  "subject",
+                  "roleIds"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "The version of the resource, quoted. Send it back as `If-Match`."
+              },
+              "Location": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Where to read what was created, when it has an address."
+              },
+              "Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    "identity": {
+                      "$ref": "#/components/schemas/Identity"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "active",
+                        "suspended"
+                      ]
+                    },
+                    "roleIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "maxItems": 100
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "addedBy": {
+                      "$ref": "#/components/schemas/Identity"
+                    },
+                    "statusChange": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "by": {
+                          "$ref": "#/components/schemas/Identity"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "maxLength": 500
+                        }
+                      },
+                      "required": [
+                        "at",
+                        "by"
+                      ]
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991,
+                      "description": "Send it back as `If-Match` to refuse changes made from a stale copy."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "identity",
+                    "status",
+                    "roleIds",
+                    "createdAt",
+                    "updatedAt",
+                    "addedBy",
+                    "version"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request. `code` is one of: `invalid_json`, `invalid_request`, `platform_invalid`, `platform_member_invalid`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized. `code` is one of: `actor_token_invalid`, `unauthenticated`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. `code` is one of: `actor_token_required`, `forbidden`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found. `code` is one of: `platform_role_not_found`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict. `code` is one of: `platform_member_exists`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large. `code` is one of: `body_too_large`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type. `code` is one of: `unsupported_media_type`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "Precondition Required. `code` is one of: `platform_step_up_required`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests. `code` is one of: `rate_limited`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error. `code` is one of: `internal_error`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Not Implemented. `code` is one of: `platform_not_configured`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable. `code` is one of: `actor_token_unavailable`, `overloaded`, `read_only`, `timeout`, `unavailable`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/platform/members/{memberId}": {
+      "delete": {
+        "operationId": "platformMembers.remove",
+        "tags": [
+          "Platform"
+        ],
+        "summary": "Remove a platform member",
+        "description": "The last active administrator cannot be removed, and nobody removes themselves. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-uniora-scope": "platform:admin",
+        "x-uniora-delegated": false,
+        "x-uniora-platform": true,
+        "x-uniora-changes-data": true,
+        "parameters": [
+          {
+            "name": "memberId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1,
+              "description": "A platform member.",
+              "examples": [
+                "pmem_ana"
+              ]
+            },
+            "description": "A platform member."
+          },
+          {
+            "$ref": "#/components/parameters/ActorToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "removed": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "removed"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request. `code` is one of: `invalid_request`, `platform_invalid`, `unexpected_body`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized. `code` is one of: `actor_token_invalid`, `unauthenticated`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. `code` is one of: `actor_token_required`, `forbidden`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found. `code` is one of: `platform_member_not_found`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict. `code` is one of: `platform_last_admin`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "Precondition Required. `code` is one of: `platform_step_up_required`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests. `code` is one of: `rate_limited`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error. `code` is one of: `internal_error`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Not Implemented. `code` is one of: `platform_not_configured`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable. `code` is one of: `actor_token_unavailable`, `overloaded`, `read_only`, `timeout`, `unavailable`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/platform/members/{memberId}/reactivate": {
+      "post": {
+        "operationId": "platformMembers.reactivate",
+        "tags": [
+          "Platform"
+        ],
+        "summary": "Reactivate a platform member",
+        "description": "Lifts a suspension. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-uniora-scope": "platform:admin",
+        "x-uniora-delegated": false,
+        "x-uniora-platform": true,
+        "x-uniora-changes-data": true,
+        "parameters": [
+          {
+            "name": "memberId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1,
+              "description": "A platform member.",
+              "examples": [
+                "pmem_ana"
+              ]
+            },
+            "description": "A platform member."
+          },
+          {
+            "$ref": "#/components/parameters/ActorToken"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "The version of the resource, quoted. Send it back as `If-Match`."
+              },
+              "Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    "identity": {
+                      "$ref": "#/components/schemas/Identity"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "active",
+                        "suspended"
+                      ]
+                    },
+                    "roleIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "maxItems": 100
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "addedBy": {
+                      "$ref": "#/components/schemas/Identity"
+                    },
+                    "statusChange": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "by": {
+                          "$ref": "#/components/schemas/Identity"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "maxLength": 500
+                        }
+                      },
+                      "required": [
+                        "at",
+                        "by"
+                      ]
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991,
+                      "description": "Send it back as `If-Match` to refuse changes made from a stale copy."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "identity",
+                    "status",
+                    "roleIds",
+                    "createdAt",
+                    "updatedAt",
+                    "addedBy",
+                    "version"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request. `code` is one of: `invalid_request`, `platform_invalid`, `unexpected_body`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized. `code` is one of: `actor_token_invalid`, `unauthenticated`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. `code` is one of: `actor_token_required`, `forbidden`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found. `code` is one of: `platform_member_not_found`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition Failed. `code` is one of: `platform_version_conflict`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "Precondition Required. `code` is one of: `platform_step_up_required`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests. `code` is one of: `rate_limited`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error. `code` is one of: `internal_error`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Not Implemented. `code` is one of: `platform_not_configured`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable. `code` is one of: `actor_token_unavailable`, `overloaded`, `read_only`, `timeout`, `unavailable`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/platform/members/{memberId}/roles/{roleId}": {
+      "delete": {
+        "operationId": "platformMembers.unassignRole",
+        "tags": [
+          "Platform"
+        ],
+        "summary": "Take a role from a platform member",
+        "description": "The last active administrator keeps the administrator role. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-uniora-scope": "platform:admin",
+        "x-uniora-delegated": false,
+        "x-uniora-platform": true,
+        "x-uniora-changes-data": true,
+        "parameters": [
+          {
+            "name": "memberId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1,
+              "description": "A platform member.",
+              "examples": [
+                "pmem_ana"
+              ]
+            },
+            "description": "A platform member."
+          },
+          {
+            "name": "roleId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1,
+              "description": "A platform role.",
+              "examples": [
+                "prole_support"
+              ]
+            },
+            "description": "A platform role."
+          },
+          {
+            "$ref": "#/components/parameters/ActorToken"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "The version of the resource, quoted. Send it back as `If-Match`."
+              },
+              "Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    "identity": {
+                      "$ref": "#/components/schemas/Identity"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "active",
+                        "suspended"
+                      ]
+                    },
+                    "roleIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "maxItems": 100
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "addedBy": {
+                      "$ref": "#/components/schemas/Identity"
+                    },
+                    "statusChange": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "by": {
+                          "$ref": "#/components/schemas/Identity"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "maxLength": 500
+                        }
+                      },
+                      "required": [
+                        "at",
+                        "by"
+                      ]
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991,
+                      "description": "Send it back as `If-Match` to refuse changes made from a stale copy."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "identity",
+                    "status",
+                    "roleIds",
+                    "createdAt",
+                    "updatedAt",
+                    "addedBy",
+                    "version"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request. `code` is one of: `invalid_request`, `platform_invalid`, `unexpected_body`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized. `code` is one of: `actor_token_invalid`, `unauthenticated`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. `code` is one of: `actor_token_required`, `forbidden`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found. `code` is one of: `platform_member_not_found`, `platform_role_not_found`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict. `code` is one of: `platform_last_admin`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition Failed. `code` is one of: `platform_version_conflict`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "Precondition Required. `code` is one of: `platform_step_up_required`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests. `code` is one of: `rate_limited`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error. `code` is one of: `internal_error`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Not Implemented. `code` is one of: `platform_not_configured`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable. `code` is one of: `actor_token_unavailable`, `overloaded`, `read_only`, `timeout`, `unavailable`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "platformMembers.assignRole",
+        "tags": [
+          "Platform"
+        ],
+        "summary": "Give a platform member a role",
+        "description": "Only a role whose permissions the operator holds themselves, and never to themselves. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-uniora-scope": "platform:admin",
+        "x-uniora-delegated": false,
+        "x-uniora-platform": true,
+        "x-uniora-changes-data": true,
+        "parameters": [
+          {
+            "name": "memberId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1,
+              "description": "A platform member.",
+              "examples": [
+                "pmem_ana"
+              ]
+            },
+            "description": "A platform member."
+          },
+          {
+            "name": "roleId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1,
+              "description": "A platform role.",
+              "examples": [
+                "prole_support"
+              ]
+            },
+            "description": "A platform role."
+          },
+          {
+            "$ref": "#/components/parameters/ActorToken"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "The version of the resource, quoted. Send it back as `If-Match`."
+              },
+              "Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    "identity": {
+                      "$ref": "#/components/schemas/Identity"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "active",
+                        "suspended"
+                      ]
+                    },
+                    "roleIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "maxItems": 100
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "addedBy": {
+                      "$ref": "#/components/schemas/Identity"
+                    },
+                    "statusChange": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "by": {
+                          "$ref": "#/components/schemas/Identity"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "maxLength": 500
+                        }
+                      },
+                      "required": [
+                        "at",
+                        "by"
+                      ]
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991,
+                      "description": "Send it back as `If-Match` to refuse changes made from a stale copy."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "identity",
+                    "status",
+                    "roleIds",
+                    "createdAt",
+                    "updatedAt",
+                    "addedBy",
+                    "version"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request. `code` is one of: `invalid_request`, `platform_invalid`, `unexpected_body`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized. `code` is one of: `actor_token_invalid`, `unauthenticated`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. `code` is one of: `actor_token_required`, `forbidden`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found. `code` is one of: `platform_member_not_found`, `platform_role_not_found`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition Failed. `code` is one of: `platform_version_conflict`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "Precondition Required. `code` is one of: `platform_step_up_required`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests. `code` is one of: `rate_limited`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error. `code` is one of: `internal_error`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Not Implemented. `code` is one of: `platform_not_configured`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable. `code` is one of: `actor_token_unavailable`, `overloaded`, `read_only`, `timeout`, `unavailable`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/platform/members/{memberId}/suspend": {
+      "post": {
+        "operationId": "platformMembers.suspend",
+        "tags": [
+          "Platform"
+        ],
+        "summary": "Suspend a platform member",
+        "description": "The member keeps their record and roles but is denied everything. The last active administrator cannot be suspended, and nobody suspends themselves. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-uniora-scope": "platform:admin",
+        "x-uniora-delegated": false,
+        "x-uniora-platform": true,
+        "x-uniora-changes-data": true,
+        "parameters": [
+          {
+            "name": "memberId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1,
+              "description": "A platform member.",
+              "examples": [
+                "pmem_ana"
+              ]
+            },
+            "description": "A platform member."
+          },
+          {
+            "$ref": "#/components/parameters/ActorToken"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "minLength": 1,
+                    "description": "Why. Kept in the audit log."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "The version of the resource, quoted. Send it back as `If-Match`."
+              },
+              "Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    "identity": {
+                      "$ref": "#/components/schemas/Identity"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "active",
+                        "suspended"
+                      ]
+                    },
+                    "roleIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "maxItems": 100
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "addedBy": {
+                      "$ref": "#/components/schemas/Identity"
+                    },
+                    "statusChange": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "by": {
+                          "$ref": "#/components/schemas/Identity"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "maxLength": 500
+                        }
+                      },
+                      "required": [
+                        "at",
+                        "by"
+                      ]
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991,
+                      "description": "Send it back as `If-Match` to refuse changes made from a stale copy."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "identity",
+                    "status",
+                    "roleIds",
+                    "createdAt",
+                    "updatedAt",
+                    "addedBy",
+                    "version"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request. `code` is one of: `invalid_json`, `invalid_request`, `platform_invalid`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized. `code` is one of: `actor_token_invalid`, `unauthenticated`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. `code` is one of: `actor_token_required`, `forbidden`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found. `code` is one of: `platform_member_not_found`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict. `code` is one of: `platform_last_admin`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition Failed. `code` is one of: `platform_version_conflict`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large. `code` is one of: `body_too_large`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type. `code` is one of: `unsupported_media_type`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "Precondition Required. `code` is one of: `platform_step_up_required`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests. `code` is one of: `rate_limited`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error. `code` is one of: `internal_error`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Not Implemented. `code` is one of: `platform_not_configured`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable. `code` is one of: `actor_token_unavailable`, `overloaded`, `read_only`, `timeout`, `unavailable`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/platform/organizations": {
+      "get": {
+        "operationId": "platformOrganizations.list",
+        "tags": [
+          "Platform"
+        ],
+        "summary": "List every organization",
+        "description": "All organizations of the installation, ordered by creation time. Needs `platform.organizations.read`. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-uniora-scope": "platform:admin",
+        "x-uniora-delegated": false,
+        "x-uniora-platform": true,
+        "x-uniora-changes-data": false,
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "description": "Items per page. At most the server's maximum (100 unless configured).",
+              "examples": [
+                25
+              ]
+            },
+            "description": "Items per page. At most the server's maximum (100 unless configured)."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 600,
+              "minLength": 1,
+              "description": "The `nextCursor` of the previous page."
+            },
+            "description": "The `nextCursor` of the previous page."
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1,
+              "description": "Case-insensitive text to look for."
+            },
+            "description": "Case-insensitive text to look for."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "suspended",
+                "archived"
+              ]
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ActorToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Organization"
+                      },
+                      "maxItems": 1000
+                    },
+                    "nextCursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "maxLength": 600,
+                      "description": "Pass it back as `cursor` for the next page; `null` on the last one."
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "nextCursor"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request. `code` is one of: `invalid_cursor`, `invalid_request`, `unexpected_body`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized. `code` is one of: `actor_token_invalid`, `unauthenticated`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. `code` is one of: `actor_token_required`, `forbidden`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests. `code` is one of: `rate_limited`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error. `code` is one of: `internal_error`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Not Implemented. `code` is one of: `platform_not_configured`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable. `code` is one of: `actor_token_unavailable`, `overloaded`, `timeout`, `unavailable`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/platform/organizations/{organizationId}/status": {
+      "put": {
+        "operationId": "platformOrganizations.setStatus",
+        "tags": [
+          "Platform"
+        ],
+        "summary": "Suspend, archive or reactivate an organization",
+        "description": "`suspended` and `archived` organizations are denied every decision. Also recorded in the organization's own audit trail. Needs `platform.organizations.manage`. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-uniora-scope": "platform:admin",
+        "x-uniora-delegated": false,
+        "x-uniora-platform": true,
+        "x-uniora-changes-data": true,
+        "parameters": [
+          {
+            "name": "organizationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1,
+              "description": "The organization.",
+              "examples": [
+                "org_acme"
+              ]
+            },
+            "description": "The organization."
+          },
+          {
+            "$ref": "#/components/parameters/ActorToken"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "suspended",
+                      "archived"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "minLength": 1,
+                    "description": "Why. Kept in the audit log."
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Organization"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request. `code` is one of: `invalid_json`, `invalid_request`, `platform_invalid`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized. `code` is one of: `actor_token_invalid`, `unauthenticated`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. `code` is one of: `actor_token_required`, `forbidden`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found. `code` is one of: `platform_organization_not_found`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large. `code` is one of: `body_too_large`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type. `code` is one of: `unsupported_media_type`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "Precondition Required. `code` is one of: `platform_step_up_required`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests. `code` is one of: `rate_limited`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error. `code` is one of: `internal_error`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Not Implemented. `code` is one of: `platform_not_configured`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable. `code` is one of: `actor_token_unavailable`, `overloaded`, `read_only`, `timeout`, `unavailable`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/platform/roles": {
+      "get": {
+        "operationId": "platformRoles.list",
+        "tags": [
+          "Platform"
+        ],
+        "summary": "List platform roles",
+        "description": "Ordered by id. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-uniora-scope": "platform:admin",
+        "x-uniora-delegated": false,
+        "x-uniora-platform": true,
+        "x-uniora-changes-data": false,
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "description": "Items per page. At most the server's maximum (100 unless configured).",
+              "examples": [
+                25
+              ]
+            },
+            "description": "Items per page. At most the server's maximum (100 unless configured)."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 600,
+              "minLength": 1,
+              "description": "The `nextCursor` of the previous page."
+            },
+            "description": "The `nextCursor` of the previous page."
+          },
+          {
+            "$ref": "#/components/parameters/ActorToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "maxLength": 200
+                          },
+                          "key": {
+                            "type": "string",
+                            "maxLength": 200
+                          },
+                          "name": {
+                            "type": "string",
+                            "maxLength": 200
+                          },
+                          "description": {
+                            "type": "string",
+                            "maxLength": 1000
+                          },
+                          "permissions": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            "maxItems": 500,
+                            "description": "`platform.*` keys. A trailing `.*` covers everything under that prefix."
+                          },
+                          "isSystem": {
+                            "type": "boolean",
+                            "description": "Created by UNIORA itself (`platform_admin`); it cannot be edited, renamed or deleted."
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "updatedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "version": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991,
+                            "description": "Send it back as `If-Match` to refuse changes made from a stale copy."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "key",
+                          "name",
+                          "permissions",
+                          "isSystem",
+                          "createdAt",
+                          "updatedAt",
+                          "version"
+                        ]
+                      },
+                      "maxItems": 1000
+                    },
+                    "nextCursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "maxLength": 600,
+                      "description": "Pass it back as `cursor` for the next page; `null` on the last one."
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "nextCursor"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request. `code` is one of: `invalid_cursor`, `invalid_request`, `unexpected_body`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized. `code` is one of: `actor_token_invalid`, `unauthenticated`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. `code` is one of: `actor_token_required`, `forbidden`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests. `code` is one of: `rate_limited`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error. `code` is one of: `internal_error`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Not Implemented. `code` is one of: `platform_not_configured`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable. `code` is one of: `actor_token_unavailable`, `overloaded`, `timeout`, `unavailable`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "platformRoles.create",
+        "tags": [
+          "Platform"
+        ],
+        "summary": "Create a platform role",
+        "description": "A role holds `platform.*` permissions, only ones the operator holds themselves. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-uniora-scope": "platform:admin",
+        "x-uniora-delegated": false,
+        "x-uniora-platform": true,
+        "x-uniora-changes-data": true,
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ActorToken"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "maxLength": 63,
+                    "minLength": 2,
+                    "pattern": "^[a-z][a-z0-9_-]{1,62}$",
+                    "description": "Stable handle, unique across the platform.",
+                    "examples": [
+                      "support"
+                    ]
+                  },
+                  "name": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "examples": [
+                      "Support"
+                    ]
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 1000,
+                    "minLength": 1
+                  },
+                  "permissions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 200,
+                      "minLength": 1
+                    },
+                    "maxItems": 100,
+                    "description": "`platform.*` keys."
+                  }
+                },
+                "required": [
+                  "key",
+                  "name",
+                  "permissions"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "The version of the resource, quoted. Send it back as `If-Match`."
+              },
+              "Location": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Where to read what was created, when it has an address."
+              },
+              "Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    "key": {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    "name": {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    "description": {
+                      "type": "string",
+                      "maxLength": 1000
+                    },
+                    "permissions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "maxItems": 500,
+                      "description": "`platform.*` keys. A trailing `.*` covers everything under that prefix."
+                    },
+                    "isSystem": {
+                      "type": "boolean",
+                      "description": "Created by UNIORA itself (`platform_admin`); it cannot be edited, renamed or deleted."
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991,
+                      "description": "Send it back as `If-Match` to refuse changes made from a stale copy."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "key",
+                    "name",
+                    "permissions",
+                    "isSystem",
+                    "createdAt",
+                    "updatedAt",
+                    "version"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request. `code` is one of: `invalid_json`, `invalid_request`, `platform_invalid`, `platform_permission_invalid`, `platform_role_invalid`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized. `code` is one of: `actor_token_invalid`, `unauthenticated`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. `code` is one of: `actor_token_required`, `forbidden`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict. `code` is one of: `platform_role_exists`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large. `code` is one of: `body_too_large`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type. `code` is one of: `unsupported_media_type`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "Precondition Required. `code` is one of: `platform_step_up_required`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests. `code` is one of: `rate_limited`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error. `code` is one of: `internal_error`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Not Implemented. `code` is one of: `platform_not_configured`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable. `code` is one of: `actor_token_unavailable`, `overloaded`, `read_only`, `timeout`, `unavailable`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/platform/roles/{roleId}": {
+      "delete": {
+        "operationId": "platformRoles.delete",
+        "tags": [
+          "Platform"
+        ],
+        "summary": "Delete a platform role",
+        "description": "Not a system role, and not one a member still holds. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-uniora-scope": "platform:admin",
+        "x-uniora-delegated": false,
+        "x-uniora-platform": true,
+        "x-uniora-changes-data": true,
+        "parameters": [
+          {
+            "name": "roleId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1,
+              "description": "A platform role.",
+              "examples": [
+                "prole_support"
+              ]
+            },
+            "description": "A platform role."
+          },
+          {
+            "$ref": "#/components/parameters/ActorToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "deleted": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "deleted"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request. `code` is one of: `invalid_request`, `platform_invalid`, `unexpected_body`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized. `code` is one of: `actor_token_invalid`, `unauthenticated`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. `code` is one of: `actor_token_required`, `forbidden`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found. `code` is one of: `platform_role_not_found`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict. `code` is one of: `platform_role_in_use`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "Precondition Required. `code` is one of: `platform_step_up_required`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests. `code` is one of: `rate_limited`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error. `code` is one of: `internal_error`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Not Implemented. `code` is one of: `platform_not_configured`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable. `code` is one of: `actor_token_unavailable`, `overloaded`, `read_only`, `timeout`, `unavailable`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "platformRoles.update",
+        "tags": [
+          "Platform"
+        ],
+        "summary": "Edit a platform role",
+        "description": "Send only what changes. Send `If-Match` with the role's version to refuse a stale edit. A system role cannot be edited. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-uniora-scope": "platform:admin",
+        "x-uniora-delegated": false,
+        "x-uniora-platform": true,
+        "x-uniora-changes-data": true,
+        "parameters": [
+          {
+            "name": "roleId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1,
+              "description": "A platform role.",
+              "examples": [
+                "prole_support"
+              ]
+            },
+            "description": "A platform role."
+          },
+          {
+            "$ref": "#/components/parameters/ActorToken"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "minLength": 1
+                  },
+                  "description": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 1000,
+                    "minLength": 1
+                  },
+                  "permissions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 200,
+                      "minLength": 1
+                    },
+                    "maxItems": 100,
+                    "description": "The role will hold exactly these `platform.*` keys."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "The version of the resource, quoted. Send it back as `If-Match`."
+              },
+              "Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    "key": {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    "name": {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    "description": {
+                      "type": "string",
+                      "maxLength": 1000
+                    },
+                    "permissions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "maxItems": 500,
+                      "description": "`platform.*` keys. A trailing `.*` covers everything under that prefix."
+                    },
+                    "isSystem": {
+                      "type": "boolean",
+                      "description": "Created by UNIORA itself (`platform_admin`); it cannot be edited, renamed or deleted."
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991,
+                      "description": "Send it back as `If-Match` to refuse changes made from a stale copy."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "key",
+                    "name",
+                    "permissions",
+                    "isSystem",
+                    "createdAt",
+                    "updatedAt",
+                    "version"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request. `code` is one of: `invalid_json`, `invalid_request`, `platform_invalid`, `platform_permission_invalid`, `platform_role_invalid`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized. `code` is one of: `actor_token_invalid`, `unauthenticated`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. `code` is one of: `actor_token_required`, `forbidden`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found. `code` is one of: `platform_role_not_found`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Precondition Failed. `code` is one of: `platform_version_conflict`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large. `code` is one of: `body_too_large`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type. `code` is one of: `unsupported_media_type`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "Precondition Required. `code` is one of: `platform_step_up_required`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests. `code` is one of: `rate_limited`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error. `code` is one of: `internal_error`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Not Implemented. `code` is one of: `platform_not_configured`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable. `code` is one of: `actor_token_unavailable`, `overloaded`, `read_only`, `timeout`, `unavailable`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/platform/support-grants": {
+      "post": {
+        "operationId": "platformSupport.grant",
+        "tags": [
+          "Platform"
+        ],
+        "summary": "Open support access to an organization",
+        "description": "Opens a temporary, narrow, audited grant FOR THE OPERATOR in one organization: it carries an explicit list of permission keys and an expiry (in the future, at most 30 days), never the Owner role. Needs `platform.support.grant`. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-uniora-scope": "platform:admin",
+        "x-uniora-delegated": false,
+        "x-uniora-platform": true,
+        "x-uniora-changes-data": true,
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ActorToken"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "organizationId": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "description": "The organization to open.",
+                    "examples": [
+                      "org_acme"
+                    ]
+                  },
+                  "permissions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 200,
+                      "minLength": 1
+                    },
+                    "maxItems": 50,
+                    "minItems": 1,
+                    "description": "Registered organization permission keys."
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "minLength": 1,
+                    "description": "Why, in the operator's words. Kept in both audit trails.",
+                    "examples": [
+                      "Ticket 4821: reports do not load"
+                    ]
+                  },
+                  "expiresAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "When the grant ends: in the future and at most 30 days away."
+                  }
+                },
+                "required": [
+                  "organizationId",
+                  "permissions",
+                  "reason",
+                  "expiresAt"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Where to read what was created, when it has an address."
+              },
+              "Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    "organizationId": {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    "operator": {
+                      "$ref": "#/components/schemas/Identity"
+                    },
+                    "grantedBy": {
+                      "$ref": "#/components/schemas/Identity"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "maxLength": 500
+                    },
+                    "permissions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "maxItems": 50
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "revokedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "revokedBy": {
+                      "$ref": "#/components/schemas/Identity"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "organizationId",
+                    "operator",
+                    "grantedBy",
+                    "reason",
+                    "permissions",
+                    "createdAt",
+                    "expiresAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request. `code` is one of: `invalid_json`, `invalid_request`, `platform_invalid`, `support_grant_expiry_invalid`, `support_grant_permission_invalid`, `support_grant_reason_invalid`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized. `code` is one of: `actor_token_invalid`, `unauthenticated`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. `code` is one of: `actor_token_required`, `forbidden`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found. `code` is one of: `support_grant_organization_unknown`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict. `code` is one of: `support_grant_exists`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large. `code` is one of: `body_too_large`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type. `code` is one of: `unsupported_media_type`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "Precondition Required. `code` is one of: `platform_step_up_required`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests. `code` is one of: `rate_limited`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error. `code` is one of: `internal_error`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Not Implemented. `code` is one of: `platform_not_configured`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable. `code` is one of: `actor_token_unavailable`, `overloaded`, `read_only`, `timeout`, `unavailable`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/platform/support-grants/{grantId}/revoke": {
+      "post": {
+        "operationId": "platformSupport.revoke",
+        "tags": [
+          "Platform"
+        ],
+        "summary": "End a support grant now",
+        "description": "Needs `platform.support.grant`. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).",
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ],
+        "x-uniora-scope": "platform:admin",
+        "x-uniora-delegated": false,
+        "x-uniora-platform": true,
+        "x-uniora-changes-data": true,
+        "parameters": [
+          {
+            "name": "grantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1,
+              "description": "A support grant.",
+              "examples": [
+                "sgr_1"
+              ]
+            },
+            "description": "A support grant."
+          },
+          {
+            "$ref": "#/components/parameters/ActorToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    "organizationId": {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    "operator": {
+                      "$ref": "#/components/schemas/Identity"
+                    },
+                    "grantedBy": {
+                      "$ref": "#/components/schemas/Identity"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "maxLength": 500
+                    },
+                    "permissions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "maxItems": 50
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "revokedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "revokedBy": {
+                      "$ref": "#/components/schemas/Identity"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "organizationId",
+                    "operator",
+                    "grantedBy",
+                    "reason",
+                    "permissions",
+                    "createdAt",
+                    "expiresAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request. `code` is one of: `invalid_request`, `platform_invalid`, `unexpected_body`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized. `code` is one of: `actor_token_invalid`, `unauthenticated`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden. `code` is one of: `actor_token_required`, `forbidden`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found. `code` is one of: `platform_grant_not_found`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "Precondition Required. `code` is one of: `platform_step_up_required`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests. `code` is one of: `rate_limited`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error. `code` is one of: `internal_error`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Not Implemented. `code` is one of: `platform_not_configured`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable. `code` is one of: `actor_token_unavailable`, `overloaded`, `read_only`, `timeout`, `unavailable`.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait."
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/snapshots": {
       "post": {
         "operationId": "decisions.snapshot",
@@ -14368,6 +18308,7 @@
         ],
         "x-uniora-scope": "check",
         "x-uniora-delegated": false,
+        "x-uniora-platform": false,
         "x-uniora-changes-data": false,
         "parameters": [
           {
@@ -15570,6 +19511,10 @@
     "actor:verified": {
       "description": "Act on behalf of an end user who presents a valid token from your identity provider. A leaked key alone cannot impersonate anyone.",
       "sensitive": false
+    },
+    "platform:admin": {
+      "description": "Run PLATFORM administration (platform roles and members, organization status, support access) for a platform operator who presents a verified token with a recent multi-factor sign-in. Needs a client with every organization.",
+      "sensitive": true
     },
     "actor:assert": {
       "description": "Act on behalf of an end user. A key with this scope can speak for ANY user of its organizations.",

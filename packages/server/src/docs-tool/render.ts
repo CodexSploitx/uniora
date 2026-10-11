@@ -151,6 +151,7 @@ function clientSnippet(item: Recorded): string {
   const options: string[] = [];
   if (item.step.actor !== undefined) options.push(`actor: { subject: ${JSON.stringify(item.step.actor)} }`);
   if (item.step.verifiedAs !== undefined) options.push(`actor: { token: userToken }`);
+  if (item.step.operator !== undefined) options.push(`operatorToken: operatorToken`);
   const match = item.request.headers["If-Match"];
   if (match) options.push(`ifMatch: ${match.replace(/"/g, "")}`);
   if (item.step.idempotencyKey) options.push(`idempotencyKey: ${JSON.stringify(item.step.idempotencyKey)}`);
@@ -163,7 +164,7 @@ function clientSnippet(item: Recorded): string {
 }
 
 function responseBlock(item: Recorded): string {
-  const reason = { 200: "OK", 201: "Created", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 409: "Conflict", 412: "Precondition Failed", 422: "Unprocessable Content" }[item.response.status] ?? "";
+  const reason = { 200: "OK", 201: "Created", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 409: "Conflict", 412: "Precondition Failed", 422: "Unprocessable Content", 428: "Precondition Required", 501: "Not Implemented" }[item.response.status] ?? "";
   const headers = Object.entries(item.response.headers).map(([name, value]) => `${name}: ${value}`);
   const body = item.response.body === undefined ? "" : `\n\n${JSON.stringify(item.response.body, null, 2)}`;
   return `HTTP/1.1 ${item.response.status} ${reason}${headers.length > 0 ? `\n${headers.join("\n")}` : ""}${body}`;
@@ -181,6 +182,7 @@ const GROUPS: readonly { id: string; title: string; about: string; prefixes: rea
   { id: "teams", title: "Teams", about: "Teams, their tree and their members.", prefixes: ["teams", "teamMembers"] },
   { id: "policies", title: "Policies", about: "Conditional rules that restrict what roles allow.", prefixes: ["policies"] },
   { id: "invitations", title: "Invitations", about: "Invite people, and the accept flow your server relays.", prefixes: ["invitations"] },
+  { id: "platform", title: "Platform", about: "Administer the platform itself: staff roles and members, organization status and support access. The operator's own token and a recent second factor.", prefixes: ["platformRoles", "platformMembers", "platformOrganizations", "platformSupport"] },
   { id: "audit", title: "Audit log", about: "The tamper-evident history of an organization.", prefixes: ["audit"] },
 ];
 
@@ -199,6 +201,9 @@ const STATUS_OF: Readonly<Record<string, number>> = {
   actor_token_unavailable: 503,
   actor_mismatch: 400,
   invitations_not_configured: 501,
+  platform_not_configured: 501,
+  platform_step_up_required: 428,
+  platform_last_admin: 409,
   idempotency_key_reused: 422,
   idempotency_in_progress: 409,
 };
@@ -217,7 +222,7 @@ function operationSection(route: Route, examples: readonly Recorded[]): string {
   out.push(
     [
       `- **Scope:** \`${route.scope}\`${route.delegated ? " and `actor:verified` (with a token) or `actor:assert` (asserted)" : ""}`,
-      `- **Kind:** ${route.delegated ? "delegated (speaks for an end user)" : "application (your backend asks as itself)"}`,
+      `- **Kind:** ${route.platform ? "platform (speaks for a platform operator, with their own token)" : route.delegated ? "delegated (speaks for an end user)" : "application (your backend asks as itself)"}`,
       `- **Changes data:** ${route.write ? "yes (refused with `503 read_only` while the server is read-only)" : "no"}`,
       ...(route.allOrganizations ? ["- **Client:** one that may reach every organization (`*`)"] : []),
       ...(route.ifMatch ? ["- **`If-Match`:** send the version you last saw; a stale one is a `412` and nothing changes"] : []),
@@ -232,7 +237,10 @@ function operationSection(route: Route, examples: readonly Recorded[]): string {
     out.push("");
     out.push(table(request, true));
   }
-  if (route.delegated) {
+  if (route.platform) {
+    out.push("A platform call speaks for the operator in `Uniora-Actor-Token`: their own token from the staff identity provider. It is never asserted and never the key alone. A change also needs a recent sign-in with a second factor in that token (`auth_time`, `amr`), or it is a `428 platform_step_up_required` with `WWW-Authenticate: Bearer error=\"insufficient_user_authentication\"`; reads never do.");
+    out.push("");
+  } else if (route.delegated) {
     out.push("Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).");
     out.push("");
   } else if (route.actorToken) {
@@ -281,6 +289,7 @@ const INTRO = `# The UNIORA API reference
 - **Transport.** HTTPS and JSON. Send \`Content-Type: application/json\` on anything with a body. Paths live under \`/v1\`. Plain HTTP is only for a server on the same machine.
 - **Authentication.** \`Authorization: Bearer uniora_sk_…\` on every call under \`/v1\`. A key belongs to an **API client**, which has **scopes** and a list of **organizations**; a call outside them is refused. Keys are created in Studio or with \`uniora server keys create\`: there is no route that creates or changes one.
 - **Application and delegated calls.** An application call is your backend asking as itself (decisions, reads, creating an organization). A **delegated** call changes things on behalf of an end user, and says who in one of two ways. **Verified**: the user's own token from your identity provider in \`Uniora-Actor-Token\`; the server checks it (issuer, audience, pinned algorithm, signature against the keys you configured, expiry) and the identity comes out of the token, so a leaked API key can only speak for users who hold a token right now. It needs the \`actor:verified\` scope. **Asserted**: \`Uniora-Actor-Subject\` (percent-encoded) and, if the server has no default label, \`Uniora-Actor-Provider\`; it needs \`actor:assert\`, and a key that holds it can name anybody, so a server can refuse it (\`requireVerifiedActors\`). Either way it succeeds only if that user may do it: a key can never do more than the user it speaks for. Never copy the actor from what the end user sent.
+- **Platform calls.** \`/v1/platform/...\` administers the platform itself (staff roles and members, organization status, support access). It is the operator's own token in \`Uniora-Actor-Token\` (from a provider the server lists as a platform provider), the \`platform:admin\` scope on a client with every organization, and, for any change, a recent sign-in with a second factor in that token.
 - **Identities.** \`{ "subject": "…" }\` is the user's id in your auth provider. \`provider\` is an opaque label you choose (it does not have to name your vendor); leave it out and the server's default label is used. The labels \`uniora-api\`, \`uniora-studio\`, \`uniora-cli\` and \`uniora-platform\` are reserved.
 - **Versions.** Resources that change carry a \`version\`. It is also the \`ETag\` (quoted). Send it back as \`If-Match\` to refuse an edit made from a stale copy (\`412\`).
 - **Idempotency.** Operations that create something accept \`Idempotency-Key\` (1–128 letters, digits and \`._:-\`). The same key with the same request answers the first result and does nothing again; the same key with a different request is refused. Keys are per API client.

@@ -16,6 +16,6 @@ describe("route sources", () => {
   });
 
   it.each(files)("%s never touches the credential storage", (file) => {
-    expect(readFileSync(join(dir, file), "utf8")).not.toMatch(/\b(credentials|apiClients|apiKeys|rateLimits)\b/);
+    expect(readFileSync(join(dir, file), "utf8")).not.toMatch(/\b(credentials|apiClients|apiKeys|rateLimits|config\.platform)\b/);
   });
 });

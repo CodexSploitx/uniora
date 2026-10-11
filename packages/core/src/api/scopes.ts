@@ -14,6 +14,7 @@ export const API_SCOPES = {
   "invitations:write": { description: "Invite, resend and revoke invitations, on behalf of a user.", sensitive: true },
   "audit:read": { description: "Read an organization's audit log.", sensitive: false },
   "actor:verified": { description: "Act on behalf of an end user who presents a valid token from your identity provider. A leaked key alone cannot impersonate anyone.", sensitive: false },
+  "platform:admin": { description: "Run PLATFORM administration (platform roles and members, organization status, support access) for a platform operator who presents a verified token with a recent multi-factor sign-in. Needs a client with every organization.", sensitive: true },
   "actor:assert": { description: "Act on behalf of an end user. A key with this scope can speak for ANY user of its organizations.", sensitive: true },
 } as const;
 

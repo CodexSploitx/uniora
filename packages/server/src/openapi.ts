@@ -20,6 +20,10 @@ const TAGS: Readonly<Record<string, { name: string; description: string }>> = {
   teams: { name: "Teams", description: "Teams, their tree and their members." },
   teamMembers: { name: "Teams", description: "Teams, their tree and their members." },
   policies: { name: "Policies", description: "Conditional rules that restrict what roles allow." },
+  platformRoles: { name: "Platform", description: "Administer the platform itself: staff roles and members, organization status, support access. The operator's own token and a recent second factor." },
+  platformMembers: { name: "Platform", description: "Administer the platform itself: staff roles and members, organization status, support access. The operator's own token and a recent second factor." },
+  platformOrganizations: { name: "Platform", description: "Administer the platform itself: staff roles and members, organization status, support access. The operator's own token and a recent second factor." },
+  platformSupport: { name: "Platform", description: "Administer the platform itself: staff roles and members, organization status, support access. The operator's own token and a recent second factor." },
   invitations: { name: "Invitations", description: "Invite people, and the accept flow your server relays." },
 };
 
@@ -41,6 +45,9 @@ const STATUS: Readonly<Record<string, number>> = {
   actor_token_unavailable: 503,
   actor_mismatch: 400,
   invitations_not_configured: 501,
+  platform_not_configured: 501,
+  platform_step_up_required: 428,
+  platform_last_admin: 409,
   idempotency_key_reused: 422,
   idempotency_in_progress: 409,
   invitation_bad_request: 400,
@@ -64,6 +71,7 @@ const REASONS: Readonly<Record<number, string>> = {
   413: "Content Too Large",
   415: "Unsupported Media Type",
   422: "Unprocessable Content",
+  428: "Precondition Required",
   429: "Too Many Requests",
   500: "Internal Server Error",
   501: "Not Implemented",
@@ -107,6 +115,11 @@ function errorResponses(route: Route): Record<string, Json> {
     add(400, "actor_required");
     add(403, "actor_token_required");
   }
+  if (route.platform) {
+    add(403, "actor_token_required");
+    add(401, "actor_token_invalid");
+    add(503, "actor_token_unavailable");
+  }
   if (route.delegated || route.actorToken) {
     add(401, "actor_token_invalid");
     add(501, "actor_token_unsupported");
@@ -139,7 +152,7 @@ function operation(route: Route): Json {
   const headers: Json[] = [];
   if (route.delegated) {
     headers.push({ $ref: "#/components/parameters/ActorToken" }, { $ref: "#/components/parameters/ActorSubject" }, { $ref: "#/components/parameters/ActorProvider" });
-  } else if (route.actorToken) {
+  } else if (route.actorToken || route.platform) {
     headers.push({ $ref: "#/components/parameters/ActorToken" });
   }
   if (route.ifMatch) headers.push({ $ref: "#/components/parameters/IfMatch" });
@@ -168,6 +181,7 @@ function operation(route: Route): Json {
     security: [{ ApiKey: [] }],
     "x-uniora-scope": route.scope,
     "x-uniora-delegated": route.delegated,
+    "x-uniora-platform": route.platform,
     "x-uniora-changes-data": route.write,
     ...(parameters.length > 0 ? { parameters } : {}),
     ...(route.body ? { requestBody: { required: true, content: { "application/json": { schema: toJsonSchema(route.body, COMPONENT_SCHEMAS) } } } } : {}),

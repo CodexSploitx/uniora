@@ -1,16 +1,19 @@
 import Database from "better-sqlite3";
 import {
+  bootstrapPlatform,
   createApiCredentialService,
   createMemoryApiCredentialStorage,
+  createMemoryPlatformStorage,
   createMemoryStorage,
   createOrganizationWithOwner,
 } from "@uniora/core";
-import type { ApiCredentialStorage, ApiScope, UnioraStorage } from "@uniora/core";
+import type { ApiCredentialStorage, ApiScope, PlatformStorage, UnioraStorage } from "@uniora/core";
 import { Pool } from "pg";
-import { applyMigrations as applyPostgresMigrations, createPostgresApiCredentialStorage, createPostgresStorage } from "@uniora/postgres";
-import { applyMigrations, createSqliteApiCredentialStorage, createSqliteStorage } from "@uniora/sqlite";
+import { applyMigrations as applyPostgresMigrations, createPostgresApiCredentialStorage, createPostgresPlatformStorage, createPostgresStorage } from "@uniora/postgres";
+import { applyMigrations, createSqliteApiCredentialStorage, createSqlitePlatformStorage, createSqliteStorage } from "@uniora/sqlite";
 import { createJsonLogger, createUnioraServer, silentLogger } from "../index.js";
 import type { LogEntry, RunningServer, UnioraServerOptions } from "../index.js";
+import { nowSeconds, signJwt, testKey } from "./jwt.js";
 
 export const OPERATOR = { provider: "uniora-studio", subject: "tests" };
 export const ALL_SCOPES: ApiScope[] = [
@@ -25,6 +28,7 @@ export const ALL_SCOPES: ApiScope[] = [
   "audit:read",
   "actor:verified",
   "actor:assert",
+  "platform:admin",
 ];
 
 export type BackendName = "memory" | "sqlite" | "postgres";
@@ -44,6 +48,7 @@ export async function closePools(): Promise<void> {
 export interface Backend {
   readonly storage: UnioraStorage;
   readonly credentials: ApiCredentialStorage;
+  readonly platform: PlatformStorage;
   close(): void;
 }
 
@@ -58,12 +63,15 @@ export async function createBackend(name: BackendName): Promise<Backend> {
       "select format('%I.%I', schemaname, tablename) as name from pg_tables where schemaname in ('uniora', 'uniora_api', 'uniora_platform') and tablename <> 'schema_migrations'",
     );
     if (tables.rows.length > 0) await pool.query(`truncate table ${tables.rows.map((row) => row.name).join(", ")} cascade`);
-    return { storage: createPostgresStorage(pool), credentials: createPostgresApiCredentialStorage(pool), close() {} };
+    return { storage: createPostgresStorage(pool), credentials: createPostgresApiCredentialStorage(pool), platform: createPostgresPlatformStorage(pool), close() {} };
   }
-  if (name === "memory") return { storage: createMemoryStorage(), credentials: createMemoryApiCredentialStorage(), close() {} };
+  if (name === "memory") {
+    const storage = createMemoryStorage();
+    return { storage, credentials: createMemoryApiCredentialStorage(), platform: createMemoryPlatformStorage({ auditLogs: storage.auditLogs }), close() {} };
+  }
   const db = new Database(":memory:");
   applyMigrations(db);
-  return { storage: createSqliteStorage(db), credentials: createSqliteApiCredentialStorage(db), close: () => db.close() };
+  return { storage: createSqliteStorage(db), credentials: createSqliteApiCredentialStorage(db), platform: createSqlitePlatformStorage(db), close: () => db.close() };
 }
 
 /** An organization "acme" with an owner, a viewer role with `reports.read` and two members, and one more organization "globex". */
@@ -103,19 +111,42 @@ export interface Fixture {
   readonly logs: LogEntry[];
   /** Creates a client and a key; returns the key to send as `Authorization: Bearer`. */
   issue(input?: { name?: string; scopes?: ApiScope[]; organizations?: "*" | string[] }): Promise<{ token: string; clientId: string; keyId: string }>;
-  call(method: string, path: string, init?: { token?: string | null; body?: unknown; raw?: string; headers?: Record<string, string>; actor?: string }): Promise<{ status: number; body: any; headers: Headers; text: string }>;
+  /** A signed token of the staff identity provider (`staff`) for `subject`, or of the customer-facing one (`main`). */
+  sign(subject: string, options?: { provider?: "staff" | "main"; claims?: Record<string, unknown> }): string;
+  call(method: string, path: string, init?: { token?: string | null; body?: unknown; raw?: string; headers?: Record<string, string>; actor?: string; operator?: string | { subject: string; claims?: Record<string, unknown> } }): Promise<{ status: number; body: any; headers: Headers; text: string }>;
   stop(): Promise<void>;
 }
 
 let counter = 0;
 
+/** The two identity providers the platform tests use: customers' (`main`) and staff's (`staff`), each with its own issuer and key. */
+export const IDP = {
+  main: { key: testKey("rsa", "main-key-1"), issuer: "https://idp.example.com/" },
+  staff: { key: testKey("rsa", "staff-key-1"), issuer: "https://staff.example.com/" },
+} as const;
+export const STAFF_ROOT = { provider: "staff", subject: "root" };
+
+/** Both providers configured, the platform on, and `root` bootstrapped as its first administrator. Pass it as `options` of `startFixture`. */
+export async function platformOptions(backend: Backend, extra: Partial<UnioraServerOptions> = {}): Promise<Partial<UnioraServerOptions>> {
+  await bootstrapPlatform({ platform: backend.platform, admin: STAFF_ROOT });
+  return {
+    actorTokens: [
+      { provider: "main", issuer: IDP.main.issuer, audience: "uniora", algorithms: ["RS256"], jwks: { keys: [IDP.main.key.publicJwk as never] } },
+      { provider: "staff", issuer: IDP.staff.issuer, audience: "uniora", algorithms: ["RS256"], jwks: { keys: [IDP.staff.key.publicJwk as never] }, acrLevels: { "urn:mfa": 2 } },
+    ],
+    platform: { storage: backend.platform, providers: ["staff"], supportGrantablePermissions: ["reports.read", "members.block"] },
+    ...extra,
+  };
+}
+
 export async function startFixture(
   name: BackendName,
-  options: Partial<UnioraServerOptions> = {},
+  options: Partial<UnioraServerOptions> | ((backend: Backend) => Promise<Partial<UnioraServerOptions>>) = {},
   wrap?: (backend: Backend) => Pick<UnioraServerOptions, "storage" | "credentials">,
 ): Promise<Fixture> {
   const backend = await createBackend(name);
   await seed(backend.storage);
+  const resolved = typeof options === "function" ? await options(backend) : options;
   const logs: LogEntry[] = [];
   const service = createApiCredentialService({ storage: backend.credentials });
   const server = createUnioraServer({
@@ -123,7 +154,7 @@ export async function startFixture(
     defaultProvider: "main",
     invitations: { acceptUrl: (token: string) => `https://app.test/invite/${token}`, includeAcceptUrl: true },
     logger: createJsonLogger({ minLevel: "debug", write: (line) => void logs.push(JSON.parse(line) as LogEntry) }),
-    ...options,
+    ...resolved,
   });
   const running = await server.listen({ port: 0 });
 
@@ -138,10 +169,23 @@ export async function startFixture(
     return { token: created.token, clientId: client.id, keyId: created.key.id };
   };
 
+  const sign: Fixture["sign"] = (subject, signOptions = {}) => {
+    const idp = IDP[signOptions.provider ?? "main"];
+    return signJwt(
+      { iss: idp.issuer, aud: "uniora", sub: subject, iat: nowSeconds() - 5, exp: nowSeconds() + 300, ...signOptions.claims },
+      idp.key.privateKey,
+      { alg: "RS256", kid: idp.key.publicJwk.kid as string },
+    );
+  };
+
   const call: Fixture["call"] = async (method, path, init = {}) => {
     const headers: Record<string, string> = { ...init.headers };
     if (init.token !== null && init.token !== undefined) headers.authorization = `Bearer ${init.token}`;
     if (init.actor !== undefined) headers["uniora-actor-subject"] = encodeURIComponent(init.actor);
+    if (init.operator !== undefined) {
+      const who = typeof init.operator === "string" ? { subject: init.operator } : init.operator;
+      headers["uniora-actor-token"] = sign(who.subject, { provider: "staff", claims: { auth_time: nowSeconds() - 30, amr: ["pwd", "mfa"], ...who.claims } });
+    }
     let body: string | undefined;
     if (init.raw !== undefined) body = init.raw;
     else if (init.body !== undefined) body = JSON.stringify(init.body);
@@ -162,6 +206,7 @@ export async function startFixture(
     server: running,
     logs,
     issue,
+    sign,
     call,
     async stop() {
       await running.close(1000);

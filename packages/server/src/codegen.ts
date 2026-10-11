@@ -121,6 +121,7 @@ export function generateClientSource(routes: readonly Route[] = allRoutes()): st
     out.push(`    scope: ${JSON.stringify(route.scope)},`);
     out.push(`    delegated: ${route.delegated},`);
     out.push(`    actorToken: ${route.actorToken},`);
+    out.push(`    platform: ${route.platform},`);
     out.push(`    safe: ${!route.write},`);
     out.push(`    ifMatch: ${route.ifMatch},`);
     out.push(`    idempotent: ${route.idempotent},`);

@@ -76,6 +76,10 @@ export function statusForCode(code: string): number {
   return 400;
 }
 
+/** What a platform refusal says: never why. The anti-escalation rules of the platform collapse into the plain "no" (the operator's panel needs nothing more). */
+const PLATFORM_FORBIDDEN = new Set(["platform_forbidden", "platform_escalation", "platform_self_change", "platform_role_system"]);
+const PLATFORM_SERVER_FAULT = new Set(["platform_authorization_required", "platform_support_unavailable", "platform_not_initialized"]);
+
 /** Turns anything thrown into the `ApiError` that is answered. Unknown errors become a bare 500: their detail stays in the log. */
 export function toApiError(error: unknown): ApiError {
   if (error instanceof ApiError) return error;
@@ -83,7 +87,12 @@ export function toApiError(error: unknown): ApiError {
   // Only our own shape of code (`role_exists`): a driver's `SQLITE_BUSY` or Node's `ERR_INVALID_URL` is a server fault, never the caller's 400.
   if (error instanceof UnioraError || (error instanceof Error && /^[a-z][a-z0-9_]*$/.test(String((error as { code?: unknown }).code)) && /Error$/.test(error.name) && error.name !== "Error")) {
     const code = (error as UnioraError).code;
-    if (SERVER_FAULT.test(code)) return errors.internal(error);
+    if (SERVER_FAULT.test(code) || PLATFORM_SERVER_FAULT.has(code)) return errors.internal(error);
+    if (PLATFORM_FORBIDDEN.has(code)) return new ApiError(403, "forbidden", { cause: error, detail: error.message });
+    if (code === "platform_step_up_required") {
+      return new ApiError(428, code, { cause: error, detail: error.message, headers: { "WWW-Authenticate": 'Bearer error="insufficient_user_authentication", error_description="a recent sign-in with a second factor is required"' } });
+    }
+    if (code === "platform_last_admin" || code === "platform_already_initialized") return new ApiError(409, code, { cause: error, detail: error.message });
     // The plain "no" never says whether it was the permission, the role or the target: one code for all of them. The four
     // anti-escalation rules (`access_escalation`, ...) keep theirs: they describe the rule, not the target, and a screen needs them.
     // An unknown invitation, one of another organization and an unusable one are the same thing to whoever manages them.

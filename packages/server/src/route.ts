@@ -1,4 +1,4 @@
-import type { UnioraStorage, AccessAdminService, ApiPrincipal, ApiScope, AuthorizationEngine, Identity, InvitationService, PolicyService, TeamService } from "@uniora/core";
+import type { UnioraStorage, AccessAdminService, ApiPrincipal, ApiScope, AuthorizationEngine, Identity, InvitationService, PlatformService, PolicyService, TeamService } from "@uniora/core";
 import type { VerifiedActor } from "./actor-token.js";
 import type { ResolvedConfig } from "./config.js";
 import type { Infer, Issue, ObjectSchema, Schema } from "./schema.js";
@@ -16,6 +16,14 @@ export interface ApplicationContext {
   readonly storage: UnioraStorage;
   /** `undefined` until the operator configures `invitations`. */
   readonly invitations: InvitationService | undefined;
+}
+
+/** What a platform route uses: the operator proven by their own token, and the platform service that acts as them. */
+export interface PlatformContext {
+  readonly actor: Identity;
+  readonly service: PlatformService;
+  /** The provider labels whose operators may administer the platform. */
+  readonly providers: ReadonlySet<string>;
 }
 
 export interface DelegatedContext extends ApplicationContext {
@@ -39,6 +47,8 @@ export interface RouteContext {
   readonly verifiedActor: VerifiedActor | undefined;
   /** Services for an application call (no end user): the API client acts as itself. */
   application(): ApplicationContext;
+  /** Only on a `platform` route: the operator (from their verified token) and the platform service. A bug anywhere else (500). */
+  platform(): PlatformContext;
   /** Only on a `delegated` route: the end user the call speaks for and the services that act as them. Anywhere else it is a bug (500). */
   delegated(): DelegatedContext;
   /** The `Idempotency-Key` header (1 to 128 letters, digits and `._:-`), or `undefined`. A malformed one is a 400 before the handler runs. */
@@ -88,6 +98,12 @@ export interface RouteSpec<Pa extends ObjectSchema | undefined = undefined, Q ex
    */
   readonly delegated?: boolean;
   /**
+   * PLATFORM administration (staff roles and members, organization status, support access). Always the operator's own verified token
+   * (`Uniora-Actor-Token` from one of `platform.providers`): never asserted, never the key alone. Needs a client with every organization.
+   * Every change is also subject to the step-up rule (a recent second factor in that token).
+   */
+  readonly platform?: boolean;
+  /**
    * Accepts `Uniora-Actor-Token`: the end user's own token from your identity provider, verified by the server. The identity the call
    * asks about must then be the one in the token. (Delegated routes always accept it; this is for the application routes that can
    * profit from knowing the person is who they say, like `authorize`, which also takes the session facts from it.)
@@ -124,6 +140,7 @@ export interface Route {
   readonly status: 200 | 201 | 204;
   readonly write: boolean;
   readonly delegated: boolean;
+  readonly platform: boolean;
   readonly actorToken: boolean;
   readonly ifMatch: boolean;
   readonly etag: boolean;
@@ -146,6 +163,8 @@ export function defineRoute<Pa extends ObjectSchema | undefined = undefined, Q e
 ): Route {
   if (!spec.path.startsWith("/v1/")) throw new Error(`Route ${spec.id}: paths live under /v1/.`);
   if (!spec.scope) throw new Error(`Route ${spec.id}: every route names exactly one scope.`);
+  if (spec.platform && (spec.delegated || spec.actorToken)) throw new Error(`Route ${spec.id}: a platform route is neither delegated nor takes the optional token.`);
+  if (spec.platform && !spec.allOrganizations) throw new Error(`Route ${spec.id}: a platform route needs allOrganizations (only a client with every organization may administer the platform).`);
   if (spec.method === "GET" && spec.body) throw new Error(`Route ${spec.id}: a GET has no body.`);
   const names: string[] = [];
   const pattern = spec.path
@@ -175,6 +194,7 @@ export function defineRoute<Pa extends ObjectSchema | undefined = undefined, Q e
     status: spec.status ?? 200,
     write: spec.write ?? spec.method !== "GET",
     delegated: spec.delegated ?? false,
+    platform: spec.platform ?? false,
     actorToken: spec.actorToken ?? false,
     ifMatch: spec.ifMatch ?? false,
     etag: spec.etag ?? false,

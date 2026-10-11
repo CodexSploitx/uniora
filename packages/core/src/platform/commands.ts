@@ -187,7 +187,7 @@ export interface PlatformHttpError {
 }
 
 const CONFLICT = new Set(["platform_role_exists", "platform_member_exists", "platform_role_in_use", "platform_version_conflict", "platform_last_admin", "platform_already_initialized"]);
-const NOT_FOUND = new Set(["platform_role_not_found", "platform_member_not_found"]);
+const NOT_FOUND = new Set(["platform_role_not_found", "platform_member_not_found", "platform_grant_not_found", "platform_organization_not_found"]);
 const FORBIDDEN = new Set(["platform_forbidden", "platform_escalation", "platform_self_change", "platform_role_system"]);
 
 /**

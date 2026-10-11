@@ -3,12 +3,15 @@ import {
   createAuditContextStorage,
   createGuardedStorage,
   createInvitationService,
+  createPlatformAuditContext,
+  createPlatformService,
   createPolicyService,
   createTeamService,
 } from "@uniora/core";
 import type { ApiPrincipal, Identity } from "@uniora/core";
 import type { ResolvedConfig } from "./config.js";
-import type { ApplicationContext, DelegatedContext } from "./route.js";
+import type { VerifiedActor } from "./actor-token.js";
+import type { ApplicationContext, DelegatedContext, PlatformContext } from "./route.js";
 
 /** The operator's storage under the access guard and the audit context, for ONE request. */
 function requestStorage(config: ResolvedConfig, principal: ApiPrincipal, requestId: string, actorMode?: "asserted" | "verified") {
@@ -47,4 +50,32 @@ export function createDelegatedContext(config: ResolvedConfig, principal: ApiPri
 function invitationOptions(config: ResolvedConfig) {
   const { includeAcceptUrl: _includeAcceptUrl, ...rest } = config.invitations!;
   return rest;
+}
+
+/**
+ * The platform service for ONE request, acting as the operator the verified token names. The step-up question is answered from that
+ * very token: the operator must have signed in recently (`auth_time`) with a second factor (`amr`), as `platform.stepUp` says. Both the
+ * platform trail and the organization trail stamp `via`, so an entry says which API client relayed the operator's call.
+ */
+export function createPlatformContext(config: ResolvedConfig, principal: ApiPrincipal, requestId: string, operator: VerifiedActor): PlatformContext {
+  const platform = config.platform;
+  if (!platform) throw new Error("The platform is not configured.");
+  const via = { apiClientId: principal.client.id, keyId: principal.key.id, requestId, actorMode: "verified" };
+  const rule = platform.stepUp;
+  const service = createPlatformService({
+    platform: createPlatformAuditContext(platform.storage, via),
+    storage: createAuditContextStorage(config.storage, via),
+    ...(platform.engine ? { engine: platform.engine } : {}),
+    ...(platform.supportGrantablePermissions ? { supportGrantablePermissions: platform.supportGrantablePermissions } : {}),
+    stepUp: () => {
+      const session = operator.session;
+      if (!session.authenticatedAt) return false;
+      const ageMs = config.now().getTime() - session.authenticatedAt.getTime();
+      if (ageMs > rule.maxAgeSeconds * 1000) return false;
+      if (rule.requireMfa && session.mfa !== true) return false;
+      if (rule.minAssuranceLevel !== undefined && (session.assuranceLevel ?? -1) < rule.minAssuranceLevel) return false;
+      return true;
+    },
+  });
+  return { actor: operator.identity, service, providers: platform.providers };
 }

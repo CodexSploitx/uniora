@@ -15,6 +15,7 @@ export const API_SCOPE_META = {
   "invitations:write": { sensitive: true, group: "administer" },
   "actor:verified": { sensitive: false, group: "delegate" },
   "actor:assert": { sensitive: true, group: "delegate" },
+  "platform:admin": { sensitive: true, group: "platform" },
 } as const;
 
 export type ApiScopeName = keyof typeof API_SCOPE_META;
@@ -22,7 +23,7 @@ export const API_SCOPE_NAMES = Object.keys(API_SCOPE_META) as ApiScopeName[];
 
 export type ApiScopeGroup = (typeof API_SCOPE_META)[ApiScopeName]["group"];
 /** The order the categories are shown in: from the harmless to the powerful. */
-export const API_SCOPE_GROUPS: readonly ApiScopeGroup[] = ["decide", "read", "provision", "administer", "delegate"];
+export const API_SCOPE_GROUPS: readonly ApiScopeGroup[] = ["decide", "read", "provision", "administer", "delegate", "platform"];
 
 export const scopesOfGroup = (group: ApiScopeGroup): ApiScopeName[] => API_SCOPE_NAMES.filter((scope) => API_SCOPE_META[scope].group === group);
 

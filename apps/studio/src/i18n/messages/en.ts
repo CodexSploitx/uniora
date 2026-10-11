@@ -724,6 +724,8 @@ export const en = {
   "apiGroup.administer_hint": "Change members, roles, teams, policies and invitations as an end user.",
   "apiGroup.delegate": "Delegation",
   "apiGroup.delegate_hint": "Speak for an end user. Required by the administration scopes: prefer verified.",
+  "apiGroup.platform": "Platform",
+  "apiGroup.platform_hint": "Administer the platform itself (staff roles, organization status, support access). Needs the operator's own token with a recent multi-factor sign-in.",
   "apiScope.check": "Ask whether a user may do something (can, authorize, access checks, snapshots).",
   "apiScope.organizations:read": "Read organizations, members, roles, permissions, features, teams and policies.",
   "apiScope.organizations:create": "Create an organization together with its first Owner.",
@@ -735,4 +737,5 @@ export const en = {
   "apiScope.audit:read": "Read an organization's audit log.",
   "apiScope.actor:verified": "Act on behalf of an end user who presents a valid token from your identity provider. A leaked key alone cannot impersonate anyone.",
   "apiScope.actor:assert": "Act on behalf of an end user.",
+  "apiScope.platform:admin": "Run platform administration for an operator who presents a verified token with a recent multi-factor sign-in. Needs a client with every organization.",
 } as const;

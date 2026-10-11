@@ -51,21 +51,25 @@ export interface CallOptions {
 
 type Meta<K extends OperationId> = (typeof OPERATIONS)[K];
 type Delegated<K extends OperationId> = Meta<K>["delegated"] extends true ? { readonly actor: Actor } : { readonly actor?: never };
+/** A platform call speaks for a platform OPERATOR, and only with their own token: there is no asserted operator. */
+type Operated<K extends OperationId> = Meta<K>["platform"] extends true ? { readonly operatorToken: string } : { readonly operatorToken?: never };
 type TokenTaken<K extends OperationId> = Meta<K>["actorToken"] extends true ? { readonly actorToken?: string } : unknown;
 type Versioned<K extends OperationId> = Meta<K>["ifMatch"] extends true ? { readonly ifMatch?: number } : unknown;
 type Idempotent<K extends OperationId> = Meta<K>["idempotent"] extends true ? { readonly idempotencyKey?: string } : unknown;
 
 /** The options of one operation: the common ones, plus the actor when it is a delegated call, `ifMatch` when it takes a version and `idempotencyKey` when it takes one. */
-export type OptionsOf<K extends OperationId> = CallOptions & Delegated<K> & TokenTaken<K> & Versioned<K> & Idempotent<K>;
+export type OptionsOf<K extends OperationId> = CallOptions & Delegated<K> & Operated<K> & TokenTaken<K> & Versioned<K> & Idempotent<K>;
 export type InputOf<K extends OperationId> = Operations[K]["input"];
 export type OutputOf<K extends OperationId> = Operations[K]["output"];
 
 type NeedsInput<T> = Record<string, never> extends T ? false : {} extends T ? false : true;
+/** A delegated or platform call must say who it speaks for, so its options are not optional. */
+type NeedsWho<K extends OperationId> = Meta<K>["delegated"] extends true ? true : Meta<K>["platform"] extends true ? true : false;
 type Args<K extends OperationId> = NeedsInput<InputOf<K>> extends true
-  ? Meta<K>["delegated"] extends true
+  ? NeedsWho<K> extends true
     ? [input: InputOf<K>, options: OptionsOf<K>]
     : [input: InputOf<K>, options?: OptionsOf<K>]
-  : Meta<K>["delegated"] extends true
+  : NeedsWho<K> extends true
     ? [input: InputOf<K> | undefined, options: OptionsOf<K>]
     : [input?: InputOf<K>, options?: OptionsOf<K>];
 
@@ -225,6 +229,13 @@ export function createUnioraClient(options: UnioraClientOptions): UnioraClient {
       }
     } else if (actor !== undefined) {
       throw new TypeError(`${operationId}: this call does not speak for a user, so it takes no actor.`);
+    }
+    const operatorToken = callOptions.operatorToken as string | undefined;
+    if (operation.platform) {
+      if (typeof operatorToken !== "string" || operatorToken === "") throw new TypeError(`${operationId}: a platform call speaks for a platform operator: pass { operatorToken } (their own token from your staff identity provider).`);
+      headers["uniora-actor-token"] = operatorToken;
+    } else if (operatorToken !== undefined) {
+      throw new TypeError(`${operationId}: this is not a platform call, so it takes no operator token.`);
     }
     if (actorToken !== undefined) {
       if (!operation.actorToken) throw new TypeError(`${operationId}: this call takes no actor token.`);

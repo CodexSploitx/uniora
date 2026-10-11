@@ -20,6 +20,8 @@ export interface Step {
   readonly actor?: string;
   /** The end user a call speaks for, proven by a token from the identity provider (the runner signs one). */
   readonly verifiedAs?: string;
+  /** The platform operator a call speaks for: the runner signs a token of the staff provider with a fresh second-factor sign-in. */
+  readonly operator?: string;
   /** Claims added to that token (`auth_time`, `amr`...). */
   readonly tokenClaims?: Record<string, unknown>;
   readonly ifMatch?: (context: Context) => number;
@@ -38,6 +40,7 @@ const ana = { subject: "ana" };
 
 const step = (operation: string, title: string, input: Step["input"], expect = 200, extra: Partial<Step> = {}): Step => ({ operation, title, input, expect, ...extra });
 const as = (actor: string) => ({ actor });
+const operator = (name: string, tokenClaims?: Record<string, unknown>) => ({ operator: name, ...(tokenClaims ? { tokenClaims } : {}) });
 const verified = (verifiedAs: string, tokenClaims?: Record<string, unknown>) => ({ verifiedAs, ...(tokenClaims ? { tokenClaims } : {}) });
 
 export const STEPS: readonly Step[] = [
@@ -176,6 +179,26 @@ export const STEPS: readonly Step[] = [
 
   // The audit log, after all of it
   step("audit.list", "The newest entries of the audit log", { organizationId: ORG, limit: 4 }),
+
+  // Platform: the operator's own token, a recent second factor for every change
+  step("platformRoles.list", "The roles of the platform (the bootstrap made the administrator role)", { limit: 10 }, 200, operator("root")),
+  step("platformMembers.list", "The people who administer the platform", { limit: 10 }, 200, operator("root")),
+  step("platformRoles.create", "A change without a second factor is refused", { key: "support", name: "Support", permissions: ["platform.organizations.read"] }, 428, operator("root", { amr: ["pwd"] })),
+  step("platformRoles.create", "A role for the support desk", { key: "support", name: "Support", permissions: ["platform.organizations.read", "platform.support.grant"] }, 201, { ...operator("root"), save: "supportRole" }),
+  step("platformRoles.update", "Edit it", (c) => ({ roleId: c.saved("supportRole").id, name: "Support desk", description: "Looks into customer problems" }), 200, { ...operator("root"), ifMatch: (c) => c.saved("supportRole").version }),
+  step("platformMembers.add", "Add a person of the staff provider", (c) => ({ subject: "sam", roleIds: [c.saved("supportRole").id] }), 201, { ...operator("root"), save: "sam" }),
+  step("platformMembers.suspend", "Suspend them", (c) => ({ memberId: c.saved("sam").id, reason: "on leave" }), 200, { ...operator("root"), ifMatch: (c) => c.saved("sam").version }),
+  step("platformMembers.reactivate", "Lift it", (c) => ({ memberId: c.saved("sam").id }), 200, operator("root")),
+  step("platformMembers.suspend", "Nobody suspends themselves", (c) => ({ memberId: c.last("platformMembers.list").items[0].id }), 403, operator("root")),
+  step("platformMembers.unassignRole", "Take the role away", (c) => ({ memberId: c.saved("sam").id, roleId: c.saved("supportRole").id }), 200, operator("root")),
+  step("platformMembers.assignRole", "Give it back", (c) => ({ memberId: c.saved("sam").id, roleId: c.saved("supportRole").id }), 200, operator("root")),
+  step("platformOrganizations.list", "Every organization of the installation", { q: "acme", limit: 10 }, 200, operator("root")),
+  step("platformOrganizations.setStatus", "Suspend an organization", { organizationId: ORG, status: "suspended", reason: "unpaid invoice" }, 200, operator("root")),
+  step("platformOrganizations.setStatus", "Reactivate it", { organizationId: ORG, status: "active" }, 200, operator("root")),
+  step("platformSupport.grant", "Open narrow, time-limited support access for the operator", () => ({ organizationId: ORG, permissions: ["reports.read"], reason: "Ticket 4821: reports do not load", expiresAt: new Date(Date.now() + 2 * 3600_000).toISOString() }), 201, { ...operator("root"), save: "grant" }),
+  step("platformSupport.revoke", "End it now", (c) => ({ grantId: c.saved("grant").id }), 200, operator("root")),
+  step("platformMembers.remove", "Remove a person from the platform staff", (c) => ({ memberId: c.saved("sam").id }), 200, operator("root")),
+  step("platformRoles.delete", "Delete a role nobody holds", (c) => ({ roleId: c.saved("supportRole").id }), 200, operator("root")),
 
   // What every call can meet
   step("organizations.list", "A call with no key", {}, 401, { as: "anonymous" }),

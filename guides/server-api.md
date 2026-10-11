@@ -10,6 +10,7 @@
 - **Transport.** HTTPS and JSON. Send `Content-Type: application/json` on anything with a body. Paths live under `/v1`. Plain HTTP is only for a server on the same machine.
 - **Authentication.** `Authorization: Bearer uniora_sk_…` on every call under `/v1`. A key belongs to an **API client**, which has **scopes** and a list of **organizations**; a call outside them is refused. Keys are created in Studio or with `uniora server keys create`: there is no route that creates or changes one.
 - **Application and delegated calls.** An application call is your backend asking as itself (decisions, reads, creating an organization). A **delegated** call changes things on behalf of an end user, and says who in one of two ways. **Verified**: the user's own token from your identity provider in `Uniora-Actor-Token`; the server checks it (issuer, audience, pinned algorithm, signature against the keys you configured, expiry) and the identity comes out of the token, so a leaked API key can only speak for users who hold a token right now. It needs the `actor:verified` scope. **Asserted**: `Uniora-Actor-Subject` (percent-encoded) and, if the server has no default label, `Uniora-Actor-Provider`; it needs `actor:assert`, and a key that holds it can name anybody, so a server can refuse it (`requireVerifiedActors`). Either way it succeeds only if that user may do it: a key can never do more than the user it speaks for. Never copy the actor from what the end user sent.
+- **Platform calls.** `/v1/platform/...` administers the platform itself (staff roles and members, organization status, support access). It is the operator's own token in `Uniora-Actor-Token` (from a provider the server lists as a platform provider), the `platform:admin` scope on a client with every organization, and, for any change, a recent sign-in with a second factor in that token.
 - **Identities.** `{ "subject": "…" }` is the user's id in your auth provider. `provider` is an opaque label you choose (it does not have to name your vendor); leave it out and the server's default label is used. The labels `uniora-api`, `uniora-studio`, `uniora-cli` and `uniora-platform` are reserved.
 - **Versions.** Resources that change carry a `version`. It is also the `ETag` (quoted). Send it back as `If-Match` to refuse an edit made from a stale copy (`412`).
 - **Idempotency.** Operations that create something accept `Idempotency-Key` (1–128 letters, digits and `._:-`). The same key with the same request answers the first result and does nothing again; the same key with a different request is refused. Keys are per API client.
@@ -66,6 +67,7 @@ Errors are `application/problem+json` (RFC 9457):
 | `invitations:write` | Invite, resend and revoke invitations, on behalf of a user. **Sensitive.** |
 | `audit:read` | Read an organization's audit log. |
 | `actor:verified` | Act on behalf of an end user who presents a valid token from your identity provider. A leaked key alone cannot impersonate anyone. |
+| `platform:admin` | Run PLATFORM administration (platform roles and members, organization status, support access) for a platform operator who presents a verified token with a recent multi-factor sign-in. Needs a client with every organization. **Sensitive.** |
 | `actor:assert` | Act on behalf of an end user. A key with this scope can speak for ANY user of its organizations. **Sensitive.** |
 
 ## Operations
@@ -139,6 +141,22 @@ Errors are `application/problem+json` (RFC 9457):
   - [`DELETE /v1/organizations/:organizationId/invitations/:invitationId`](#invitations-revoke): Revoke an invitation
   - [`POST /v1/invitations/preview`](#invitations-preview): What an accept page may show before sign-in
   - [`POST /v1/invitations/accept`](#invitations-accept): Accept an invitation as the person who just signed in
+- **Platform**
+  - [`GET /v1/platform/roles`](#platformroles-list): List platform roles
+  - [`POST /v1/platform/roles`](#platformroles-create): Create a platform role
+  - [`PATCH /v1/platform/roles/:roleId`](#platformroles-update): Edit a platform role
+  - [`DELETE /v1/platform/roles/:roleId`](#platformroles-delete): Delete a platform role
+  - [`GET /v1/platform/members`](#platformmembers-list): List platform members
+  - [`POST /v1/platform/members`](#platformmembers-add): Add a platform member
+  - [`POST /v1/platform/members/:memberId/suspend`](#platformmembers-suspend): Suspend a platform member
+  - [`POST /v1/platform/members/:memberId/reactivate`](#platformmembers-reactivate): Reactivate a platform member
+  - [`DELETE /v1/platform/members/:memberId`](#platformmembers-remove): Remove a platform member
+  - [`PUT /v1/platform/members/:memberId/roles/:roleId`](#platformmembers-assignrole): Give a platform member a role
+  - [`DELETE /v1/platform/members/:memberId/roles/:roleId`](#platformmembers-unassignrole): Take a role from a platform member
+  - [`GET /v1/platform/organizations`](#platformorganizations-list): List every organization
+  - [`PUT /v1/platform/organizations/:organizationId/status`](#platformorganizations-setstatus): Suspend, archive or reactivate an organization
+  - [`POST /v1/platform/support-grants`](#platformsupport-grant): Open support access to an organization
+  - [`POST /v1/platform/support-grants/:grantId/revoke`](#platformsupport-revoke): End a support grant now
 - **Audit log**
   - [`GET /v1/organizations/:organizationId/audit-log`](#audit-list): An organization's audit log
 
@@ -7253,6 +7271,1490 @@ HTTP/1.1 200 OK
 }
 ```
 
+## Platform
+
+Administer the platform itself: staff roles and members, organization status and support access. The operator's own token and a recent second factor.
+
+### `GET /v1/platform/roles`  <a id="platformroles-list"></a>
+
+**List platform roles** · operation `platformRoles.list`
+
+Ordered by id. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).
+
+- **Scope:** `platform:admin`
+- **Kind:** platform (speaks for a platform operator, with their own token)
+- **Changes data:** no
+- **Client:** one that may reach every organization (`*`)
+
+**Request**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `limit` | integer (1–1000) | no | (query) Items per page. At most the server's maximum (100 unless configured). |
+| `cursor` | string (1–600 chars) | no | (query) The `nextCursor` of the previous page. |
+
+A platform call speaks for the operator in `Uniora-Actor-Token`: their own token from the staff identity provider. It is never asserted and never the key alone. A change also needs a recent sign-in with a second factor in that token (`auth_time`, `amr`), or it is a `428 platform_step_up_required` with `WWW-Authenticate: Bearer error="insufficient_user_authentication"`; reads never do.
+
+**Response `200`**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `items` | array (≤ 1000) |  |
+| `items[].id` | string (≤ 200 chars) |  |
+| `items[].key` | string (≤ 200 chars) |  |
+| `items[].name` | string (≤ 200 chars) |  |
+| `items[].description` | string (≤ 1000 chars), may be absent |  |
+| `items[].permissions` | array (≤ 500) | `platform.*` keys. A trailing `.*` covers everything under that prefix. |
+| `items[].isSystem` | boolean | Created by UNIORA itself (`platform_admin`); it cannot be edited, renamed or deleted. |
+| `items[].createdAt` | string (date-time) |  |
+| `items[].updatedAt` | string (date-time) |  |
+| `items[].version` | integer (1–…) | Send it back as `If-Match` to refuse changes made from a stale copy. |
+| `nextCursor` | string (≤ 600 chars) or `null` | Pass it back as `cursor` for the next page; `null` on the last one. |
+
+**Errors of this operation** (besides the ones every call can meet: see [Errors](#errors))
+
+- `400` `invalid_cursor`
+- `401` `actor_token_invalid`
+- `403` `actor_token_required`
+- `403` `forbidden`
+- `501` `platform_not_configured`
+- `503` `actor_token_unavailable`
+
+**Example: The roles of the platform (the bootstrap made the administrator role)**
+
+```bash
+curl -X GET "https://uniora.example.com/v1/platform/roles?limit=10" \
+  -H "Authorization: Bearer $UNIORA_API_KEY" \
+  -H 'Uniora-Actor-Token: <the operator'\''s token from your staff identity provider>'
+```
+
+```ts
+const result = await uniora.platformRoles.list({ limit: 10 }, { operatorToken: operatorToken });
+```
+
+```http
+HTTP/1.1 200 OK
+
+{
+  "items": [
+    {
+      "id": "00000000-0000-4000-8000-000000000014",
+      "key": "platform_admin",
+      "name": "Platform Administrator",
+      "description": "Full control of the platform. Held by the people who administer the whole project, never by organization roles.",
+      "permissions": [
+        "platform.*"
+      ],
+      "isSystem": true,
+      "createdAt": "2026-03-02T11:19:00.000Z",
+      "updatedAt": "2026-03-02T11:20:00.000Z",
+      "version": 1
+    }
+  ],
+  "nextCursor": null
+}
+```
+
+### `POST /v1/platform/roles`  <a id="platformroles-create"></a>
+
+**Create a platform role** · operation `platformRoles.create`
+
+A role holds `platform.*` permissions, only ones the operator holds themselves. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).
+
+- **Scope:** `platform:admin`
+- **Kind:** platform (speaks for a platform operator, with their own token)
+- **Changes data:** yes (refused with `503 read_only` while the server is read-only)
+- **Client:** one that may reach every organization (`*`)
+- **`ETag`:** the answer carries the version of the resource
+
+**Request**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `key` | string (2–63 chars) | yes | Stable handle, unique across the platform. |
+| `name` | string (1–200 chars) | yes |  |
+| `description` | string (1–1000 chars) | no |  |
+| `permissions` | array (≤ 100) | yes | `platform.*` keys. |
+
+A platform call speaks for the operator in `Uniora-Actor-Token`: their own token from the staff identity provider. It is never asserted and never the key alone. A change also needs a recent sign-in with a second factor in that token (`auth_time`, `amr`), or it is a `428 platform_step_up_required` with `WWW-Authenticate: Bearer error="insufficient_user_authentication"`; reads never do.
+
+**Response `201`**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string (≤ 200 chars) |  |
+| `key` | string (≤ 200 chars) |  |
+| `name` | string (≤ 200 chars) |  |
+| `description` | string (≤ 1000 chars), may be absent |  |
+| `permissions` | array (≤ 500) | `platform.*` keys. A trailing `.*` covers everything under that prefix. |
+| `isSystem` | boolean | Created by UNIORA itself (`platform_admin`); it cannot be edited, renamed or deleted. |
+| `createdAt` | string (date-time) |  |
+| `updatedAt` | string (date-time) |  |
+| `version` | integer (1–…) | Send it back as `If-Match` to refuse changes made from a stale copy. |
+
+**Errors of this operation** (besides the ones every call can meet: see [Errors](#errors))
+
+- `400` `platform_invalid`
+- `400` `platform_permission_invalid`
+- `400` `platform_role_invalid`
+- `401` `actor_token_invalid`
+- `403` `actor_token_required`
+- `403` `forbidden`
+- `409` `platform_role_exists`
+- `428` `platform_step_up_required`
+- `501` `platform_not_configured`
+- `503` `actor_token_unavailable`
+
+**Example: A change without a second factor is refused**
+
+```bash
+curl -X POST "https://uniora.example.com/v1/platform/roles" \
+  -H "Authorization: Bearer $UNIORA_API_KEY" \
+  -H 'Uniora-Actor-Token: <the operator'\''s token from your staff identity provider>' \
+  -H "Content-Type: application/json" \
+  -d '{
+    "key": "support",
+    "name": "Support",
+    "permissions": [
+      "platform.organizations.read"
+    ]
+  }'
+```
+
+```ts
+await uniora.platformRoles.create(
+  {
+    key: "support",
+    name: "Support",
+    permissions: ["platform.organizations.read"],
+  },
+  { operatorToken: operatorToken },
+);
+```
+
+```http
+HTTP/1.1 428 Precondition Required
+
+{
+  "type": "urn:uniora:error:platform_step_up_required",
+  "title": "Precondition Required",
+  "status": 428,
+  "code": "platform_step_up_required",
+  "requestId": "req_xxxxxxxxxxxxxx11"
+}
+```
+
+**Example: A role for the support desk**
+
+```bash
+curl -X POST "https://uniora.example.com/v1/platform/roles" \
+  -H "Authorization: Bearer $UNIORA_API_KEY" \
+  -H 'Uniora-Actor-Token: <the operator'\''s token from your staff identity provider>' \
+  -H "Content-Type: application/json" \
+  -d '{
+    "key": "support",
+    "name": "Support",
+    "permissions": [
+      "platform.organizations.read",
+      "platform.support.grant"
+    ]
+  }'
+```
+
+```ts
+const result = await uniora.platformRoles.create(
+  {
+    key: "support",
+    name: "Support",
+    permissions: ["platform.organizations.read", "platform.support.grant"],
+  },
+  { operatorToken: operatorToken },
+);
+```
+
+```http
+HTTP/1.1 201 Created
+ETag: "1"
+
+{
+  "id": "00000000-0000-4000-8000-000000000015",
+  "key": "support",
+  "name": "Support",
+  "permissions": [
+    "platform.organizations.read",
+    "platform.support.grant"
+  ],
+  "isSystem": false,
+  "createdAt": "2026-03-02T11:21:00.000Z",
+  "updatedAt": "2026-03-02T11:22:00.000Z",
+  "version": 1
+}
+```
+
+### `PATCH /v1/platform/roles/:roleId`  <a id="platformroles-update"></a>
+
+**Edit a platform role** · operation `platformRoles.update`
+
+Send only what changes. Send `If-Match` with the role's version to refuse a stale edit. A system role cannot be edited. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).
+
+- **Scope:** `platform:admin`
+- **Kind:** platform (speaks for a platform operator, with their own token)
+- **Changes data:** yes (refused with `503 read_only` while the server is read-only)
+- **Client:** one that may reach every organization (`*`)
+- **`If-Match`:** send the version you last saw; a stale one is a `412` and nothing changes
+- **`ETag`:** the answer carries the version of the resource
+
+**Request**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `roleId` | string (1–200 chars) | yes | (in the path) A platform role. |
+| `name` | string (1–200 chars) | no |  |
+| `description` | string (1–1000 chars) or `null` | no |  |
+| `permissions` | array (≤ 100) | no | The role will hold exactly these `platform.*` keys. |
+
+A platform call speaks for the operator in `Uniora-Actor-Token`: their own token from the staff identity provider. It is never asserted and never the key alone. A change also needs a recent sign-in with a second factor in that token (`auth_time`, `amr`), or it is a `428 platform_step_up_required` with `WWW-Authenticate: Bearer error="insufficient_user_authentication"`; reads never do.
+
+**Response `200`**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string (≤ 200 chars) |  |
+| `key` | string (≤ 200 chars) |  |
+| `name` | string (≤ 200 chars) |  |
+| `description` | string (≤ 1000 chars), may be absent |  |
+| `permissions` | array (≤ 500) | `platform.*` keys. A trailing `.*` covers everything under that prefix. |
+| `isSystem` | boolean | Created by UNIORA itself (`platform_admin`); it cannot be edited, renamed or deleted. |
+| `createdAt` | string (date-time) |  |
+| `updatedAt` | string (date-time) |  |
+| `version` | integer (1–…) | Send it back as `If-Match` to refuse changes made from a stale copy. |
+
+**Errors of this operation** (besides the ones every call can meet: see [Errors](#errors))
+
+- `400` `platform_invalid`
+- `400` `platform_permission_invalid`
+- `400` `platform_role_invalid`
+- `401` `actor_token_invalid`
+- `403` `actor_token_required`
+- `403` `forbidden`
+- `404` `platform_role_not_found`
+- `412` `platform_version_conflict`
+- `428` `platform_step_up_required`
+- `501` `platform_not_configured`
+- `503` `actor_token_unavailable`
+
+**Example: Edit it**
+
+```bash
+curl -X PATCH "https://uniora.example.com/v1/platform/roles/00000000-0000-4000-8000-000000000015" \
+  -H "Authorization: Bearer $UNIORA_API_KEY" \
+  -H 'If-Match: "1"' \
+  -H 'Uniora-Actor-Token: <the operator'\''s token from your staff identity provider>' \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Support desk",
+    "description": "Looks into customer problems"
+  }'
+```
+
+```ts
+const result = await uniora.platformRoles.update(
+  {
+    roleId: "00000000-0000-4000-8000-000000000015",
+    name: "Support desk",
+    description: "Looks into customer problems",
+  },
+  { operatorToken: operatorToken, ifMatch: 1 },
+);
+```
+
+```http
+HTTP/1.1 200 OK
+ETag: "2"
+
+{
+  "id": "00000000-0000-4000-8000-000000000015",
+  "key": "support",
+  "name": "Support desk",
+  "description": "Looks into customer problems",
+  "permissions": [
+    "platform.organizations.read",
+    "platform.support.grant"
+  ],
+  "isSystem": false,
+  "createdAt": "2026-03-02T11:23:00.000Z",
+  "updatedAt": "2026-03-02T11:24:00.000Z",
+  "version": 2
+}
+```
+
+### `DELETE /v1/platform/roles/:roleId`  <a id="platformroles-delete"></a>
+
+**Delete a platform role** · operation `platformRoles.delete`
+
+Not a system role, and not one a member still holds. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).
+
+- **Scope:** `platform:admin`
+- **Kind:** platform (speaks for a platform operator, with their own token)
+- **Changes data:** yes (refused with `503 read_only` while the server is read-only)
+- **Client:** one that may reach every organization (`*`)
+
+**Request**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `roleId` | string (1–200 chars) | yes | (in the path) A platform role. |
+
+A platform call speaks for the operator in `Uniora-Actor-Token`: their own token from the staff identity provider. It is never asserted and never the key alone. A change also needs a recent sign-in with a second factor in that token (`auth_time`, `amr`), or it is a `428 platform_step_up_required` with `WWW-Authenticate: Bearer error="insufficient_user_authentication"`; reads never do.
+
+**Response `200`**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `deleted` | boolean |  |
+
+**Errors of this operation** (besides the ones every call can meet: see [Errors](#errors))
+
+- `400` `platform_invalid`
+- `401` `actor_token_invalid`
+- `403` `actor_token_required`
+- `403` `forbidden`
+- `404` `platform_role_not_found`
+- `409` `platform_role_in_use`
+- `428` `platform_step_up_required`
+- `501` `platform_not_configured`
+- `503` `actor_token_unavailable`
+
+**Example: Delete a role nobody holds**
+
+```bash
+curl -X DELETE "https://uniora.example.com/v1/platform/roles/00000000-0000-4000-8000-000000000015" \
+  -H "Authorization: Bearer $UNIORA_API_KEY" \
+  -H 'Uniora-Actor-Token: <the operator'\''s token from your staff identity provider>'
+```
+
+```ts
+const result = await uniora.platformRoles.delete(
+  { roleId: "00000000-0000-4000-8000-000000000015" },
+  { operatorToken: operatorToken },
+);
+```
+
+```http
+HTTP/1.1 200 OK
+
+{
+  "deleted": true
+}
+```
+
+### `GET /v1/platform/members`  <a id="platformmembers-list"></a>
+
+**List platform members** · operation `platformMembers.list`
+
+The people who administer the platform, unrelated to any organization's members. Ordered by id. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).
+
+- **Scope:** `platform:admin`
+- **Kind:** platform (speaks for a platform operator, with their own token)
+- **Changes data:** no
+- **Client:** one that may reach every organization (`*`)
+
+**Request**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `limit` | integer (1–1000) | no | (query) Items per page. At most the server's maximum (100 unless configured). |
+| `cursor` | string (1–600 chars) | no | (query) The `nextCursor` of the previous page. |
+| `status` | `active` \| `suspended` | no | (query) |
+| `roleId` | string (1–200 chars) | no | (query) Only members holding this role. |
+
+A platform call speaks for the operator in `Uniora-Actor-Token`: their own token from the staff identity provider. It is never asserted and never the key alone. A change also needs a recent sign-in with a second factor in that token (`auth_time`, `amr`), or it is a `428 platform_step_up_required` with `WWW-Authenticate: Bearer error="insufficient_user_authentication"`; reads never do.
+
+**Response `200`**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `items` | array (≤ 1000) |  |
+| `items[].id` | string (≤ 200 chars) |  |
+| `items[].identity` | object |  |
+| `items[].identity.provider` | string (≤ 200 chars) |  |
+| `items[].identity.subject` | string (≤ 500 chars) |  |
+| `items[].status` | `active` \| `suspended` |  |
+| `items[].roleIds` | array (≤ 100) |  |
+| `items[].createdAt` | string (date-time) |  |
+| `items[].updatedAt` | string (date-time) |  |
+| `items[].addedBy` | object |  |
+| `items[].addedBy.provider` | string (≤ 200 chars) |  |
+| `items[].addedBy.subject` | string (≤ 500 chars) |  |
+| `items[].statusChange` | object, may be absent |  |
+| `items[].statusChange.at` | string (date-time) |  |
+| `items[].statusChange.by` | object |  |
+| `items[].statusChange.by.provider` | string (≤ 200 chars) |  |
+| `items[].statusChange.by.subject` | string (≤ 500 chars) |  |
+| `items[].statusChange.reason` | string (≤ 500 chars), may be absent |  |
+| `items[].version` | integer (1–…) | Send it back as `If-Match` to refuse changes made from a stale copy. |
+| `nextCursor` | string (≤ 600 chars) or `null` | Pass it back as `cursor` for the next page; `null` on the last one. |
+
+**Errors of this operation** (besides the ones every call can meet: see [Errors](#errors))
+
+- `400` `invalid_cursor`
+- `401` `actor_token_invalid`
+- `403` `actor_token_required`
+- `403` `forbidden`
+- `501` `platform_not_configured`
+- `503` `actor_token_unavailable`
+
+**Example: The people who administer the platform**
+
+```bash
+curl -X GET "https://uniora.example.com/v1/platform/members?limit=10" \
+  -H "Authorization: Bearer $UNIORA_API_KEY" \
+  -H 'Uniora-Actor-Token: <the operator'\''s token from your staff identity provider>'
+```
+
+```ts
+const result = await uniora.platformMembers.list({ limit: 10 }, { operatorToken: operatorToken });
+```
+
+```http
+HTTP/1.1 200 OK
+
+{
+  "items": [
+    {
+      "id": "00000000-0000-4000-8000-000000000016",
+      "identity": {
+        "provider": "staff",
+        "subject": "root"
+      },
+      "status": "active",
+      "roleIds": [
+        "00000000-0000-4000-8000-000000000014"
+      ],
+      "createdAt": "2026-03-02T11:25:00.000Z",
+      "updatedAt": "2026-03-02T11:26:00.000Z",
+      "addedBy": {
+        "provider": "staff",
+        "subject": "root"
+      },
+      "version": 1
+    }
+  ],
+  "nextCursor": null
+}
+```
+
+### `POST /v1/platform/members`  <a id="platformmembers-add"></a>
+
+**Add a platform member** · operation `platformMembers.add`
+
+`provider` is the label of one of the server's platform providers; omit it to use the operator's own. Nobody can add themselves. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).
+
+- **Scope:** `platform:admin`
+- **Kind:** platform (speaks for a platform operator, with their own token)
+- **Changes data:** yes (refused with `503 read_only` while the server is read-only)
+- **Client:** one that may reach every organization (`*`)
+- **`ETag`:** the answer carries the version of the resource
+
+**Request**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `provider` | string (1–64 chars) | no | A platform provider label; defaults to the operator's. |
+| `subject` | string (1–500 chars) | yes | The person's stable id in the staff identity provider. |
+| `roleIds` | array (≤ 10) | yes |  |
+
+A platform call speaks for the operator in `Uniora-Actor-Token`: their own token from the staff identity provider. It is never asserted and never the key alone. A change also needs a recent sign-in with a second factor in that token (`auth_time`, `amr`), or it is a `428 platform_step_up_required` with `WWW-Authenticate: Bearer error="insufficient_user_authentication"`; reads never do.
+
+**Response `201`**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string (≤ 200 chars) |  |
+| `identity` | object |  |
+| `identity.provider` | string (≤ 200 chars) |  |
+| `identity.subject` | string (≤ 500 chars) |  |
+| `status` | `active` \| `suspended` |  |
+| `roleIds` | array (≤ 100) |  |
+| `createdAt` | string (date-time) |  |
+| `updatedAt` | string (date-time) |  |
+| `addedBy` | object |  |
+| `addedBy.provider` | string (≤ 200 chars) |  |
+| `addedBy.subject` | string (≤ 500 chars) |  |
+| `statusChange` | object, may be absent |  |
+| `statusChange.at` | string (date-time) |  |
+| `statusChange.by` | object |  |
+| `statusChange.by.provider` | string (≤ 200 chars) |  |
+| `statusChange.by.subject` | string (≤ 500 chars) |  |
+| `statusChange.reason` | string (≤ 500 chars), may be absent |  |
+| `version` | integer (1–…) | Send it back as `If-Match` to refuse changes made from a stale copy. |
+
+**Errors of this operation** (besides the ones every call can meet: see [Errors](#errors))
+
+- `400` `platform_invalid`
+- `400` `platform_member_invalid`
+- `401` `actor_token_invalid`
+- `403` `actor_token_required`
+- `403` `forbidden`
+- `404` `platform_role_not_found`
+- `409` `platform_member_exists`
+- `428` `platform_step_up_required`
+- `501` `platform_not_configured`
+- `503` `actor_token_unavailable`
+
+**Example: Add a person of the staff provider**
+
+```bash
+curl -X POST "https://uniora.example.com/v1/platform/members" \
+  -H "Authorization: Bearer $UNIORA_API_KEY" \
+  -H 'Uniora-Actor-Token: <the operator'\''s token from your staff identity provider>' \
+  -H "Content-Type: application/json" \
+  -d '{
+    "subject": "sam",
+    "roleIds": [
+      "00000000-0000-4000-8000-000000000015"
+    ]
+  }'
+```
+
+```ts
+const result = await uniora.platformMembers.add(
+  { subject: "sam", roleIds: ["00000000-0000-4000-8000-000000000015"] },
+  { operatorToken: operatorToken },
+);
+```
+
+```http
+HTTP/1.1 201 Created
+ETag: "1"
+
+{
+  "id": "00000000-0000-4000-8000-000000000017",
+  "identity": {
+    "provider": "staff",
+    "subject": "sam"
+  },
+  "status": "active",
+  "roleIds": [
+    "00000000-0000-4000-8000-000000000015"
+  ],
+  "createdAt": "2026-03-02T11:27:00.000Z",
+  "updatedAt": "2026-03-02T11:28:00.000Z",
+  "addedBy": {
+    "provider": "staff",
+    "subject": "root"
+  },
+  "version": 1
+}
+```
+
+### `POST /v1/platform/members/:memberId/suspend`  <a id="platformmembers-suspend"></a>
+
+**Suspend a platform member** · operation `platformMembers.suspend`
+
+The member keeps their record and roles but is denied everything. The last active administrator cannot be suspended, and nobody suspends themselves. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).
+
+- **Scope:** `platform:admin`
+- **Kind:** platform (speaks for a platform operator, with their own token)
+- **Changes data:** yes (refused with `503 read_only` while the server is read-only)
+- **Client:** one that may reach every organization (`*`)
+- **`If-Match`:** send the version you last saw; a stale one is a `412` and nothing changes
+- **`ETag`:** the answer carries the version of the resource
+
+**Request**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `memberId` | string (1–200 chars) | yes | (in the path) A platform member. |
+| `reason` | string (1–500 chars) | no | Why. Kept in the audit log. |
+
+A platform call speaks for the operator in `Uniora-Actor-Token`: their own token from the staff identity provider. It is never asserted and never the key alone. A change also needs a recent sign-in with a second factor in that token (`auth_time`, `amr`), or it is a `428 platform_step_up_required` with `WWW-Authenticate: Bearer error="insufficient_user_authentication"`; reads never do.
+
+**Response `200`**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string (≤ 200 chars) |  |
+| `identity` | object |  |
+| `identity.provider` | string (≤ 200 chars) |  |
+| `identity.subject` | string (≤ 500 chars) |  |
+| `status` | `active` \| `suspended` |  |
+| `roleIds` | array (≤ 100) |  |
+| `createdAt` | string (date-time) |  |
+| `updatedAt` | string (date-time) |  |
+| `addedBy` | object |  |
+| `addedBy.provider` | string (≤ 200 chars) |  |
+| `addedBy.subject` | string (≤ 500 chars) |  |
+| `statusChange` | object, may be absent |  |
+| `statusChange.at` | string (date-time) |  |
+| `statusChange.by` | object |  |
+| `statusChange.by.provider` | string (≤ 200 chars) |  |
+| `statusChange.by.subject` | string (≤ 500 chars) |  |
+| `statusChange.reason` | string (≤ 500 chars), may be absent |  |
+| `version` | integer (1–…) | Send it back as `If-Match` to refuse changes made from a stale copy. |
+
+**Errors of this operation** (besides the ones every call can meet: see [Errors](#errors))
+
+- `400` `platform_invalid`
+- `401` `actor_token_invalid`
+- `403` `actor_token_required`
+- `403` `forbidden`
+- `404` `platform_member_not_found`
+- `409` `platform_last_admin`
+- `412` `platform_version_conflict`
+- `428` `platform_step_up_required`
+- `501` `platform_not_configured`
+- `503` `actor_token_unavailable`
+
+**Example: Suspend them**
+
+```bash
+curl -X POST "https://uniora.example.com/v1/platform/members/00000000-0000-4000-8000-000000000017/suspend" \
+  -H "Authorization: Bearer $UNIORA_API_KEY" \
+  -H 'If-Match: "1"' \
+  -H 'Uniora-Actor-Token: <the operator'\''s token from your staff identity provider>' \
+  -H "Content-Type: application/json" \
+  -d '{
+    "reason": "on leave"
+  }'
+```
+
+```ts
+const result = await uniora.platformMembers.suspend(
+  { memberId: "00000000-0000-4000-8000-000000000017", reason: "on leave" },
+  { operatorToken: operatorToken, ifMatch: 1 },
+);
+```
+
+```http
+HTTP/1.1 200 OK
+ETag: "2"
+
+{
+  "id": "00000000-0000-4000-8000-000000000017",
+  "identity": {
+    "provider": "staff",
+    "subject": "sam"
+  },
+  "status": "suspended",
+  "roleIds": [
+    "00000000-0000-4000-8000-000000000015"
+  ],
+  "createdAt": "2026-03-02T11:29:00.000Z",
+  "updatedAt": "2026-03-02T11:30:00.000Z",
+  "addedBy": {
+    "provider": "staff",
+    "subject": "root"
+  },
+  "statusChange": {
+    "at": "2026-03-02T11:31:00.000Z",
+    "by": {
+      "provider": "staff",
+      "subject": "root"
+    },
+    "reason": "on leave"
+  },
+  "version": 2
+}
+```
+
+**Example: Nobody suspends themselves**
+
+```bash
+curl -X POST "https://uniora.example.com/v1/platform/members/00000000-0000-4000-8000-000000000016/suspend" \
+  -H "Authorization: Bearer $UNIORA_API_KEY" \
+  -H 'Uniora-Actor-Token: <the operator'\''s token from your staff identity provider>' \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+```ts
+await uniora.platformMembers.suspend(
+  { memberId: "00000000-0000-4000-8000-000000000016" },
+  { operatorToken: operatorToken },
+);
+```
+
+```http
+HTTP/1.1 403 Forbidden
+
+{
+  "type": "urn:uniora:error:forbidden",
+  "title": "Forbidden",
+  "status": 403,
+  "code": "forbidden",
+  "requestId": "req_xxxxxxxxxxxxxx12"
+}
+```
+
+### `POST /v1/platform/members/:memberId/reactivate`  <a id="platformmembers-reactivate"></a>
+
+**Reactivate a platform member** · operation `platformMembers.reactivate`
+
+Lifts a suspension. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).
+
+- **Scope:** `platform:admin`
+- **Kind:** platform (speaks for a platform operator, with their own token)
+- **Changes data:** yes (refused with `503 read_only` while the server is read-only)
+- **Client:** one that may reach every organization (`*`)
+- **`If-Match`:** send the version you last saw; a stale one is a `412` and nothing changes
+- **`ETag`:** the answer carries the version of the resource
+
+**Request**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `memberId` | string (1–200 chars) | yes | (in the path) A platform member. |
+
+A platform call speaks for the operator in `Uniora-Actor-Token`: their own token from the staff identity provider. It is never asserted and never the key alone. A change also needs a recent sign-in with a second factor in that token (`auth_time`, `amr`), or it is a `428 platform_step_up_required` with `WWW-Authenticate: Bearer error="insufficient_user_authentication"`; reads never do.
+
+**Response `200`**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string (≤ 200 chars) |  |
+| `identity` | object |  |
+| `identity.provider` | string (≤ 200 chars) |  |
+| `identity.subject` | string (≤ 500 chars) |  |
+| `status` | `active` \| `suspended` |  |
+| `roleIds` | array (≤ 100) |  |
+| `createdAt` | string (date-time) |  |
+| `updatedAt` | string (date-time) |  |
+| `addedBy` | object |  |
+| `addedBy.provider` | string (≤ 200 chars) |  |
+| `addedBy.subject` | string (≤ 500 chars) |  |
+| `statusChange` | object, may be absent |  |
+| `statusChange.at` | string (date-time) |  |
+| `statusChange.by` | object |  |
+| `statusChange.by.provider` | string (≤ 200 chars) |  |
+| `statusChange.by.subject` | string (≤ 500 chars) |  |
+| `statusChange.reason` | string (≤ 500 chars), may be absent |  |
+| `version` | integer (1–…) | Send it back as `If-Match` to refuse changes made from a stale copy. |
+
+**Errors of this operation** (besides the ones every call can meet: see [Errors](#errors))
+
+- `400` `platform_invalid`
+- `401` `actor_token_invalid`
+- `403` `actor_token_required`
+- `403` `forbidden`
+- `404` `platform_member_not_found`
+- `412` `platform_version_conflict`
+- `428` `platform_step_up_required`
+- `501` `platform_not_configured`
+- `503` `actor_token_unavailable`
+
+**Example: Lift it**
+
+```bash
+curl -X POST "https://uniora.example.com/v1/platform/members/00000000-0000-4000-8000-000000000017/reactivate" \
+  -H "Authorization: Bearer $UNIORA_API_KEY" \
+  -H 'Uniora-Actor-Token: <the operator'\''s token from your staff identity provider>'
+```
+
+```ts
+const result = await uniora.platformMembers.reactivate(
+  { memberId: "00000000-0000-4000-8000-000000000017" },
+  { operatorToken: operatorToken },
+);
+```
+
+```http
+HTTP/1.1 200 OK
+ETag: "3"
+
+{
+  "id": "00000000-0000-4000-8000-000000000017",
+  "identity": {
+    "provider": "staff",
+    "subject": "sam"
+  },
+  "status": "active",
+  "roleIds": [
+    "00000000-0000-4000-8000-000000000015"
+  ],
+  "createdAt": "2026-03-02T11:32:00.000Z",
+  "updatedAt": "2026-03-02T11:33:00.000Z",
+  "addedBy": {
+    "provider": "staff",
+    "subject": "root"
+  },
+  "statusChange": {
+    "at": "2026-03-02T11:34:00.000Z",
+    "by": {
+      "provider": "staff",
+      "subject": "root"
+    }
+  },
+  "version": 3
+}
+```
+
+### `DELETE /v1/platform/members/:memberId`  <a id="platformmembers-remove"></a>
+
+**Remove a platform member** · operation `platformMembers.remove`
+
+The last active administrator cannot be removed, and nobody removes themselves. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).
+
+- **Scope:** `platform:admin`
+- **Kind:** platform (speaks for a platform operator, with their own token)
+- **Changes data:** yes (refused with `503 read_only` while the server is read-only)
+- **Client:** one that may reach every organization (`*`)
+
+**Request**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `memberId` | string (1–200 chars) | yes | (in the path) A platform member. |
+
+A platform call speaks for the operator in `Uniora-Actor-Token`: their own token from the staff identity provider. It is never asserted and never the key alone. A change also needs a recent sign-in with a second factor in that token (`auth_time`, `amr`), or it is a `428 platform_step_up_required` with `WWW-Authenticate: Bearer error="insufficient_user_authentication"`; reads never do.
+
+**Response `200`**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `removed` | boolean |  |
+
+**Errors of this operation** (besides the ones every call can meet: see [Errors](#errors))
+
+- `400` `platform_invalid`
+- `401` `actor_token_invalid`
+- `403` `actor_token_required`
+- `403` `forbidden`
+- `404` `platform_member_not_found`
+- `409` `platform_last_admin`
+- `428` `platform_step_up_required`
+- `501` `platform_not_configured`
+- `503` `actor_token_unavailable`
+
+**Example: Remove a person from the platform staff**
+
+```bash
+curl -X DELETE "https://uniora.example.com/v1/platform/members/00000000-0000-4000-8000-000000000017" \
+  -H "Authorization: Bearer $UNIORA_API_KEY" \
+  -H 'Uniora-Actor-Token: <the operator'\''s token from your staff identity provider>'
+```
+
+```ts
+const result = await uniora.platformMembers.remove(
+  { memberId: "00000000-0000-4000-8000-000000000017" },
+  { operatorToken: operatorToken },
+);
+```
+
+```http
+HTTP/1.1 200 OK
+
+{
+  "removed": true
+}
+```
+
+### `PUT /v1/platform/members/:memberId/roles/:roleId`  <a id="platformmembers-assignrole"></a>
+
+**Give a platform member a role** · operation `platformMembers.assignRole`
+
+Only a role whose permissions the operator holds themselves, and never to themselves. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).
+
+- **Scope:** `platform:admin`
+- **Kind:** platform (speaks for a platform operator, with their own token)
+- **Changes data:** yes (refused with `503 read_only` while the server is read-only)
+- **Client:** one that may reach every organization (`*`)
+- **`If-Match`:** send the version you last saw; a stale one is a `412` and nothing changes
+- **`ETag`:** the answer carries the version of the resource
+
+**Request**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `memberId` | string (1–200 chars) | yes | (in the path) A platform member. |
+| `roleId` | string (1–200 chars) | yes | (in the path) A platform role. |
+
+A platform call speaks for the operator in `Uniora-Actor-Token`: their own token from the staff identity provider. It is never asserted and never the key alone. A change also needs a recent sign-in with a second factor in that token (`auth_time`, `amr`), or it is a `428 platform_step_up_required` with `WWW-Authenticate: Bearer error="insufficient_user_authentication"`; reads never do.
+
+**Response `200`**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string (≤ 200 chars) |  |
+| `identity` | object |  |
+| `identity.provider` | string (≤ 200 chars) |  |
+| `identity.subject` | string (≤ 500 chars) |  |
+| `status` | `active` \| `suspended` |  |
+| `roleIds` | array (≤ 100) |  |
+| `createdAt` | string (date-time) |  |
+| `updatedAt` | string (date-time) |  |
+| `addedBy` | object |  |
+| `addedBy.provider` | string (≤ 200 chars) |  |
+| `addedBy.subject` | string (≤ 500 chars) |  |
+| `statusChange` | object, may be absent |  |
+| `statusChange.at` | string (date-time) |  |
+| `statusChange.by` | object |  |
+| `statusChange.by.provider` | string (≤ 200 chars) |  |
+| `statusChange.by.subject` | string (≤ 500 chars) |  |
+| `statusChange.reason` | string (≤ 500 chars), may be absent |  |
+| `version` | integer (1–…) | Send it back as `If-Match` to refuse changes made from a stale copy. |
+
+**Errors of this operation** (besides the ones every call can meet: see [Errors](#errors))
+
+- `400` `platform_invalid`
+- `401` `actor_token_invalid`
+- `403` `actor_token_required`
+- `403` `forbidden`
+- `404` `platform_member_not_found`
+- `404` `platform_role_not_found`
+- `412` `platform_version_conflict`
+- `428` `platform_step_up_required`
+- `501` `platform_not_configured`
+- `503` `actor_token_unavailable`
+
+**Example: Give it back**
+
+```bash
+curl -X PUT "https://uniora.example.com/v1/platform/members/00000000-0000-4000-8000-000000000017/roles/00000000-0000-4000-8000-000000000015" \
+  -H "Authorization: Bearer $UNIORA_API_KEY" \
+  -H 'Uniora-Actor-Token: <the operator'\''s token from your staff identity provider>'
+```
+
+```ts
+const result = await uniora.platformMembers.assignRole(
+  {
+    memberId: "00000000-0000-4000-8000-000000000017",
+    roleId: "00000000-0000-4000-8000-000000000015",
+  },
+  { operatorToken: operatorToken },
+);
+```
+
+```http
+HTTP/1.1 200 OK
+ETag: "5"
+
+{
+  "id": "00000000-0000-4000-8000-000000000017",
+  "identity": {
+    "provider": "staff",
+    "subject": "sam"
+  },
+  "status": "active",
+  "roleIds": [
+    "00000000-0000-4000-8000-000000000015"
+  ],
+  "createdAt": "2026-03-02T11:35:00.000Z",
+  "updatedAt": "2026-03-02T11:36:00.000Z",
+  "addedBy": {
+    "provider": "staff",
+    "subject": "root"
+  },
+  "statusChange": {
+    "at": "2026-03-02T11:37:00.000Z",
+    "by": {
+      "provider": "staff",
+      "subject": "root"
+    }
+  },
+  "version": 5
+}
+```
+
+### `DELETE /v1/platform/members/:memberId/roles/:roleId`  <a id="platformmembers-unassignrole"></a>
+
+**Take a role from a platform member** · operation `platformMembers.unassignRole`
+
+The last active administrator keeps the administrator role. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).
+
+- **Scope:** `platform:admin`
+- **Kind:** platform (speaks for a platform operator, with their own token)
+- **Changes data:** yes (refused with `503 read_only` while the server is read-only)
+- **Client:** one that may reach every organization (`*`)
+- **`If-Match`:** send the version you last saw; a stale one is a `412` and nothing changes
+- **`ETag`:** the answer carries the version of the resource
+
+**Request**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `memberId` | string (1–200 chars) | yes | (in the path) A platform member. |
+| `roleId` | string (1–200 chars) | yes | (in the path) A platform role. |
+
+A platform call speaks for the operator in `Uniora-Actor-Token`: their own token from the staff identity provider. It is never asserted and never the key alone. A change also needs a recent sign-in with a second factor in that token (`auth_time`, `amr`), or it is a `428 platform_step_up_required` with `WWW-Authenticate: Bearer error="insufficient_user_authentication"`; reads never do.
+
+**Response `200`**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string (≤ 200 chars) |  |
+| `identity` | object |  |
+| `identity.provider` | string (≤ 200 chars) |  |
+| `identity.subject` | string (≤ 500 chars) |  |
+| `status` | `active` \| `suspended` |  |
+| `roleIds` | array (≤ 100) |  |
+| `createdAt` | string (date-time) |  |
+| `updatedAt` | string (date-time) |  |
+| `addedBy` | object |  |
+| `addedBy.provider` | string (≤ 200 chars) |  |
+| `addedBy.subject` | string (≤ 500 chars) |  |
+| `statusChange` | object, may be absent |  |
+| `statusChange.at` | string (date-time) |  |
+| `statusChange.by` | object |  |
+| `statusChange.by.provider` | string (≤ 200 chars) |  |
+| `statusChange.by.subject` | string (≤ 500 chars) |  |
+| `statusChange.reason` | string (≤ 500 chars), may be absent |  |
+| `version` | integer (1–…) | Send it back as `If-Match` to refuse changes made from a stale copy. |
+
+**Errors of this operation** (besides the ones every call can meet: see [Errors](#errors))
+
+- `400` `platform_invalid`
+- `401` `actor_token_invalid`
+- `403` `actor_token_required`
+- `403` `forbidden`
+- `404` `platform_member_not_found`
+- `404` `platform_role_not_found`
+- `409` `platform_last_admin`
+- `412` `platform_version_conflict`
+- `428` `platform_step_up_required`
+- `501` `platform_not_configured`
+- `503` `actor_token_unavailable`
+
+**Example: Take the role away**
+
+```bash
+curl -X DELETE "https://uniora.example.com/v1/platform/members/00000000-0000-4000-8000-000000000017/roles/00000000-0000-4000-8000-000000000015" \
+  -H "Authorization: Bearer $UNIORA_API_KEY" \
+  -H 'Uniora-Actor-Token: <the operator'\''s token from your staff identity provider>'
+```
+
+```ts
+const result = await uniora.platformMembers.unassignRole(
+  {
+    memberId: "00000000-0000-4000-8000-000000000017",
+    roleId: "00000000-0000-4000-8000-000000000015",
+  },
+  { operatorToken: operatorToken },
+);
+```
+
+```http
+HTTP/1.1 200 OK
+ETag: "4"
+
+{
+  "id": "00000000-0000-4000-8000-000000000017",
+  "identity": {
+    "provider": "staff",
+    "subject": "sam"
+  },
+  "status": "active",
+  "roleIds": [],
+  "createdAt": "2026-03-02T11:38:00.000Z",
+  "updatedAt": "2026-03-02T11:39:00.000Z",
+  "addedBy": {
+    "provider": "staff",
+    "subject": "root"
+  },
+  "statusChange": {
+    "at": "2026-03-02T11:40:00.000Z",
+    "by": {
+      "provider": "staff",
+      "subject": "root"
+    }
+  },
+  "version": 4
+}
+```
+
+### `GET /v1/platform/organizations`  <a id="platformorganizations-list"></a>
+
+**List every organization** · operation `platformOrganizations.list`
+
+All organizations of the installation, ordered by creation time. Needs `platform.organizations.read`. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).
+
+- **Scope:** `platform:admin`
+- **Kind:** platform (speaks for a platform operator, with their own token)
+- **Changes data:** no
+- **Client:** one that may reach every organization (`*`)
+
+**Request**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `limit` | integer (1–1000) | no | (query) Items per page. At most the server's maximum (100 unless configured). |
+| `cursor` | string (1–600 chars) | no | (query) The `nextCursor` of the previous page. |
+| `q` | string (1–200 chars) | no | (query) Case-insensitive text to look for. |
+| `status` | `active` \| `suspended` \| `archived` | no | (query) |
+
+A platform call speaks for the operator in `Uniora-Actor-Token`: their own token from the staff identity provider. It is never asserted and never the key alone. A change also needs a recent sign-in with a second factor in that token (`auth_time`, `amr`), or it is a `428 platform_step_up_required` with `WWW-Authenticate: Bearer error="insufficient_user_authentication"`; reads never do.
+
+**Response `200`**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `items` | array (≤ 1000) |  |
+| `items[].id` | string (≤ 200 chars) |  |
+| `items[].slug` | string (≤ 200 chars) |  |
+| `items[].name` | string (≤ 200 chars) |  |
+| `items[].status` | `active` \| `suspended` \| `archived` | `suspended` and `archived` organizations are denied every decision. |
+| `items[].createdAt` | string (date-time) |  |
+| `items[].version` | integer (1–…) |  |
+| `nextCursor` | string (≤ 600 chars) or `null` | Pass it back as `cursor` for the next page; `null` on the last one. |
+
+**Errors of this operation** (besides the ones every call can meet: see [Errors](#errors))
+
+- `400` `invalid_cursor`
+- `401` `actor_token_invalid`
+- `403` `actor_token_required`
+- `403` `forbidden`
+- `501` `platform_not_configured`
+- `503` `actor_token_unavailable`
+
+**Example: Every organization of the installation**
+
+```bash
+curl -X GET "https://uniora.example.com/v1/platform/organizations?limit=10&q=acme" \
+  -H "Authorization: Bearer $UNIORA_API_KEY" \
+  -H 'Uniora-Actor-Token: <the operator'\''s token from your staff identity provider>'
+```
+
+```ts
+const result = await uniora.platformOrganizations.list(
+  { q: "acme", limit: 10 },
+  { operatorToken: operatorToken },
+);
+```
+
+```http
+HTTP/1.1 200 OK
+
+{
+  "items": [
+    {
+      "id": "org_acme",
+      "slug": "acme",
+      "name": "Acme",
+      "status": "active",
+      "createdAt": "2026-03-02T11:41:00.000Z",
+      "version": 1
+    }
+  ],
+  "nextCursor": null
+}
+```
+
+### `PUT /v1/platform/organizations/:organizationId/status`  <a id="platformorganizations-setstatus"></a>
+
+**Suspend, archive or reactivate an organization** · operation `platformOrganizations.setStatus`
+
+`suspended` and `archived` organizations are denied every decision. Also recorded in the organization's own audit trail. Needs `platform.organizations.manage`. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).
+
+- **Scope:** `platform:admin`
+- **Kind:** platform (speaks for a platform operator, with their own token)
+- **Changes data:** yes (refused with `503 read_only` while the server is read-only)
+- **Client:** one that may reach every organization (`*`)
+
+**Request**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `organizationId` | string (1–200 chars) | yes | (in the path) The organization. |
+| `status` | `active` \| `suspended` \| `archived` | yes |  |
+| `reason` | string (1–500 chars) | no | Why. Kept in the audit log. |
+
+A platform call speaks for the operator in `Uniora-Actor-Token`: their own token from the staff identity provider. It is never asserted and never the key alone. A change also needs a recent sign-in with a second factor in that token (`auth_time`, `amr`), or it is a `428 platform_step_up_required` with `WWW-Authenticate: Bearer error="insufficient_user_authentication"`; reads never do.
+
+**Response `200`**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string (≤ 200 chars) |  |
+| `slug` | string (≤ 200 chars) |  |
+| `name` | string (≤ 200 chars) |  |
+| `status` | `active` \| `suspended` \| `archived` | `suspended` and `archived` organizations are denied every decision. |
+| `createdAt` | string (date-time) |  |
+| `version` | integer (1–…) |  |
+
+**Errors of this operation** (besides the ones every call can meet: see [Errors](#errors))
+
+- `400` `platform_invalid`
+- `401` `actor_token_invalid`
+- `403` `actor_token_required`
+- `403` `forbidden`
+- `404` `platform_organization_not_found`
+- `428` `platform_step_up_required`
+- `501` `platform_not_configured`
+- `503` `actor_token_unavailable`
+
+**Example: Suspend an organization**
+
+```bash
+curl -X PUT "https://uniora.example.com/v1/platform/organizations/org_acme/status" \
+  -H "Authorization: Bearer $UNIORA_API_KEY" \
+  -H 'Uniora-Actor-Token: <the operator'\''s token from your staff identity provider>' \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "suspended",
+    "reason": "unpaid invoice"
+  }'
+```
+
+```ts
+const result = await uniora.platformOrganizations.setStatus(
+  {
+    organizationId: "org_acme",
+    status: "suspended",
+    reason: "unpaid invoice",
+  },
+  { operatorToken: operatorToken },
+);
+```
+
+```http
+HTTP/1.1 200 OK
+
+{
+  "id": "org_acme",
+  "slug": "acme",
+  "name": "Acme",
+  "status": "suspended",
+  "createdAt": "2026-03-02T11:42:00.000Z",
+  "version": 2
+}
+```
+
+**Example: Reactivate it**
+
+```bash
+curl -X PUT "https://uniora.example.com/v1/platform/organizations/org_acme/status" \
+  -H "Authorization: Bearer $UNIORA_API_KEY" \
+  -H 'Uniora-Actor-Token: <the operator'\''s token from your staff identity provider>' \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "active"
+  }'
+```
+
+```ts
+const result = await uniora.platformOrganizations.setStatus(
+  { organizationId: "org_acme", status: "active" },
+  { operatorToken: operatorToken },
+);
+```
+
+```http
+HTTP/1.1 200 OK
+
+{
+  "id": "org_acme",
+  "slug": "acme",
+  "name": "Acme",
+  "status": "active",
+  "createdAt": "2026-03-02T11:43:00.000Z",
+  "version": 3
+}
+```
+
+### `POST /v1/platform/support-grants`  <a id="platformsupport-grant"></a>
+
+**Open support access to an organization** · operation `platformSupport.grant`
+
+Opens a temporary, narrow, audited grant FOR THE OPERATOR in one organization: it carries an explicit list of permission keys and an expiry (in the future, at most 30 days), never the Owner role. Needs `platform.support.grant`. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).
+
+- **Scope:** `platform:admin`
+- **Kind:** platform (speaks for a platform operator, with their own token)
+- **Changes data:** yes (refused with `503 read_only` while the server is read-only)
+- **Client:** one that may reach every organization (`*`)
+
+**Request**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `organizationId` | string (1–200 chars) | yes | The organization to open. |
+| `permissions` | array (≤ 50) | yes | Registered organization permission keys. |
+| `reason` | string (1–500 chars) | yes | Why, in the operator's words. Kept in both audit trails. |
+| `expiresAt` | string (date-time) | yes | When the grant ends: in the future and at most 30 days away. |
+
+A platform call speaks for the operator in `Uniora-Actor-Token`: their own token from the staff identity provider. It is never asserted and never the key alone. A change also needs a recent sign-in with a second factor in that token (`auth_time`, `amr`), or it is a `428 platform_step_up_required` with `WWW-Authenticate: Bearer error="insufficient_user_authentication"`; reads never do.
+
+**Response `201`**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string (≤ 200 chars) |  |
+| `organizationId` | string (≤ 200 chars) |  |
+| `operator` | object |  |
+| `operator.provider` | string (≤ 200 chars) |  |
+| `operator.subject` | string (≤ 500 chars) |  |
+| `grantedBy` | object |  |
+| `grantedBy.provider` | string (≤ 200 chars) |  |
+| `grantedBy.subject` | string (≤ 500 chars) |  |
+| `reason` | string (≤ 500 chars) |  |
+| `permissions` | array (≤ 50) |  |
+| `createdAt` | string (date-time) |  |
+| `expiresAt` | string (date-time) |  |
+| `revokedAt` | string (date-time), may be absent |  |
+| `revokedBy` | object, may be absent |  |
+| `revokedBy.provider` | string (≤ 200 chars) |  |
+| `revokedBy.subject` | string (≤ 500 chars) |  |
+
+**Errors of this operation** (besides the ones every call can meet: see [Errors](#errors))
+
+- `400` `platform_invalid`
+- `400` `support_grant_expiry_invalid`
+- `400` `support_grant_permission_invalid`
+- `400` `support_grant_reason_invalid`
+- `401` `actor_token_invalid`
+- `403` `actor_token_required`
+- `403` `forbidden`
+- `404` `support_grant_organization_unknown`
+- `409` `support_grant_exists`
+- `428` `platform_step_up_required`
+- `501` `platform_not_configured`
+- `503` `actor_token_unavailable`
+
+**Example: Open narrow, time-limited support access for the operator**
+
+```bash
+curl -X POST "https://uniora.example.com/v1/platform/support-grants" \
+  -H "Authorization: Bearer $UNIORA_API_KEY" \
+  -H 'Uniora-Actor-Token: <the operator'\''s token from your staff identity provider>' \
+  -H "Content-Type: application/json" \
+  -d '{
+    "organizationId": "org_acme",
+    "permissions": [
+      "reports.read"
+    ],
+    "reason": "Ticket 4821: reports do not load",
+    "expiresAt": "2026-03-02T11:44:00.000Z"
+  }'
+```
+
+```ts
+const result = await uniora.platformSupport.grant(
+  {
+    organizationId: "org_acme",
+    permissions: ["reports.read"],
+    reason: "Ticket 4821: reports do not load",
+    expiresAt: "2026-03-02T11:45:00.000Z",
+  },
+  { operatorToken: operatorToken },
+);
+```
+
+```http
+HTTP/1.1 201 Created
+
+{
+  "id": "00000000-0000-4000-8000-000000000018",
+  "organizationId": "org_acme",
+  "operator": {
+    "provider": "staff",
+    "subject": "root"
+  },
+  "grantedBy": {
+    "provider": "staff",
+    "subject": "root"
+  },
+  "reason": "Ticket 4821: reports do not load",
+  "permissions": [
+    "reports.read"
+  ],
+  "createdAt": "2026-03-02T11:46:00.000Z",
+  "expiresAt": "2026-03-02T11:47:00.000Z"
+}
+```
+
+### `POST /v1/platform/support-grants/:grantId/revoke`  <a id="platformsupport-revoke"></a>
+
+**End a support grant now** · operation `platformSupport.revoke`
+
+Needs `platform.support.grant`. A PLATFORM call: it speaks for the operator in the `Uniora-Actor-Token` header (a token from one of the server's platform providers, never an asserted user), needs the `platform:admin` scope on a client with every organization, and succeeds only if that operator holds the platform permission. A change also needs a recent sign-in with a second factor in that token (`428 platform_step_up_required` otherwise).
+
+- **Scope:** `platform:admin`
+- **Kind:** platform (speaks for a platform operator, with their own token)
+- **Changes data:** yes (refused with `503 read_only` while the server is read-only)
+- **Client:** one that may reach every organization (`*`)
+
+**Request**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `grantId` | string (1–200 chars) | yes | (in the path) A support grant. |
+
+A platform call speaks for the operator in `Uniora-Actor-Token`: their own token from the staff identity provider. It is never asserted and never the key alone. A change also needs a recent sign-in with a second factor in that token (`auth_time`, `amr`), or it is a `428 platform_step_up_required` with `WWW-Authenticate: Bearer error="insufficient_user_authentication"`; reads never do.
+
+**Response `200`**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string (≤ 200 chars) |  |
+| `organizationId` | string (≤ 200 chars) |  |
+| `operator` | object |  |
+| `operator.provider` | string (≤ 200 chars) |  |
+| `operator.subject` | string (≤ 500 chars) |  |
+| `grantedBy` | object |  |
+| `grantedBy.provider` | string (≤ 200 chars) |  |
+| `grantedBy.subject` | string (≤ 500 chars) |  |
+| `reason` | string (≤ 500 chars) |  |
+| `permissions` | array (≤ 50) |  |
+| `createdAt` | string (date-time) |  |
+| `expiresAt` | string (date-time) |  |
+| `revokedAt` | string (date-time), may be absent |  |
+| `revokedBy` | object, may be absent |  |
+| `revokedBy.provider` | string (≤ 200 chars) |  |
+| `revokedBy.subject` | string (≤ 500 chars) |  |
+
+**Errors of this operation** (besides the ones every call can meet: see [Errors](#errors))
+
+- `400` `platform_invalid`
+- `401` `actor_token_invalid`
+- `403` `actor_token_required`
+- `403` `forbidden`
+- `404` `platform_grant_not_found`
+- `428` `platform_step_up_required`
+- `501` `platform_not_configured`
+- `503` `actor_token_unavailable`
+
+**Example: End it now**
+
+```bash
+curl -X POST "https://uniora.example.com/v1/platform/support-grants/00000000-0000-4000-8000-000000000018/revoke" \
+  -H "Authorization: Bearer $UNIORA_API_KEY" \
+  -H 'Uniora-Actor-Token: <the operator'\''s token from your staff identity provider>'
+```
+
+```ts
+const result = await uniora.platformSupport.revoke(
+  { grantId: "00000000-0000-4000-8000-000000000018" },
+  { operatorToken: operatorToken },
+);
+```
+
+```http
+HTTP/1.1 200 OK
+
+{
+  "id": "00000000-0000-4000-8000-000000000018",
+  "organizationId": "org_acme",
+  "operator": {
+    "provider": "staff",
+    "subject": "root"
+  },
+  "grantedBy": {
+    "provider": "staff",
+    "subject": "root"
+  },
+  "reason": "Ticket 4821: reports do not load",
+  "permissions": [
+    "reports.read"
+  ],
+  "createdAt": "2026-03-02T11:48:00.000Z",
+  "expiresAt": "2026-03-02T11:49:00.000Z",
+  "revokedAt": "2026-03-02T11:50:00.000Z",
+  "revokedBy": {
+    "provider": "staff",
+    "subject": "root"
+  }
+}
+```
+
 ## Audit log
 
 The tamper-evident history of an organization.
@@ -7331,14 +8833,14 @@ HTTP/1.1 200 OK
         "via": {
           "apiClientId": "apc_EXAMPLE00001",
           "keyId": "EXAMPLEKEYID0001",
-          "requestId": "req_xxxxxxxxxxxxxx11",
+          "requestId": "req_xxxxxxxxxxxxxx13",
           "actorMode": "asserted"
         }
       },
-      "createdAt": "2026-03-02T11:19:00.000Z"
+      "createdAt": "2026-03-02T11:51:00.000Z"
     },
     {
-      "id": "00000000-0000-4000-8000-000000000015",
+      "id": "00000000-0000-4000-8000-000000000020",
       "organizationId": "org_acme",
       "actor": {
         "provider": "main",
@@ -7354,14 +8856,14 @@ HTTP/1.1 200 OK
         "via": {
           "apiClientId": "apc_EXAMPLE00001",
           "keyId": "EXAMPLEKEYID0001",
-          "requestId": "req_xxxxxxxxxxxxxx12",
+          "requestId": "req_xxxxxxxxxxxxxx14",
           "actorMode": "asserted"
         }
       },
-      "createdAt": "2026-03-02T11:20:00.000Z"
+      "createdAt": "2026-03-02T11:52:00.000Z"
     },
     {
-      "id": "00000000-0000-4000-8000-000000000016",
+      "id": "00000000-0000-4000-8000-000000000021",
       "organizationId": "org_acme",
       "actor": {
         "provider": "main",
@@ -7377,14 +8879,14 @@ HTTP/1.1 200 OK
         "via": {
           "apiClientId": "apc_EXAMPLE00001",
           "keyId": "EXAMPLEKEYID0001",
-          "requestId": "req_xxxxxxxxxxxxxx13",
+          "requestId": "req_xxxxxxxxxxxxxx15",
           "actorMode": "asserted"
         }
       },
-      "createdAt": "2026-03-02T11:21:00.000Z"
+      "createdAt": "2026-03-02T11:53:00.000Z"
     },
     {
-      "id": "00000000-0000-4000-8000-000000000017",
+      "id": "00000000-0000-4000-8000-000000000022",
       "organizationId": "org_acme",
       "actor": {
         "provider": "main",
@@ -7403,11 +8905,11 @@ HTTP/1.1 200 OK
         "via": {
           "apiClientId": "apc_EXAMPLE00001",
           "keyId": "EXAMPLEKEYID0001",
-          "requestId": "req_xxxxxxxxxxxxxx14",
+          "requestId": "req_xxxxxxxxxxxxxx16",
           "actorMode": "asserted"
         }
       },
-      "createdAt": "2026-03-02T11:22:00.000Z"
+      "createdAt": "2026-03-02T11:54:00.000Z"
     }
   ],
   "nextCursor": "EXAMPLE_OPAQUE_CURSOR"

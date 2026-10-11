@@ -721,6 +721,8 @@ export const es: Record<keyof typeof en, string> = {
   "apiGroup.administer_hint": "Cambiar miembros, roles, equipos, políticas e invitaciones como un usuario final.",
   "apiGroup.delegate": "Delegación",
   "apiGroup.delegate_hint": "Hablar en nombre de un usuario final. Lo exigen los permisos de administración: prefiere verified.",
+  "apiGroup.platform": "Plataforma",
+  "apiGroup.platform_hint": "Administrar la plataforma misma (roles del personal, estado de organizaciones, acceso de soporte). Exige el token propio del operador con un inicio de sesión reciente con segundo factor.",
   "apiScope.check": "Preguntar si un usuario puede hacer algo (can, authorize, comprobaciones de acceso, snapshots).",
   "apiScope.organizations:read": "Leer organizaciones, miembros, roles, permisos, features, equipos y políticas.",
   "apiScope.organizations:create": "Crear una organización junto con su primer Owner.",
@@ -732,4 +734,5 @@ export const es: Record<keyof typeof en, string> = {
   "apiScope.audit:read": "Leer el registro de auditoría de una organización.",
   "apiScope.actor:verified": "Actuar en nombre de un usuario final que presenta un token válido de tu proveedor de identidad. Una clave filtrada, por sí sola, no puede suplantar a nadie.",
   "apiScope.actor:assert": "Actuar en nombre de un usuario final.",
+  "apiScope.platform:admin": "Ejecutar la administración de la plataforma para un operador que presenta un token verificado con un inicio de sesión reciente con segundo factor. Exige un cliente con todas las organizaciones.",
 };

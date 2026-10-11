@@ -1,7 +1,6 @@
 import { allRoutes } from "../routes/index.js";
 import type { Route } from "../route.js";
-import { startFixture } from "../test-support/harness.js";
-import { nowSeconds, signJwt, testKey } from "../test-support/jwt.js";
+import { platformOptions, startFixture } from "../test-support/harness.js";
 import type { Context, Step } from "./scenario.js";
 import { STEPS } from "./scenario.js";
 
@@ -33,10 +32,7 @@ export function toRequest(route: Route, input: Record<string, unknown>): { path:
 
 /** Runs the whole scenario against a real server (SQLite) and records what it answered. */
 export async function runScenario(): Promise<Recorded[]> {
-  const idp = testKey("rsa", "idp-key-1");
-  const fixture = await startFixture("sqlite", {
-    actorTokens: [{ provider: "main", issuer: "https://idp.example.com/", audience: "uniora", algorithms: ["RS256"], jwks: { keys: [idp.publicJwk as never] } }],
-  });
+  const fixture = await startFixture("sqlite", (backend) => platformOptions(backend));
   try {
     const { token } = await fixture.issue({ name: "backend" });
     const results = new Map<string, unknown>();
@@ -64,13 +60,13 @@ export async function runScenario(): Promise<Recorded[]> {
       if (step.idempotencyKey) headers["Idempotency-Key"] = step.idempotencyKey;
       const lower = Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]));
       if (step.verifiedAs !== undefined) {
-        lower["uniora-actor-token"] = signJwt(
-          { iss: "https://idp.example.com/", aud: "uniora", sub: step.verifiedAs, iat: nowSeconds() - 5, exp: nowSeconds() + 300, ...step.tokenClaims },
-          idp.privateKey,
-          { alg: "RS256", kid: "idp-key-1" },
-        );
+        lower["uniora-actor-token"] = fixture.sign(step.verifiedAs, { provider: "main", claims: step.tokenClaims ?? {} });
         // What the reference shows is the placeholder: the real one is a signed JWT that changes at every run.
         headers["Uniora-Actor-Token"] = "<the user's token from your identity provider>";
+      }
+      if (step.operator !== undefined) {
+        lower["uniora-actor-token"] = fixture.sign(step.operator, { provider: "staff", claims: { auth_time: Math.floor(Date.now() / 1000) - 30, amr: ["pwd", "mfa"], ...step.tokenClaims } });
+        headers["Uniora-Actor-Token"] = "<the operator's token from your staff identity provider>";
       }
       const response = await fixture.call(route.method, path, { token: step.as === "anonymous" ? null : token, headers: lower, ...(body !== undefined ? { body } : {}) });
       if (response.status !== step.expect) {

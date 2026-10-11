@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import type { ApiCredentialStorage, AuthorizationEngineOptions, InvitationServiceOptions, PolicyServiceOptions, UnioraStorage } from "@uniora/core";
+import type { ApiCredentialStorage, AuthorizationEngineOptions, InvitationServiceOptions, PlatformEngineOptions, PlatformStorage, PolicyServiceOptions, UnioraStorage } from "@uniora/core";
 import { isReservedIdentityProvider } from "@uniora/core";
 import { resolveActorTokenProviders } from "./actor-token.js";
 import type { ActorTokenProvider, ResolvedProvider } from "./actor-token.js";
@@ -64,6 +64,39 @@ export type InvitationConfig = Omit<InvitationServiceOptions, "storage" | "engin
   includeAcceptUrl?: boolean;
 };
 
+export interface PlatformConfig {
+  /** The platform scope (staff roles and members, its audit log). Its own tables, like the credentials. */
+  storage: PlatformStorage;
+  /**
+   * The `provider` labels of `actorTokens` whose tokens may administer the platform. Required: platform operators are people of
+   * YOUR staff identity provider, and a customer-facing provider must not be able to reach this. A separate provider for staff is best.
+   */
+  providers: readonly string[];
+  /**
+   * What counts as a recent re-authentication, read from the operator's own token (`auth_time`, `amr`, `acr`): every change is
+   * refused with `428 platform_step_up_required` unless the sign-in is recent enough and used a second factor. Reads never need it.
+   */
+  stepUp?: {
+    /** The longest ago the operator signed in. Default 300 s, at most 3600. */
+    maxAgeSeconds?: number;
+    /** The sign-in used a second factor (`amr` contains `mfa`). Default `true`. */
+    requireMfa?: boolean;
+    /** The least assurance level (`acrLevels` of the provider) the sign-in reached. Default none. */
+    minAssuranceLevel?: number;
+  };
+  /** The organization permission keys support access may open (see `PlatformServiceOptions`). Strongly recommended. */
+  supportGrantablePermissions?: readonly string[];
+  engine?: PlatformEngineOptions;
+}
+
+export interface ResolvedPlatform {
+  readonly storage: PlatformStorage;
+  readonly providers: ReadonlySet<string>;
+  readonly stepUp: { readonly maxAgeSeconds: number; readonly requireMfa: boolean; readonly minAssuranceLevel: number | undefined };
+  readonly supportGrantablePermissions: readonly string[] | undefined;
+  readonly engine: PlatformEngineOptions | undefined;
+}
+
 export interface UnioraServerOptions {
   /** The organization data. Reads and decisions go through it. */
   storage: UnioraStorage;
@@ -104,6 +137,11 @@ export interface UnioraServerOptions {
    * If the storage fails, each instance limits on its own meanwhile.
    */
   sharedRateLimit?: boolean;
+  /**
+   * Turns on the platform routes (`/v1/platform/...`, scope `platform:admin`). They are only ever called with the operator's own
+   * verified token and a recent second factor; without this option they answer 501 `platform_not_configured`.
+   */
+  platform?: PlatformConfig;
   /** Refuse every write with 503 `read_only` (during a migration or an incident). */
   readOnly?: boolean;
   /**
@@ -127,6 +165,7 @@ export interface ResolvedConfig {
   readonly invitations: InvitationConfig | undefined;
   readonly policies: Omit<PolicyServiceOptions, "storage" | "engine"> | undefined;
   readonly sharedRateLimit: boolean;
+  readonly platform: ResolvedPlatform | undefined;
   readonly readOnly: boolean;
   readonly trustedProxyHops: number;
   readonly logger: Logger;
@@ -189,6 +228,8 @@ export function resolveConfig(options: UnioraServerOptions): ResolvedConfig {
     throw new ServerConfigError("`requireVerifiedActors` needs `actorTokens`: with no provider configured no delegated call could ever be made.");
   }
 
+  const platform = resolvePlatform(options.platform, actorProviders);
+
   return Object.freeze({
     storage: options.storage,
     credentials: options.credentials,
@@ -200,6 +241,7 @@ export function resolveConfig(options: UnioraServerOptions): ResolvedConfig {
     invitations: options.invitations,
     policies: options.policies,
     sharedRateLimit: options.sharedRateLimit === true,
+    platform,
     readOnly: options.readOnly === true,
     trustedProxyHops: hops,
     logger: options.logger ?? createJsonLogger(),
@@ -213,4 +255,36 @@ export function isLoopbackHost(host: string): boolean {
   if (bare.toLowerCase() === "localhost" || bare === "::1") return true;
   // A real IPv4 address (isIP rejects `127.999.0.1` and short forms such as `127.1`) in 127.0.0.0/8.
   return isIP(bare) === 4 && bare.startsWith("127.");
+}
+
+function resolvePlatform(input: PlatformConfig | undefined, actorProviders: readonly ResolvedProvider[]): ResolvedPlatform | undefined {
+  if (input === undefined) return undefined;
+  if (typeof input !== "object" || input === null || !input.storage?.platformRoles || !input.storage.platformMembers) throw new ServerConfigError("`platform.storage` is required.");
+  const known = new Set(["storage", "providers", "stepUp", "supportGrantablePermissions", "engine"]);
+  for (const key of Object.keys(input)) if (!known.has(key)) throw new ServerConfigError(`platform: unknown option "${key}".`);
+  const labels = new Set(actorProviders.map((provider) => provider.provider));
+  if (!Array.isArray(input.providers) || input.providers.length === 0 || input.providers.some((label) => typeof label !== "string" || !labels.has(label))) {
+    throw new ServerConfigError("`platform.providers` must list the `provider` labels of `actorTokens` whose tokens may administer the platform (at least one, and each one configured).");
+  }
+  const step = input.stepUp ?? {};
+  for (const key of Object.keys(step)) if (!["maxAgeSeconds", "requireMfa", "minAssuranceLevel"].includes(key)) throw new ServerConfigError(`platform.stepUp: unknown option "${key}".`);
+  const maxAgeSeconds = step.maxAgeSeconds ?? 300;
+  if (!Number.isInteger(maxAgeSeconds) || maxAgeSeconds < 1 || maxAgeSeconds > 3600) throw new ServerConfigError("`platform.stepUp.maxAgeSeconds` must be an integer from 1 to 3600.");
+  if (step.requireMfa !== undefined && typeof step.requireMfa !== "boolean") throw new ServerConfigError("`platform.stepUp.requireMfa` must be true or false.");
+  if (step.minAssuranceLevel !== undefined && (!Number.isInteger(step.minAssuranceLevel) || step.minAssuranceLevel < 0 || step.minAssuranceLevel > 100)) {
+    throw new ServerConfigError("`platform.stepUp.minAssuranceLevel` must be an integer from 0 to 100.");
+  }
+  if (step.minAssuranceLevel !== undefined && step.minAssuranceLevel > 0 && !actorProviders.some((provider) => input.providers.includes(provider.provider) && provider.acrLevels !== undefined)) {
+    throw new ServerConfigError("`platform.stepUp.minAssuranceLevel` needs `acrLevels` on a platform provider, or no sign-in could ever reach it.");
+  }
+  if (input.supportGrantablePermissions !== undefined && (!Array.isArray(input.supportGrantablePermissions) || input.supportGrantablePermissions.some((key) => typeof key !== "string"))) {
+    throw new ServerConfigError("`platform.supportGrantablePermissions` must be a list of permission keys.");
+  }
+  return Object.freeze({
+    storage: input.storage,
+    providers: new Set(input.providers),
+    stepUp: Object.freeze({ maxAgeSeconds, requireMfa: step.requireMfa !== false, minAssuranceLevel: step.minAssuranceLevel }),
+    supportGrantablePermissions: input.supportGrantablePermissions,
+    engine: input.engine,
+  });
 }

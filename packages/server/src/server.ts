@@ -13,13 +13,13 @@ import { ApiError, errors, problemOf, toApiError } from "./errors.js";
 import { assertJsonContentType, hasBody, parseJsonBody, queryToObject, readBody, send } from "./http.js";
 import { ActorTokenError, createActorTokenVerifier } from "./actor-token.js";
 import type { VerifiedActor } from "./actor-token.js";
-import { createApplicationContext, createDelegatedContext } from "./delegation.js";
+import { createApplicationContext, createDelegatedContext, createPlatformContext } from "./delegation.js";
 import { actorFromHeaders, completeIdentity } from "./identity.js";
 import { ConcurrencyGate, FailureThrottle, RateLimiter } from "./limits.js";
 import type { RateLimitDecision } from "./limits.js";
 import { SharedRateLimiter } from "./shared-limit.js";
 import { matchRoute } from "./route.js";
-import type { ApplicationContext, DelegatedContext, Route, RouteContext } from "./route.js";
+import type { ApplicationContext, DelegatedContext, PlatformContext, Route, RouteContext } from "./route.js";
 import { allRoutes } from "./routes/index.js";
 import { ResponseShapeError, parseInput, project, s } from "./schema.js";
 import type { Issue } from "./schema.js";
@@ -187,6 +187,7 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
     let timedOut = false;
     let delegatedContext: DelegatedContext | undefined;
     let applicationContext: ApplicationContext | undefined;
+    let platformContext: PlatformContext | undefined;
     const source = sourceOf(req, config.trustedProxyHops);
 
     const respond = (body: unknown, code: number, headers?: Record<string, string>, contentType?: string) => {
@@ -274,7 +275,8 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
       const tokenValues = headerValues(req, "uniora-actor-token");
       const subjectValues = headerValues(req, "uniora-actor-subject");
       const providerValues = headerValues(req, "uniora-actor-provider");
-      const takesActor = route.delegated || route.actorToken;
+      const takesActor = route.delegated || route.actorToken || route.platform;
+      if (route.platform && !config.platform) throw errors.notImplemented("platform_not_configured");
       if (!route.delegated && (subjectValues.length > 0 || providerValues.length > 0)) throw errors.invalidRequest([{ path: subjectValues.length > 0 ? "Uniora-Actor-Subject" : "Uniora-Actor-Provider", code: "unknown_field" }]);
       if (tokenValues.length > 0) {
         if (!takesActor) throw errors.invalidRequest([{ path: "Uniora-Actor-Token", code: "unknown_field" }]);
@@ -293,8 +295,16 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
           if (error.kind === "unavailable") throw new ApiError(503, "actor_token_unavailable", { headers: { "Retry-After": "5" } });
           throw new ApiError(401, "actor_token_invalid", { headers: { "WWW-Authenticate": 'Bearer realm="uniora", error="invalid_token"' } });
         }
+        // Platform power is the operator's own: a token from a provider that is not a platform provider (a customer's, say) is refused.
+        if (route.platform && !config.platform!.providers.has(verifiedActor.identity.provider)) {
+          log({ level: "warn", msg: "platform token from a provider that may not administer the platform", requestId, clientId: principal.client.id, provider: verifiedActor.identity.provider });
+          throw errors.forbidden();
+        }
         actor = verifiedActor.identity;
         actorMode = "verified";
+      } else if (route.platform) {
+        // Never the key alone and never an asserted operator.
+        throw new ApiError(403, "actor_token_required");
       } else if (route.delegated) {
         if (config.requireVerifiedActors) throw new ApiError(403, "actor_token_required");
         if (!principal.client.scopes.includes("actor:assert")) {
@@ -365,6 +375,11 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
           if (!principal) throw new Error("No principal.");
           applicationContext ??= delegatedContext ?? createApplicationContext(config, principal, requestId, actorMode);
           return applicationContext;
+        },
+        platform: () => {
+          if (!route!.platform || !verifiedActor || !principal) throw new Error(`Route ${route!.id} asked for a platform context but is not marked platform.`);
+          platformContext ??= createPlatformContext(config, principal, requestId, verifiedActor);
+          return platformContext;
         },
         delegated: () => {
           if (!actor || !principal) throw new Error(`Route ${route!.id} asked for a delegated context but is not marked delegated.`);
