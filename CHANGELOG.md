@@ -2,7 +2,7 @@
 
 All notable changes to UNIORA. Packages are released in lockstep, so one version number covers all of them. The format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## Unreleased
+## 0.10.0 - 2026-10-11
 
 Includes new migrations: Postgres `0043`, `0044` and `0045`, SQLite `0028`, `0029` and `0030` (run `uniora migrate`). They only add tables: the API credentials (`uniora_api` schema in Postgres, `uniora_api_*` tables in SQLite), the shared rate-limit buckets (`uniora_api.rate_limits`) and the webhook endpoints and deliveries (`uniora_webhooks` schema, `uniora_webhook_*` tables). Nothing existing changes.
 
