@@ -427,12 +427,12 @@ export function createPlatformService(options: PlatformServiceOptions): Platform
       const clean = sanitizePlatformReason(reason);
       await run(actor, false, (ctx) => need(ctx, PLATFORM_PERMISSIONS.organizationsManage, "change an organization's status"));
       const current = await storage.organizations.findById(organizationId);
-      if (!current) throw new PlatformError(`Organization not found: ${organizationId}`, "platform_invalid");
+      if (!current) throw new PlatformError(`Organization not found: ${organizationId}`, "platform_organization_not_found");
       // A request that changes nothing leaves no trace in either trail (the same rule the organization audit follows).
       if (current.status === status) return current;
       const audited = createAuditedStorage(storage, { actor });
       const updated = await audited.organizations.setStatus(organizationId, { status, actor, ...(clean !== undefined ? { reason: clean } : {}) });
-      if (!updated) throw new PlatformError(`Organization not found: ${organizationId}`, "platform_invalid");
+      if (!updated) throw new PlatformError(`Organization not found: ${organizationId}`, "platform_organization_not_found");
       await run(actor, true, (ctx) => record(ctx, "platform.organization_status_changed", { type: "organization", id: organizationId }, { status, ...(clean ? { reason: clean } : {}) }));
       return updated;
     },
@@ -456,9 +456,16 @@ export function createPlatformService(options: PlatformServiceOptions): Platform
         permissions,
         expiresAt,
       });
-      await run(actor, true, (ctx) =>
-        record(ctx, "platform.support_access_granted", { type: "support_grant", id: created.id }, { organizationId, permissions: created.permissions, expiresAt: created.expiresAt.toISOString() }),
-      );
+      try {
+        // Under the platform lock, and asking again: an operator suspended or demoted between the first check and the grant must not keep it.
+        await run(actor, true, async (ctx) => {
+          await need(ctx, PLATFORM_PERMISSIONS.supportGrant, "open support access");
+          return record(ctx, "platform.support_access_granted", { type: "support_grant", id: created.id }, { organizationId, permissions: created.permissions, expiresAt: created.expiresAt.toISOString() });
+        });
+      } catch (error) {
+        await audited.supportGrants.revoke(created.id, { by: actor }).catch(() => undefined);
+        throw error;
+      }
       return created;
     },
 
@@ -468,7 +475,7 @@ export function createPlatformService(options: PlatformServiceOptions): Platform
       await run(actor, false, (ctx) => need(ctx, PLATFORM_PERMISSIONS.supportGrant, "end support access"));
       const audited = createAuditedStorage(storage, { actor });
       const revoked = await audited.supportGrants.revoke(grantId, { by: actor });
-      if (!revoked) throw new PlatformError(`Support grant not found: ${grantId}`, "platform_invalid");
+      if (!revoked) throw new PlatformError(`Support grant not found: ${grantId}`, "platform_grant_not_found");
       await run(actor, true, (ctx) => record(ctx, "platform.support_access_revoked", { type: "support_grant", id: grantId }, { organizationId: revoked.organizationId }));
       return revoked;
     },

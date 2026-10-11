@@ -4,7 +4,9 @@ import { runDoctor } from "../commands/doctor.js";
 import { runInit } from "../commands/init.js";
 import { runMigrate } from "../commands/migrate.js";
 import { runPlatform } from "../commands/platform.js";
+import { runServer, SERVER_SPEC, serverOptionsFromFlags } from "../commands/server.js";
 import { runStudio, STUDIO_SPEC, studioArgsFromFlags } from "../commands/studio.js";
+import { runWebhooks, WEBHOOKS_SPEC, webhooksOptionsFromFlags } from "../commands/webhooks.js";
 import { parseArgs, UsageError, type OptionSpec } from "./args.js";
 import { commonFromFlags, JSON_SPEC } from "./common.js";
 
@@ -61,6 +63,32 @@ const COMMANDS: Record<string, CommandDef> = {
   status             Solo lectura: miembros y administradores activos`,
     spec: { ...JSON_SPEC, admin: "string" },
     positionals: 1,
+  },
+  server: {
+    summary: "La API de UNIORA como servicio propio: clients/keys gestionan quién puede llamarla, start la levanta",
+    usage: "uniora server <clients create|update|list|show|disable|enable | keys create|revoke | start> [opciones]",
+    details: `  clients create --name N --scopes a,b --orgs '*'|id1,id2   Crea un cliente de API (un backend tuyo) con sus permisos
+  clients update <id|nombre> [--name N] [--scopes ...] [--orgs ...]
+  clients list | show <id|nombre> | disable <id|nombre> | enable <id|nombre>
+  keys create --client <id|nombre> [--expires-in-days N]       Crea una clave: se imprime UNA vez, no se puede recuperar
+  keys revoke <idClave>                                          Surte efecto en la siguiente petición
+  start [--host H] [--port N] [--default-provider L] [--tls-key F --tls-cert F | --behind-tls-proxy --trusted-proxy-hops N] [--read-only]
+                Levanta la API (127.0.0.1:8787 por defecto). Fuera de loopback exige TLS o un proxy TLS declarado.`,
+    spec: SERVER_SPEC,
+    positionals: 3,
+  },
+  webhooks: {
+    summary: "Webhooks: a dónde manda UNIORA los eventos (firmados, con reintentos) y el worker que los envía",
+    usage: "uniora webhooks <create|list|show|update|enable|disable|rotate-secret|delete|deliveries|requeue|test|run> [opciones]",
+    details: `  create --url https://... --events 'membership.*,role.*'|'*' [--orgs '*'|id1,id2] [--description T]   Crea un endpoint; el secreto de firma se imprime UNA vez
+  list [--status enabled|disabled] | show <id> | update <id> [--url ...] [--events ...] [--orgs ...] [--description ...]
+  enable <id> | disable <id> [--reason T] | delete <id>
+  rotate-secret <id> [--grace-seconds N]   Secreto nuevo; el anterior sigue firmando N segundos (24 h por defecto, 0 = se corta ya)
+  deliveries [--endpoint ID] [--status pending|delivered|dead] [--limit N] | requeue <idEntrega>
+  test <id>        Envía un evento de prueba firmado a ese endpoint
+  run [--once]     El worker: convierte los eventos del outbox en entregas y las envía (todo el tiempo, o una ronda con --once)`,
+    spec: WEBHOOKS_SPEC,
+    positionals: 2,
   },
   studio: {
     summary: "Abre UNIORA Studio en local (solo 127.0.0.1, con token por ejecución)",
@@ -159,6 +187,12 @@ export async function runCli(argv: readonly string[], cwd: string = process.cwd(
         return;
       case "platform":
         await runPlatform(positionals[0], cwd, { ...commonFromFlags(flags), admin: flags.admin as string | undefined });
+        return;
+      case "server":
+        await runServer(positionals, cwd, serverOptionsFromFlags(flags, commonFromFlags(flags)));
+        return;
+      case "webhooks":
+        await runWebhooks(positionals, cwd, webhooksOptionsFromFlags(flags, commonFromFlags(flags)));
         return;
       case "studio":
         await runStudio(studioArgsFromFlags(flags), cwd, commonFromFlags(flags));

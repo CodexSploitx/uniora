@@ -67,6 +67,8 @@ export interface InvitationAccessOptions {
 
 export interface InvitationServiceOptions {
   storage: UnioraStorage;
+  /** Also enqueue an outbox event for each invitation change (created, resent, revoked, accepted...), in the same transaction, e.g. for webhooks. The payload names the invitation and a fingerprint of the address, never the address, the token or the link. Off by default. */
+  outbox?: boolean;
   /**
    * Builds the link the invitee opens, from the raw token — typically
    * `` (token) => `https://app.example.com/invite/${token}` ``. The token is
@@ -287,22 +289,40 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
     return (await hashInvitationToken(`${invitation.organizationId}:${invitation.email}`)).slice(0, 32);
   }
 
+  /** What a sender may echo about the address in a refusal ("550 <ana@example.com>: rejected"): the address and its local part. */
+  function addressSecrets(email: string): string[] {
+    const local = email.split("@")[0] ?? "";
+    return [email, ...(local.length >= 3 ? [local] : [])];
+  }
+
   async function auditEvent(
-    tx: Pick<UnioraStorage, "auditLogs">,
+    tx: Pick<UnioraStorage, "auditLogs"> & Partial<Pick<UnioraStorage, "outbox">>,
     actor: Identity,
     action: string,
     invitation: Invitation,
     metadata: Record<string, unknown> = {},
   ): Promise<void> {
     // Never the token, never the URL: audit history is append-only and long-lived.
-    await tx.auditLogs.record({
+    const entry = {
       id: generateId(),
       organizationId: invitation.organizationId,
       actor,
       action,
       target: { type: "invitation", id: invitation.id },
       metadata: { emailFingerprint: await emailFingerprint(invitation), ...metadata },
-    });
+    };
+    await tx.auditLogs.record(entry);
+    if (options.outbox) {
+      const txOutbox = (tx as Partial<Pick<UnioraStorage, "outbox">>).outbox;
+      if (!txOutbox) throw new InvitationError("The invitation service was asked to emit outbox events but its storage has no outbox.", "bad_request");
+      await txOutbox.enqueue({
+        id: `evt:${generateId()}`,
+        type: action,
+        organizationId: invitation.organizationId,
+        // Without the fingerprint: it is derived from the address and the (public) organization id, so a receiver could test guessed addresses against it.
+        payload: { actor: { provider: actor.provider, subject: actor.subject }, target: entry.target, metadata: Object.fromEntries(Object.entries(entry.metadata).filter(([key]) => key !== "emailFingerprint")) },
+      });
+    }
   }
 
   async function assertInvitableRoles(organizationId: string, roleIds: string[]) {
@@ -426,7 +446,7 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
         expiresAt: invitation.expiresAt,
         locale,
       },
-      { retry: options.retry, secrets: [token, acceptUrl], sleep: options.sleep, random: options.random },
+      { retry: options.retry, secrets: [token, acceptUrl, ...addressSecrets(invitation.email)], sleep: options.sleep, random: options.random },
     );
 
     await storage.invitations.recordDelivery(invitation.id, {
@@ -487,6 +507,10 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
     invite: (async (input: InviteInput): Promise<InviteResult | InviteReplayResult> => {
       const email = normalizeInvitationEmail(input.email);
       const lifetime = lifetimeOf(input.ttlMs);
+      // Who may invite is answered before anything about roles or teams, or the refusal would tell a stranger which role and team ids exist.
+      if (accessEnabled && !(await createAuthorizationEngine(storage, options.engine).can({ identity: input.invitedBy, organizationId: input.organizationId, permission: accessKeys.membersInvite }))) {
+        throw new AccessError("You are not allowed to manage invitations.", "access_forbidden");
+      }
       const roles = await assertInvitableRoles(input.organizationId, input.roleIds);
       if (!(await storage.organizations.findById(input.organizationId))) {
         throw new InvitationError("The organization does not exist.", "bad_request");
@@ -788,7 +812,7 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
                 actor: input.identity,
                 action: "team_member.added",
                 target: { type: "team_member", id: row.id },
-                metadata: { teamId, membershipId: membership.id, via: "invitation", invitationId: invitation.id },
+                metadata: { teamId, membershipId: membership.id, viaInvitation: true, invitationId: invitation.id },
               });
             }
           }

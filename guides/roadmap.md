@@ -10,10 +10,12 @@ What UNIORA does not do yet, and why. Nothing here is promised; it is the list w
 
 ## Later
 
+- **Server: delegated reads** of members, roles and teams (deny by default: the actor must hold a read permission). Policies can already be read as an end user; everything else is read by the application.
+- **Server: a published container image** (non-root, read-only filesystem, health check) and OpenTelemetry metrics.
+
 - **Resource-level permissions** ("edit *this* project"): a `resource` argument to `can`, with grants stored per resource. Today, model it with one role per resource or check ownership in your own code after `can`.
 - **Role inheritance and role templates**: a role that includes another, and templates copied into each new organization.
 - **Per-organization policies** (for example "members must verify e-mail", invitation lifetime) instead of one global option set.
-- **Webhooks or an event stream** for the audit log, so other systems can react to `membership.*` and `invitation.*`.
 - Storage adapters beyond PostgreSQL and SQLite (the conformance suite is the contract).
 
 ## Out of scope

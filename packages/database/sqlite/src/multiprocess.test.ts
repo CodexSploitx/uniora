@@ -205,4 +205,25 @@ describe("@uniora/sqlite — procesos concurrentes sobre el mismo archivo", () =
       expect(audits).toBe(succeeded);
     }
   }, 120_000);
+
+  it(`cuatro procesos creando claves de API a la vez nunca superan el tope de dos activas (${TRIALS} intentos)`, async () => {
+    for (let trial = 0; trial < TRIALS; trial++) {
+      const file = freshDatabaseFile();
+      const seed = new Database(file);
+      seed.pragma("journal_mode = WAL");
+      applyMigrations(seed);
+      seed.exec(`insert into uniora_api_clients (id, name, name_normalized, scopes, all_organizations, organization_ids, created_at, created_by_provider, created_by_subject, updated_at)
+                 values ('apc_1', 'worker', 'worker', '["check"]', 1, '[]', '2026-10-10T00:00:00.000Z', 'uniora-cli', 'test', '2026-10-10T00:00:00.000Z')`);
+      seed.close();
+
+      const outcomes = await runWorkers(file, Array.from({ length: 4 }, () => ({ operation: "createApiKey", payload: { clientId: "apc_1" } })));
+
+      const db = new Database(file, { readonly: true });
+      const active = (db.prepare("select count(*) as n from uniora_api_keys where revoked_at is null").get() as { n: number }).n;
+      db.close();
+      expect(active).toBe(2);
+      expect(outcomes.filter((outcome) => outcome.ok)).toHaveLength(2);
+      for (const failed of outcomes.filter((outcome) => !outcome.ok)) expect(failed.error).toMatch(/at most 2 active keys/);
+    }
+  }, 120_000);
 });

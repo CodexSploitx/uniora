@@ -38,6 +38,8 @@ export interface PolicyServiceOptions {
    * an ACTIVE policy cannot be edited in place (disable it, edit it, and have someone else activate it). Off by default.
    */
   requireSeparateActivator?: boolean;
+  /** Also enqueue an outbox event for each change, in the same transaction (see `createAuditedStorage`), e.g. for webhooks. Off by default. */
+  outbox?: boolean;
 }
 
 export interface PolicyActor {
@@ -107,7 +109,7 @@ export function createPolicyService(options: PolicyServiceOptions): PolicyServic
 
   /** Runs `work` in one transaction with an engine bound to that same transaction and an audited view that records the actor. */
   function run<T>(actor: Identity, work: (ctx: Context) => Promise<T>): Promise<T> {
-    const audited = createAuditedStorage(options.storage, { actor });
+    const audited = createAuditedStorage(options.storage, { actor, ...(options.outbox ? { outbox: true } : {}) });
     return audited.transaction(async (tx) => {
       const engine = createAuthorizationEngine({ ...tx, transaction: options.storage.transaction.bind(options.storage) } as UnioraStorage, options.engine);
       return work({ tx, engine, actor });

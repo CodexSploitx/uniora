@@ -82,7 +82,20 @@ export function validateConfig(config: unknown, source: string): UnioraConfig {
   const databaseProvider = provider as UnioraDatabaseConfig["provider"];
   checkUrlMatchesProvider(databaseProvider, url, source);
 
-  const result: UnioraConfig = { database: { provider: databaseProvider, url } };
+  let result: UnioraConfig = { database: { provider: databaseProvider, url } };
+
+  if (config.server !== undefined) {
+    if (!isRecord(config.server) || Array.isArray(config.server)) {
+      throw new UnioraConfigError(`Configuración inválida en ${source}: "server" debe ser un objeto.`);
+    }
+    const known = new Set(["defaultProvider", "trustedProxyHops", "readOnly", "limits", "actorTokens", "machineTokens", "requireVerifiedActors", "sharedRateLimit", "invitations", "platform", "webhooks"]);
+    const unknown = Object.keys(config.server).find((key) => !known.has(key));
+    if (unknown !== undefined) {
+      throw new UnioraConfigError(`Configuración inválida en ${source}: "server.${unknown}" no existe. Disponibles: ${[...known].join(", ")}.`);
+    }
+    // The fine checks (issuer, algorithms, the combination of options) are the server's own and fail closed when it starts.
+    result = { ...result, server: config.server as UnioraConfig["server"] };
+  }
 
   if (config.auth === undefined) {
     return result;

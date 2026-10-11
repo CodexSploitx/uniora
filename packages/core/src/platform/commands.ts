@@ -38,7 +38,7 @@ export interface PlatformCommandContext {
   actor: Identity;
 }
 
-type Kind = "string" | "string?" | "string|null?" | "number?" | "strings" | "strings?" | "memberStatus?" | "orgStatus?" | "orgStatus" | "date";
+type Kind = "string" | "date?" | "string?" | "string|null?" | "number?" | "strings" | "strings?" | "memberStatus?" | "orgStatus?" | "orgStatus" | "date";
 type Shape = Record<string, Kind>;
 
 const SHAPES: Record<PlatformCommand, Shape> = {
@@ -53,7 +53,7 @@ const SHAPES: Record<PlatformCommand, Shape> = {
   removeMember: { memberId: "string" },
   assignRole: { memberId: "string", roleId: "string", expectedVersion: "number?" },
   unassignRole: { memberId: "string", roleId: "string", expectedVersion: "number?" },
-  listOrganizations: { limit: "number?", query: "string?", status: "orgStatus?" },
+  listOrganizations: { limit: "number?", query: "string?", status: "orgStatus?", afterCreatedAt: "date?", afterId: "string?" },
   setOrganizationStatus: { organizationId: "string", status: "orgStatus", reason: "string?" },
   grantSupportAccess: { id: "string?", organizationId: "string", permissions: "strings", reason: "string", expiresAt: "date" },
   revokeSupportAccess: { grantId: "string" },
@@ -165,9 +165,13 @@ export async function runPlatformCommand(service: PlatformService, command: stri
     case "unassignRole":
       result = await service.unassignRole({ ...who, ...(input as object) } as A<"unassignRole">);
       break;
-    case "listOrganizations":
-      result = await service.listOrganizations({ ...who, ...(input as object) } as A<"listOrganizations">);
+    case "listOrganizations": {
+      const { afterCreatedAt, afterId, ...rest } = input as { afterCreatedAt?: Date; afterId?: string };
+      // The position is both halves or neither: half a cursor would silently page from the wrong place.
+      if ((afterCreatedAt === undefined) !== (afterId === undefined)) throw bad('"afterCreatedAt" and "afterId" go together.');
+      result = await service.listOrganizations({ ...who, ...rest, ...(afterCreatedAt && afterId ? { after: { createdAt: afterCreatedAt, id: afterId } } : {}) } as A<"listOrganizations">);
       break;
+    }
     case "setOrganizationStatus":
       result = await service.setOrganizationStatus({ ...who, ...(input as object) } as A<"setOrganizationStatus">);
       break;
@@ -187,7 +191,7 @@ export interface PlatformHttpError {
 }
 
 const CONFLICT = new Set(["platform_role_exists", "platform_member_exists", "platform_role_in_use", "platform_version_conflict", "platform_last_admin", "platform_already_initialized"]);
-const NOT_FOUND = new Set(["platform_role_not_found", "platform_member_not_found"]);
+const NOT_FOUND = new Set(["platform_role_not_found", "platform_member_not_found", "platform_grant_not_found", "platform_organization_not_found"]);
 const FORBIDDEN = new Set(["platform_forbidden", "platform_escalation", "platform_self_change", "platform_role_system"]);
 
 /**

@@ -213,3 +213,71 @@ export interface PlatformRoleRow {
   isSystem: boolean;
   permissions: string[];
 }
+
+export interface ApiKeyRow {
+  id: string;
+  /** The last characters of the key, so an operator can tell keys apart. Never the secret, never its hash. */
+  hint: string;
+  status: "active" | "revoked" | "expired";
+  createdAt: string;
+  expiresAt?: string;
+  lastUsedAt?: string;
+}
+
+export interface ApiClientRow {
+  id: string;
+  name: string;
+  status: "active" | "disabled";
+  scopes: string[];
+  /** `"*"` = every organization. */
+  organizations: "*" | string[];
+  keys: ApiKeyRow[];
+  createdAt: string;
+  version: number;
+}
+
+export interface ApiClientsPage {
+  /** False when the credential tables do not exist yet (`uniora migrate` has not run since the upgrade). */
+  available: boolean;
+  clients: ApiClientRow[];
+  nextCursor: string | null;
+}
+
+export interface WebhookDeliveryRow {
+  id: string;
+  eventType: string;
+  organizationId?: string;
+  status: "pending" | "delivered" | "dead";
+  attempts: number;
+  createdAt: string;
+  /** The sanitized failure of the last attempt: never the URL, never the receiver's answer. */
+  lastError?: string;
+  lastHttpStatus?: number;
+}
+
+export interface WebhookEndpointRow {
+  id: string;
+  /** Shown to the operator who registered it; it can carry a secret in its path, so it is not repeated in logs or toasts. */
+  url: string;
+  description?: string;
+  events: string[];
+  /** `"*"` = every organization. */
+  organizations: "*" | string[];
+  status: "enabled" | "disabled";
+  disabledReason?: string;
+  consecutiveFailures: number;
+  lastSuccessAt?: string;
+  lastFailureAt?: string;
+  createdAt: string;
+  version: number;
+  pending: number;
+  dead: number;
+  recent: WebhookDeliveryRow[];
+}
+
+export interface WebhooksPage {
+  /** False when the webhook tables do not exist yet (`uniora migrate` has not run since the upgrade). */
+  available: boolean;
+  endpoints: WebhookEndpointRow[];
+  nextCursor: string | null;
+}

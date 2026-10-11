@@ -68,7 +68,15 @@ const MAX_ERROR_LENGTH = 500;
 export function sanitizeDeliveryError(error: unknown, secrets: readonly string[]): string {
   let text = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
   for (const secret of secrets) {
-    if (secret) text = text.split(secret).join("[redacted]");
+    if (!secret) continue;
+    // The secret as a sender might echo it back: plain, percent-encoded, base64, base64url or hex.
+    const bytes = Buffer.from(secret, "utf8");
+    const variants = new Set([secret, encodeURIComponent(secret), bytes.toString("base64"), bytes.toString("base64url"), bytes.toString("hex"), bytes.toString("base64").replace(/=+$/, "")]);
+    for (const variant of variants) text = text.split(variant).join("[redacted]");
+    // A bare token (not a link) is also removed when only a piece of it comes back: any run of 12 or more of its characters.
+    if (secret.length >= 24 && !secret.includes("/")) {
+      for (let at = 0; at + 12 <= secret.length; at += 1) text = text.split(secret.slice(at, at + 12)).join("[redacted]");
+    }
   }
   text = text.replace(/https?:\/\/\S*uinv_\S*/g, "[redacted]").replace(/uinv_[A-Za-z0-9_-]+/g, "[redacted]");
   // eslint-disable-next-line no-control-regex

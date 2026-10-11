@@ -90,14 +90,14 @@ const GUARDED: readonly GuardedWrite[] = [
 export const GUARDED_WRITES: readonly string[] = GUARDED.map((write) => `${write.repo}.${write.method}`);
 
 type AnyFn = (...args: unknown[]) => unknown;
-type AnyRepo = Record<string, AnyFn>;
+export type AnyRepo = Record<string, AnyFn>;
 
 /**
  * A plain copy of a repository whose methods keep working when the repository is a class instance (its methods live on the
  * prototype, where a spread does not reach) or relies on `this`: every method found along the prototype chain is bound to the
  * original. A custom backend written as classes therefore works under the guard like one written as object literals.
  */
-function plainRepo(repo: AnyRepo): AnyRepo {
+export function plainRepo(repo: AnyRepo): AnyRepo {
   const copy: AnyRepo = {};
   for (let object: object | null = repo; object !== null && object !== Object.prototype; object = Object.getPrototypeOf(object)) {
     for (const key of Object.getOwnPropertyNames(object)) {

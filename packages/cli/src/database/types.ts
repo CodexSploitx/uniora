@@ -1,3 +1,4 @@
+import type { ApiCredentialStorage, PlatformStorage, UnioraStorage, WebhookStorage } from "@uniora/core";
 import type { CheckResult } from "../cli/output.js";
 import type { UnioraDatabaseConfig } from "../config/types.js";
 
@@ -67,6 +68,14 @@ export interface DatabaseDriver {
   platformStatus(): Promise<PlatformStatus>;
   /** Crea el rol de sistema y el primer Platform Administrator. Falla si la plataforma ya está inicializada. Solo con intención `"write"`. */
   platformInit(admin: { provider: string; subject: string }, actor: { provider: string; subject: string }): Promise<PlatformInitResult>;
+  /** Credenciales de la API (clientes y claves). Lanza si la base aún no existe. Las tablas deben estar migradas. */
+  apiCredentials(): ApiCredentialStorage;
+  /** El storage de organizaciones, para `uniora server start`. */
+  storage(): UnioraStorage;
+  /** El ámbito de plataforma, para las rutas `/v1/platform` de `uniora server start`. */
+  platformStorage(): PlatformStorage;
+  /** Endpoints de webhooks y sus entregas (los secretos de firma viven aquí). Las tablas deben estar migradas. */
+  webhookStorage(): WebhookStorage;
   close(): Promise<void>;
 }
 

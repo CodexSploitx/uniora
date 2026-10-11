@@ -155,6 +155,22 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
       );
     });
 
+    it("rechaza reutilizar el id de un role, también el de otra organización o el del Owner, sin tocar el original", async () => {
+      const storage = harness.storage();
+      await storage.organizations.create({ id: "org-1", name: "Acme Motors" });
+      await storage.organizations.create({ id: "org-2", name: "Globex" });
+      await storage.roles.createOwnerRole({ id: "role-owner", organizationId: "org-1" });
+      await storage.roles.create({ id: "role-sales", organizationId: "org-2", name: "Sales", permissionKeys: [] });
+      await storage.organizations.create({ id: "org-3", name: "Initech" });
+
+      await expect(storage.roles.create({ id: "role-owner", organizationId: "org-1", name: "Pwn" })).rejects.toMatchObject({ code: "role_exists" });
+      await expect(storage.roles.create({ id: "role-sales", organizationId: "org-1", name: "Mine" })).rejects.toMatchObject({ code: "role_exists" });
+      await expect(storage.roles.createOwnerRole({ id: "role-sales", organizationId: "org-3" })).rejects.toMatchObject({ code: "role_exists" });
+
+      expect((await storage.roles.findByIds(["role-owner"]))[0]).toMatchObject({ organizationId: "org-1", isOwnerRole: true });
+      expect((await storage.roles.findByIds(["role-sales"]))[0]).toMatchObject({ organizationId: "org-2", name: "Sales" });
+    });
+
     it("deriva un key único por role a partir del nombre (estándar de creación, constraint real)", async () => {
       const storage = harness.storage();
       await storage.organizations.create({ id: "org-1", name: "Acme Motors" });

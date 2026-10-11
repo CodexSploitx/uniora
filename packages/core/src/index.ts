@@ -190,6 +190,7 @@ export { generateInvitationToken, hashInvitationToken, INVITATION_TOKEN_PREFIX }
 
 export type { UnioraStorage, UnioraTransaction } from "./storage/types.js";
 export { createMemoryStorage } from "./storage/memory.js";
+export { createAuditContextStorage, createPlatformAuditContext } from "./storage/audit-context.js";
 export { createAuditedStorage, type AuditedStorageOptions } from "./storage/audited.js";
 
 export type {
@@ -490,3 +491,104 @@ export type { PolicyDecisionAuditorOptions } from "./policy/auditor.js";
 export { createPolicyDecisionAuditor } from "./policy/auditor.js";
 export type { PolicyCommand, PolicyCommandContext, PolicyHttpError } from "./policy/commands.js";
 export { POLICY_COMMANDS, isPolicyCommand, policyErrorToHttp, runPolicyCommand } from "./policy/commands.js";
+
+export { ApiCredentialError } from "./api/errors.js";
+export type { ApiCredentialErrorCode } from "./api/errors.js";
+export { API_SCOPES, API_SCOPE_LIST, RESERVED_IDENTITY_PROVIDERS, isApiScope, isReservedIdentityProvider } from "./api/scopes.js";
+export type { ApiScope } from "./api/scopes.js";
+export { API_CLIENT_STATUSES, isApiKeyActive } from "./api/types.js";
+export type { ApiClient, ApiClientStatus, ApiKey, ApiKeyRecord, ApiPrincipal } from "./api/types.js";
+export {
+  API_KEY_CHECKSUM_LENGTH,
+  API_KEY_ID_LENGTH,
+  API_KEY_MAX_LENGTH,
+  API_KEY_PREFIX,
+  API_KEY_SECRET_LENGTH,
+  bearerToken,
+  generateApiKey,
+  hashApiKeySecret,
+  parseApiKey,
+  randomBase62,
+  verifyApiKeySecret,
+} from "./api/key.js";
+export type { GeneratedApiKey, ParsedApiKey } from "./api/key.js";
+export {
+  MAX_ACTIVE_API_KEYS_PER_CLIENT,
+  MAX_API_CLIENT_NAME_LENGTH,
+  MAX_API_CLIENT_ORGANIZATIONS,
+  MAX_API_KEY_LIFETIME_MS,
+  assertApiClientStatus,
+  assertApiId,
+  assertApiIdentity,
+  assertApiVersion,
+  assertValidCreateApiClient,
+  assertValidCreateApiKey,
+  assertValidUpdateApiClient,
+  clampApiPage,
+  normalizeApiClientName,
+  sanitizeApiClientName,
+  sanitizeApiOrganizations,
+  sanitizeApiScopes,
+} from "./api/repository.js";
+export type {
+  ApiClientRepository,
+  ApiCredentialStorage,
+  ApiCredentialTransaction,
+  ApiKeyRepository,
+  CreateApiClientInput,
+  CreateApiKeyInput,
+  SearchApiClientsOptions,
+  UpdateApiClientInput,
+} from "./api/repository.js";
+export { createMemoryApiCredentialStorage } from "./api/memory.js";
+export type { MemoryApiCredentialStorageOptions } from "./api/memory.js";
+export { createApiCredentialService } from "./api/service.js";
+export type { ApiClientWithKeys, ApiCredentialService, ApiCredentialServiceOptions, CreatedApiKey } from "./api/service.js";
+export { MAX_RATE_KEY_LENGTH, assertRateLease, leaseFromBucket } from "./api/rate-limit.js";
+export type { RateLeaseInput, RateLimitRepository } from "./api/rate-limit.js";
+export { API_KEY_TOUCH_INTERVAL_MS, authenticateApiKey, clientMayAccessOrganization } from "./api/authenticate.js";
+export type { AuthenticateApiKeyOptions } from "./api/authenticate.js";
+
+export { WebhookError } from "./webhook/errors.js";
+export type { WebhookErrorCode } from "./webhook/errors.js";
+export type { WebhookDelivery, WebhookDeliveryStatus, WebhookEndpoint, WebhookEndpointStatus } from "./webhook/types.js";
+export { WEBHOOK_DELIVERY_STATUSES, WEBHOOK_ENDPOINT_STATUSES } from "./webhook/types.js";
+export type {
+  ClaimWebhookDeliveriesOptions,
+  CompleteWebhookDeliveryInput,
+  CreateWebhookEndpointInput,
+  EnqueueWebhookDeliveryInput,
+  FailWebhookDeliveryInput,
+  SearchWebhookDeliveriesOptions,
+  SearchWebhookEndpointsOptions,
+  UpdateWebhookEndpointInput,
+  WebhookDeliveryRepository,
+  WebhookEndpointRepository,
+  WebhookStorage,
+  WebhookTransaction,
+} from "./webhook/repository.js";
+export {
+  MAX_WEBHOOK_ENDPOINTS,
+  MAX_WEBHOOK_SECRET_GRACE_SECONDS,
+  assertValidCreateWebhookEndpoint,
+  assertValidUpdateWebhookEndpoint,
+  assertWebhookDelivery,
+  assertWebhookId,
+  assertWebhookSecret,
+  assertWebhookVersion,
+  endpointWants,
+  normalizeWebhookDescription,
+  normalizeWebhookEvents,
+  normalizeWebhookOrganizations,
+  normalizeWebhookReason,
+  resolveWebhookClaim,
+  webhookBackoffMs,
+} from "./webhook/repository.js";
+export { MAX_WEBHOOK_URL_LENGTH, isPublicIp, parseWebhookUrl } from "./webhook/network.js";
+export type { WebhookUrlPolicy } from "./webhook/network.js";
+export { WEBHOOK_SECRET_PREFIX, generateWebhookSecret, isWebhookSecret, signWebhook, verifyWebhook, webhookBody } from "./webhook/signature.js";
+export type { VerifyWebhookInput } from "./webhook/signature.js";
+export { createMemoryWebhookStorage } from "./webhook/memory.js";
+export type { MemoryWebhookStorageOptions } from "./webhook/memory.js";
+export { createWebhookService } from "./webhook/service.js";
+export type { CreatedWebhookEndpoint, WebhookService, WebhookServiceOptions } from "./webhook/service.js";

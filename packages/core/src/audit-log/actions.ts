@@ -90,6 +90,12 @@ export const AUDIT_ACTIONS = [
   "platform.support_access_revoked",
   "platform.change_refused",
   "access.change_refused",
+  "api_client.created",
+  "api_client.updated",
+  "api_client.disabled",
+  "api_client.enabled",
+  "api_key.created",
+  "api_key.revoked",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

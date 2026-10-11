@@ -94,3 +94,9 @@ await admin.grantSupportAccess({ actor: identity, organizationId, permissions: [
 - **Caching `can` is yours to decide.** The engine does not cache, so a suspension works at once; if you cache decisions in the panel, that is the delay you accept.
 - **The platform audit entry of an organization operation is a second write.** `setOrganizationStatus` and `grantSupportAccess` write the organization's trail first and the platform entry after; if the second fails you keep the first (never the reverse).
 - **Any holder of `platform.support.grant` can end any support grant**, not only their own.
+
+## Over the API
+
+`@uniora/server` exposes the platform service under `/v1/platform` for your own admin panel, with the operator's own token and the step-up
+rule read from it: [Platform administration](server.md#platform-administration). The routes call exactly the commands described above, so
+every rule here (no self-promotion, no escalation, the last administrator stays) applies unchanged.
