@@ -1,6 +1,6 @@
 {
   "name": "@uniora/cli",
-  "version": "0.4.1",
+  "version": "0.10.0",
   "description": "Official UNIORA CLI: init, check, migrate, doctor and studio",
   "license": "PolyForm-Shield-1.0.0",
   "keywords": [
@@ -46,7 +46,9 @@
     "prepack": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@uniora/core": "workspace:^",
     "@uniora/postgres": "workspace:^",
+    "@uniora/server": "workspace:^",
     "@uniora/sqlite": "workspace:^",
     "@uniora/studio": "workspace:^",
     "better-sqlite3": "^13.0.3",

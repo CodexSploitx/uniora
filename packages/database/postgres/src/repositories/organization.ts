@@ -22,6 +22,7 @@ import type { Queryable } from "../queryable.js";
 import { loadDefinitions } from "./feature.js";
 import { isUniqueViolation, violatedConstraint } from "../pg-errors.js";
 import { toLikePattern } from "../pg-like.js";
+import { searchCandidates } from "../pg-search.js";
 
 interface OrganizationRow {
   id: string;
@@ -196,32 +197,40 @@ export function createOrganizationRepository(db: Queryable): OrganizationReposit
       const query = options?.query?.trim();
       const pattern = query ? toLikePattern(query) : null;
       const after = options?.after;
-      const condition = await featureCondition(db, options?.feature, 6);
+      const candidates = await searchCandidates(db, "organizations", query);
+      const condition = await featureCondition(db, options?.feature, 7);
       const result = await db.query<OrganizationRow>(
         `select ${COLUMNS}
          from uniora.organizations o
          where ($1::text is null or o.name ilike $1 or o.slug ilike $1)
            and ($2::timestamptz is null or (o.created_at, o.id) > ($2, $3))
            and ($5::text[] is null or o.status = any($5))
+           and ($6::text[] is null or o.id = any($6))
            and ${condition.sql}
          order by o.created_at asc, o.id asc
          limit $4`,
-        [pattern, after?.createdAt ?? null, after?.id ?? null, options?.limit ?? null, statusFilter(options?.status), ...condition.params],
+        [pattern, after?.createdAt ?? null, after?.id ?? null, options?.limit ?? null, statusFilter(options?.status), candidates, ...condition.params],
       );
       return result.rows.map(toOrganization);
     },
 
-    async count(options?: Pick<SearchOrganizationsOptions, "query" | "status" | "feature">) {
+    async count(options?: Pick<SearchOrganizationsOptions, "query" | "status" | "feature"> & { limit?: number }) {
       const query = options?.query?.trim();
       const pattern = query ? toLikePattern(query) : null;
-      const condition = await featureCondition(db, options?.feature, 3);
+      const candidates = await searchCandidates(db, "organizations", query);
+      const condition = await featureCondition(db, options?.feature, 5);
       const result = await db.query<{ count: string }>(
         `select count(*)::text as count
-         from uniora.organizations o
-         where ($1::text is null or o.name ilike $1 or o.slug ilike $1)
-           and ($2::text[] is null or o.status = any($2))
-           and ${condition.sql}`,
-        [pattern, statusFilter(options?.status), ...condition.params],
+         from (
+           select 1
+           from uniora.organizations o
+           where ($1::text is null or o.name ilike $1 or o.slug ilike $1)
+             and ($2::text[] is null or o.status = any($2))
+             and ($4::text[] is null or o.id = any($4))
+             and ${condition.sql}
+           limit $3::integer
+         ) matching`,
+        [pattern, statusFilter(options?.status), options?.limit ?? null, candidates, ...condition.params],
       );
       return Number(result.rows[0]!.count);
     },

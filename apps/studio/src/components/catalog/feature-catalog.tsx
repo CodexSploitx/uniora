@@ -1,5 +1,6 @@
 "use client";
 
+import { capParams } from "@/lib/limits";
 import { IconArrowRight, IconPlus, IconToggleRight, IconTrash } from "@tabler/icons-react";
 import Link from "next/link";
 import { useState } from "react";
@@ -69,7 +70,7 @@ export function FeatureCatalog({ features, total, totalOrganizations, query, nex
           clearKey="feats.clearSearch"
         />
         <div className="flex items-center gap-3">
-          <span className="text-sm text-muted-foreground">{t("feats.resultsCount", { count: total })}</span>
+          <span className="text-sm text-muted-foreground">{t("feats.resultsCount", capParams(total))}</span>
           {!readOnly && <RegisterFeatureDialog />}
         </div>
       </div>
@@ -141,6 +142,11 @@ function FeatureRow({ feature, totalOrganizations, readOnly, pending, onUnregist
         <div className="flex flex-col gap-0.5">
           <span className="font-medium">{feature.name}</span>
           <code className="text-xs text-muted-foreground">{feature.key}</code>
+          {feature.defaultEnabled && (
+            <Badge variant="info-light" size="sm" className="mt-1 self-start">
+              {t("feats.onByDefault")}
+            </Badge>
+          )}
         </div>
       </TableCell>
       <TableCell className="max-w-72 align-top whitespace-normal text-muted-foreground">{feature.description ?? "—"}</TableCell>

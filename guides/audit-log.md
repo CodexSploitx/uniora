@@ -28,8 +28,11 @@ Standard action names are in `AUDIT_ACTIONS` (`isStandardAuditAction(name)` tell
 | Feature | `feature.registered`, `.unregistered`, `.enabled`, `.disabled`, `.bulk_changed`, `.disabled_everywhere` |
 | Entitlement | `entitlement.defined`, `.removed`, `.limit_changed`, `.limit_cleared` (consuming is not audited) |
 | Support grant | `support_grant.created`, `.revoked` |
+| Team | `team.created`, `.updated`, `.archived`, `.restored`, `.deleted`, `.owner_changed`, `.manager_changed` |
+| Team membership | `team_member.added`, `.invited`, `.accepted`, `.reactivated`, `.suspended`, `.removed`, `.role_assigned`, `.role_unassigned` |
 | Invitation | `invitation.created`, `.resent`, `.revoked`, `.accepted`, `.delivery_failed` |
 | Identity link | `identity_link.created`, `.removed` |
+| Access | `access.change_refused` (a role change stopped by the anti-escalation rules; see [Access administration](./access-admin.md)) |
 | Audit | `audit_log.pruned` |
 
 ## Write your own entries

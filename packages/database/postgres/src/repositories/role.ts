@@ -288,8 +288,8 @@ export function createRoleRepository(db: Queryable): RoleRepository {
       return result.rows.map((row) => row.permission_key);
     },
 
-    async countByOrganization(organizationIds: string[]) {
-      return countByOrganization(db, "roles", organizationIds);
+    async countByOrganization(organizationIds: string[], options?: { limit?: number }) {
+      return countByOrganization(db, "roles", organizationIds, options?.limit);
     },
 
     async grantPermission(roleId: string, permissionKey: string) {
@@ -496,7 +496,8 @@ export function createRoleRepository(db: Queryable): RoleRepository {
         const result = await db.query(
           `delete from uniora.roles r
            where r.id = $1 and not r.is_owner_role and not r.is_system
-             and not exists (select 1 from uniora.membership_roles mr where mr.role_id = r.id)`,
+             and not exists (select 1 from uniora.membership_roles mr where mr.role_id = r.id)
+             and not exists (select 1 from uniora.team_membership_roles tr where tr.role_id = r.id)`,
           [roleId],
         );
         if ((result.rowCount ?? 0) > 0) return;

@@ -101,6 +101,9 @@ export interface OrganizationRepository {
    * or repeat rows across pages.
    */
   search(options?: SearchOrganizationsOptions): Promise<Organization[]>;
-  /** Total organizations matching `query` (or all, if omitted) — for result counts/badges without loading every row. */
-  count(options?: Pick<SearchOrganizationsOptions, "query" | "status" | "feature">): Promise<number>;
+  /**
+   * Total organizations matching `query` (or all, if omitted) — for result counts/badges without loading every row.
+   * With `limit`, the answer is at most that many — it stops counting there, so a filter matching millions of rows costs a page of work.
+   */
+  count(options?: Pick<SearchOrganizationsOptions, "query" | "status" | "feature"> & { limit?: number }): Promise<number>;
 }

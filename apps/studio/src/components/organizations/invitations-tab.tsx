@@ -103,6 +103,11 @@ export function InvitationsTab({ organizationId, invitations, nextHref, readOnly
                       {invitation.roles.map((role) => (
                         <RoleChip key={role.id} role={role} />
                       ))}
+                      {invitation.teams.map((team) => (
+                        <Badge key={team.id} variant="outline" title={t("invitations.teamHint")}>
+                          {team.name}
+                        </Badge>
+                      ))}
                     </div>
                   </TableCell>
                   <TableCell>

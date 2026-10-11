@@ -16,6 +16,7 @@ import type { SqliteExecutor } from "../executor.js";
 import { countByOrganization } from "../counts.js";
 import { jsonList, parseList } from "../json.js";
 import { toLikePattern } from "../like.js";
+import { searchCandidates } from "../search.js";
 import { isUniqueViolation, violatedExactly } from "../sqlite-errors.js";
 
 interface MembershipRow {
@@ -45,6 +46,15 @@ interface MembershipRow {
 function effectiveStatus(alias?: string): string {
   const prefix = alias ? `${alias}.` : "";
   return `(case when ${prefix}status = 'blocked' and ${prefix}blocked_until is not null then (case when ${prefix}blocked_until <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now') then 'active' else 'suspended' end) else ${prefix}status end)`;
+}
+
+/**
+ * The stored `status` is only ever `active` or `blocked` (a suspension is a block with an end date), so a filter for an
+ * effective `blocked`/`suspended` member can also say `status = 'blocked'`, which the `(status, id)` index answers without
+ * touching the other rows. An `active` filter can't narrow anything (nearly everyone is), so it adds nothing.
+ */
+function storedStatusPrefilter(status: MembershipStatus | undefined): string {
+  return status === "blocked" || status === "suspended" ? "and status = 'blocked'" : "";
 }
 
 /** Columns of `uniora_memberships` a `Membership` needs, qualified with the alias `m`. */
@@ -216,9 +226,21 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
   async function blockWithin(membershipId: string, input: BlockMembershipInput, until: Date | undefined): Promise<Membership> {
     return db.atomic(async () => {
       await assertNotStale(db, membershipId, input.expectedVersion);
+      if (until === undefined) {
+        // `block` over a timed suspension makes it indefinite (the member was already inactive: no Owner guard applies).
+        const escalated = await db.query(
+          `update uniora_memberships
+           set blocked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), blocked_until = null,
+               blocked_by_provider = ?2, blocked_by_subject = ?3, block_reason = ?4,
+               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), version = version + 1
+           where id = ?1 and status = 'blocked' and ${effectiveStatus()} = 'suspended'`,
+          [membershipId, input.actor.provider, input.actor.subject, sanitizeBlockReason(input.reason) ?? null],
+        );
+        if ((escalated.rowCount ?? 0) > 0) return (await repository.findById(membershipId))!;
+      }
       // Count and update run inside one `begin immediate` unit (single writer), so two Owners blocking each other
       // at once can't both pass: the second sees the first's block.
-      await db.query(
+      const changed = await db.query(
         `update uniora_memberships
          set status = 'blocked', blocked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), blocked_until = ?5,
              blocked_by_provider = ?2, blocked_by_subject = ?3, block_reason = ?4,
@@ -239,7 +261,8 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
       );
       const current = await repository.findById(membershipId);
       if (!current) throw new MembershipError(`Membership not found: ${membershipId}`);
-      if (current.status !== "active") return current; // changed now, or was already blocked or suspended (idempotent)
+      // Also when this very write already lapsed (a suspension ending within milliseconds): it was applied, not refused.
+      if (current.status !== "active" || (changed.rowCount ?? 0) > 0) return current; // changed now, or was already blocked or suspended (idempotent)
       throw new MembershipError(
         "Cannot block the organization's last active Owner — every organization must keep at least one.",
         "last_owner",
@@ -288,6 +311,7 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
 
     async search(options?: SearchMembershipsOptions) {
       const query = options?.query?.trim();
+      const candidates = await searchCandidates(db, "uniora_memberships_search", query);
       // Page the memberships FIRST (index-ordered by id, limited), and only
       // then join/aggregate their roles — so the cost is one page of rows,
       // not "every matching member joined to its roles".
@@ -302,19 +326,22 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
              and (?3 is null or id > ?3)
              and (?5 is null or (provider = ?5 and subject = ?6))
              and (?7 is null or ${effectiveStatus()} = ?7)
+             ${storedStatusPrefilter(options?.status)}
+             and (?8 is null or rowid in (select value from json_each(?8)))
            order by id asc
            limit coalesce(?4, -1)
          ) m
          left join uniora_membership_roles mr on mr.membership_id = m.id
          group by m.id
          order by m.id asc`,
-        [options?.organizationId ?? null, query ? toLikePattern(query) : null, options?.after ?? null, options?.limit ?? null, options?.identity?.provider ?? null, options?.identity?.subject ?? null, options?.status ?? null],
+        [options?.organizationId ?? null, query ? toLikePattern(query) : null, options?.after ?? null, options?.limit ?? null, options?.identity?.provider ?? null, options?.identity?.subject ?? null, options?.status ?? null, candidates],
       );
       return result.rows.map(toMembership);
     },
 
     async searchListing(options: SearchMembershipsOptions & { rolesPerMember: number }) {
       const query = options.query?.trim();
+      const candidates = await searchCandidates(db, "uniora_memberships_search", query);
       interface ListingRow {
         id: string;
         organization_id: string;
@@ -364,11 +391,13 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
              and (?3 is null or id > ?3)
              and (?6 is null or (provider = ?6 and subject = ?7))
              and (?8 is null or ${effectiveStatus()} = ?8)
+             ${storedStatusPrefilter(options?.status)}
+             and (?9 is null or rowid in (select value from json_each(?9)))
            order by id asc
            limit coalesce(?4, -1)
          ) m
          order by m.id asc`,
-        [options.organizationId ?? null, query ? toLikePattern(query) : null, options.after ?? null, options.limit ?? null, options.rolesPerMember, options.identity?.provider ?? null, options.identity?.subject ?? null, options.status ?? null],
+        [options.organizationId ?? null, query ? toLikePattern(query) : null, options.after ?? null, options.limit ?? null, options.rolesPerMember, options.identity?.provider ?? null, options.identity?.subject ?? null, options.status ?? null, candidates],
       );
       return result.rows.map(
         (row): MembershipListing => ({
@@ -392,16 +421,25 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
       );
     },
 
-    async count(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus }) {
+    async count(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus; limit?: number }) {
       const query = options?.query?.trim();
+      const candidates = await searchCandidates(db, "uniora_memberships_search", query);
+      // With `limit`, counting stops there (`count` is then "at least this many, up to limit"), so a filter that
+      // matches millions of rows costs a page of work, not a full pass.
       const result = await db.query<{ count: number }>(
         `select count(*) as count
-         from uniora_memberships
-         where (?1 is null or organization_id = ?1)
-           and (?2 is null or uniora_ilike(provider, ?2) or uniora_ilike(subject, ?2))
-           and (?3 is null or (provider = ?3 and subject = ?4))
-           and (?5 is null or ${effectiveStatus()} = ?5)`,
-        [options?.organizationId ?? null, query ? toLikePattern(query) : null, options?.identity?.provider ?? null, options?.identity?.subject ?? null, options?.status ?? null],
+         from (
+           select 1
+           from uniora_memberships
+           where (?1 is null or organization_id = ?1)
+             and (?2 is null or uniora_ilike(provider, ?2) or uniora_ilike(subject, ?2))
+             and (?3 is null or (provider = ?3 and subject = ?4))
+             and (?5 is null or ${effectiveStatus()} = ?5)
+             ${storedStatusPrefilter(options?.status)}
+             and (?6 is null or rowid in (select value from json_each(?6)))
+           limit coalesce(?7, -1)
+         )`,
+        [options?.organizationId ?? null, query ? toLikePattern(query) : null, options?.identity?.provider ?? null, options?.identity?.subject ?? null, options?.status ?? null, candidates, options?.limit ?? null],
       );
       return Number(result.rows[0]!.count);
     },
@@ -417,8 +455,8 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
       return counts;
     },
 
-    async countByOrganization(organizationIds: string[]) {
-      return countByOrganization(db, "memberships", organizationIds);
+    async countByOrganization(organizationIds: string[], options?: { limit?: number }) {
+      return countByOrganization(db, "memberships", organizationIds, options?.limit);
     },
 
     async assignRole(membershipId: string, roleId: string, options?: MembershipVersionOptions) {
@@ -550,7 +588,15 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
         const result = await db.query(
           `delete from uniora_membership_roles
            where membership_id = ?1 and role_id = ?2
-             and (select count(*) from uniora_membership_roles where role_id = ?2) > 1`,
+             and (select count(*) from uniora_membership_roles where role_id = ?2) > 1
+             and (
+               (select ${effectiveStatus("xm")} from uniora_memberships xm where xm.id = ?1) <> 'active'
+               or exists (
+                 select 1 from uniora_membership_roles oh
+                 join uniora_memberships om on om.id = oh.membership_id
+                 where oh.role_id = ?2 and oh.membership_id <> ?1 and ${effectiveStatus("om")} = 'active'
+               )
+             )`,
           [membershipId, roleId],
         );
         if (result.rowCount > 0) {
@@ -564,7 +610,7 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
         );
         if (stillAssigned.rowCount === 0) return; // wasn't assigned to begin with — idempotent no-op
 
-        throw new MembershipError(LAST_OWNER_MESSAGE);
+        throw new MembershipError(LAST_OWNER_MESSAGE, "last_owner");
       });
     },
 
@@ -617,15 +663,25 @@ export function createMembershipRepository(db: SqliteExecutor): MembershipReposi
                from uniora_membership_roles mr
                join uniora_roles r on r.id = mr.role_id
                where mr.membership_id = ?1 and r.is_owner_role = 1
-                 and (select count(*) from uniora_membership_roles holders where holders.role_id = mr.role_id) <= 1
+                 and (
+                   (select count(*) from uniora_membership_roles holders where holders.role_id = mr.role_id) <= 1
+                   or (
+                     (select ${effectiveStatus("xm")} from uniora_memberships xm where xm.id = ?1) = 'active'
+                     and not exists (
+                       select 1 from uniora_membership_roles oh
+                       join uniora_memberships om on om.id = oh.membership_id
+                       where oh.role_id = mr.role_id and oh.membership_id <> ?1 and ${effectiveStatus("om")} = 'active'
+                     )
+                   )
+                 )
              )`,
           [membershipId],
         );
         if (result.rowCount > 0) return;
 
         const stillExists = await db.query(`select 1 from uniora_memberships where id = ?1`, [membershipId]);
-        if (stillExists.rowCount > 0) throw new MembershipError(LAST_OWNER_MESSAGE);
-        throw new MembershipError(`Membership not found: ${membershipId}`);
+        if (stillExists.rowCount > 0) throw new MembershipError(LAST_OWNER_MESSAGE, "last_owner");
+        throw new MembershipError(`Membership not found: ${membershipId}`, "membership_not_found");
       });
     },
   };

@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Database, Statement } from "better-sqlite3";
 import { unioraIlike } from "./like.js";
+import { resolveOptionalFilters } from "./optional-filters.js";
 
 export interface QueryResult<R> {
   readonly rows: R[];
@@ -83,7 +84,7 @@ function buildExecutor(db: Database): SqliteExecutor {
   db.function("uniora_ilike", { deterministic: true }, (value, pattern) => unioraIlike(value, pattern));
 
   const statements = new Map<string, Statement>();
-  const MAX_STATEMENTS = 256;
+  const MAX_STATEMENTS = 512;
 
   function prepare(sql: string): Statement {
     let statement = statements.get(sql);
@@ -105,22 +106,26 @@ function buildExecutor(db: Database): SqliteExecutor {
   // better-sqlite3 binds an ARRAY to anonymous `?` parameters only; the
   // numbered `?1`, `?2` form this package's SQL uses (a value referenced in
   // several places is bound once) is bound through an object keyed by number.
-  function bind(params: readonly unknown[]): Record<string, unknown> {
+  // SQLite sizes a statement by its HIGHEST parameter number, so slots below it that a resolved filter no longer
+  // references still need a value.
+  function bind(params: readonly unknown[], highest: number): Record<string, unknown> {
     const bound: Record<string, unknown> = {};
-    params.forEach((value, index) => {
-      bound[index + 1] = toSqliteValue(value);
-    });
+    for (let number = 1; number <= highest; number++) bound[number] = toSqliteValue(params[number - 1]);
     return bound;
   }
 
   function run<R>(sql: string, params: readonly unknown[]): QueryResult<R> {
-    const statement = prepare(sql);
-    const bound = bind(params);
+    // Optional filters (`?N is null or ...`) are resolved against the values first, so the planner can use indexes.
+    const resolved = resolveOptionalFilters(sql, params);
+    const statement = prepare(resolved.sql);
+    const highest = Math.max(0, ...resolved.used);
+    const bound = bind(params, highest);
+    const hasParams = highest > 0;
     if (statement.reader) {
-      const rows = (params.length > 0 ? statement.all(bound) : statement.all()) as R[];
+      const rows = (hasParams ? statement.all(bound) : statement.all()) as R[];
       return { rows, rowCount: rows.length };
     }
-    const info = params.length > 0 ? statement.run(bound) : statement.run();
+    const info = hasParams ? statement.run(bound) : statement.run();
     return { rows: [], rowCount: info.changes };
   }
 

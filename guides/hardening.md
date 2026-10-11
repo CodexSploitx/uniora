@@ -24,8 +24,10 @@ for production.
 
 ## 3. Invitations
 
-- UNIORA does **not** decide who may invite. Guard `invite`, `resend` and `revoke` with your own permission
-  (we suggest `members.invite`), for example with `requirePermission(engine, "members.invite", …)`.
+- Unless you opt in, UNIORA does **not** decide who may invite. Guard `invite`, `resend` and `revoke` with your own permission
+  (we suggest `members.invite`), for example with `requirePermission(engine, "members.invite", …)`. If people other than the Owner
+  administer members, use [delegated administration](access-admin.md): a guarded storage, the access service and the invitation service
+  with the rules on, so nobody can hand out a role they do not hold, change their own roles or touch someone above them.
 - `verifiedEmail` in `accept` must come from your auth provider's *verified* e-mail, never from a form field.
   Each adapter exposes `toVerifiedEmail()` for this; use it.
 - Put the invitation token in the URL path or fragment, never in a query string that your proxy or analytics
