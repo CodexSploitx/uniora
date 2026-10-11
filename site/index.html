@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>UNIORA — Universal Organization &amp; Authorization</title>
+<meta name="description" content="UNIORA is the organization and authorization layer between your auth provider and your app: organizations, teams, roles, permissions and feature flags — in your own database. Source-available, deny-by-default.">
+<meta name="theme-color" content="#09090b">
+<link rel="canonical" href="https://codexsploitx.github.io/uniora/">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<meta property="og:type" content="website">
+<meta property="og:title" content="UNIORA — Universal Organization & Authorization">
+<meta property="og:description" content="The missing layer between login and access. Organizations, roles, permissions and feature flags for any auth provider, on your own database.">
+<meta property="og:image" content="https://codexsploitx.github.io/uniora/assets/og.png">
+<meta property="og:url" content="https://codexsploitx.github.io/uniora/">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Roboto+Slab:wght@500;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareSourceCode","name":"UNIORA","description":"Universal Organization & Authorization layer: organizations, roles, permissions and feature flags for any auth provider, on your own database.","codeRepository":"https://github.com/CodexSploitx/uniora","programmingLanguage":"TypeScript","license":"https://polyformproject.org/licenses/shield/1.0.0"}
+</script>
+</head>
+<body>
+<canvas id="scene" aria-hidden="true"></canvas>
+<div class="vignette" aria-hidden="true"></div>
+<div class="grain" aria-hidden="true"></div>
+<div class="cursor-glow" id="cursorGlow" aria-hidden="true"></div>
+<div class="progress" id="progress" aria-hidden="true"></div>
+
+<!-- ───────── NAV ───────── -->
+<header class="nav" id="nav">
+  <a class="brand" href="#top" aria-label="UNIORA">
+    <span class="brand-mark">U</span>
+    <span class="brand-name">UNIORA</span>
+  </a>
+  <nav class="nav-links" id="navLinks" aria-label="Main">
+    <a href="#what" data-i18n="nav.what">What it is</a>
+    <a href="#playground" data-i18n="nav.try">Try it</a>
+    <a href="#mission" data-i18n="nav.mission">Mission</a>
+    <a href="#architecture" data-i18n="nav.arch">Architecture</a>
+    <a href="#studio">Studio</a>
+    <a href="#license" data-i18n="nav.license">License</a>
+    <a href="#start" data-i18n="nav.start">Get started</a>
+  </nav>
+  <div class="nav-actions">
+    <button class="lang" id="langBtn" type="button" aria-label="Language">ES</button>
+    <a class="star-btn" href="https://github.com/CodexSploitx/uniora" target="_blank" rel="noopener" id="navStar">
+      <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>
+      <span data-i18n="nav.star">Star</span>
+      <b class="star-count" data-stars>–</b>
+    </a>
+    <button class="burger" id="burger" type="button" aria-label="Menu" aria-expanded="false"><i></i><i></i></button>
+  </div>
+</header>
+
+<main id="top">
+
+<!-- ───────── HERO ───────── -->
+<section class="hero" id="hero">
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <a class="pill" href="https://github.com/CodexSploitx/uniora/releases" target="_blank" rel="noopener">
+        <span class="dot"></span>
+        <span><span data-version>v0.10.0</span> · <span data-i18n="hero.pill">early development · source-available</span></span>
+      </a>
+      <h1 class="h-hero">
+        <span class="line"><span data-i18n="hero.h1a">The missing layer</span></span>
+        <span class="line"><span data-i18n="hero.h1b">between</span> <em class="scramble" data-scramble="login" data-scramble-key="login">login</em></span>
+        <span class="line"><span data-i18n="hero.h1c">and</span> <em class="scramble amber" data-scramble="access" data-scramble-key="access">access</em><span class="caret">_</span></span>
+      </h1>
+      <p class="lead" data-i18n="hero.lead">Organizations, teams, roles, permissions and feature flags — for any auth provider, on your own database. Deny by default. Not a SaaS. Not an auth provider. Just the part nobody wants to rebuild.</p>
+      <div class="cta-row">
+        <a class="btn primary magnetic" href="#start"><span data-i18n="hero.cta1">Get started</span><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+        <a class="btn ghost magnetic" href="https://github.com/CodexSploitx/uniora" target="_blank" rel="noopener">
+          <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>
+          <span data-i18n="hero.cta2">Star on GitHub</span><b class="star-count" data-stars>–</b>
+        </a>
+      </div>
+      <button class="install" type="button" data-copy="npm install @uniora/core" aria-label="Copy install command">
+        <span class="prompt">$</span><code>npm install @uniora/core</code>
+        <span class="copy-hint" data-i18n="copy">copy</span>
+      </button>
+    </div>
+    <aside class="ticker" id="ticker" aria-label="Live decisions (simulated)">
+      <div class="ticker-head"><span class="dot live"></span><span data-i18n="ticker.title">engine.can() · simulated stream</span></div>
+      <ul id="tickerList"></ul>
+      <div class="ticker-foot" data-i18n="ticker.hint">Click anywhere on the scene to fire a burst of requests.</div>
+    </aside>
+  </div>
+  <a class="scroll-cue" href="#trust" aria-label="Scroll"><span></span></a>
+</section>
+
+<!-- ───────── MARQUEE ───────── -->
+<section class="trust" id="trust">
+  <p class="trust-label" data-i18n="trust.label">Plugs into what you already use</p>
+  <div class="marquee" aria-hidden="true">
+    <div class="marquee-track">
+      <span>Supabase</span><span>Clerk</span><span>Auth0</span><span>Better Auth</span><span>PostgreSQL</span><span>SQLite</span><span>Next.js</span><span>Express</span><span>React</span><span>TypeScript</span>
+      <span>Supabase</span><span>Clerk</span><span>Auth0</span><span>Better Auth</span><span>PostgreSQL</span><span>SQLite</span><span>Next.js</span><span>Express</span><span>React</span><span>TypeScript</span>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── WHAT IS UNIORA ───────── -->
+<section class="sec" id="what">
+  <div class="wrap">
+    <header class="sec-head reveal">
+      <span class="eyebrow">01 · <span data-i18n="what.eyebrow">What is UNIORA</span></span>
+      <h2 data-i18n="what.title">Your auth provider answers <em>“who?”</em>. UNIORA answers <em class="amber">“what can they do, and where?”</em></h2>
+      <p class="lead" data-i18n="what.lead">Authentication and authorization are different problems. You'll want to own the second one regardless of which auth provider you pick — or move to next year. UNIORA is the layer that sits between the two. It plugs into the provider you already use, and everything it manages lives in <b>your</b> database.</p>
+    </header>
+
+    <div class="flow reveal" id="flow">
+      <div class="flow-node" data-step="0">
+        <div class="flow-icon"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg></div>
+        <h3>Auth Provider</h3>
+        <p class="q" data-i18n="flow.q1">“Who are you?”</p>
+        <small>Supabase · Clerk · Auth0 · Better Auth</small>
+      </div>
+      <div class="flow-pipe"><i></i><i></i><i></i></div>
+      <div class="flow-node core" data-step="1">
+        <div class="flow-icon amber"><span class="brand-mark lg">U</span></div>
+        <h3>UNIORA</h3>
+        <p class="q" data-i18n="flow.q2">“Which organization? What can you do? What has it unlocked?”</p>
+        <small data-i18n="flow.s2">in your own database</small>
+      </div>
+      <div class="flow-pipe"><i></i><i></i><i></i></div>
+      <div class="flow-node out" data-step="2">
+        <div class="flow-icon"><div class="verdict"><span class="allow">ALLOW</span><span class="deny">DENY</span></div></div>
+        <h3 data-i18n="flow.t3">Decision</h3>
+        <p class="q" data-i18n="flow.q3">Never grants what it can't justify.</p>
+        <small data-i18n="flow.s3">deny-by-default</small>
+      </div>
+    </div>
+
+    <div class="cards3">
+      <article class="card tilt reveal">
+        <div class="ico">⌁</div>
+        <h3 data-i18n="what.c1t">Not an auth provider</h3>
+        <p data-i18n="what.c1p">It never sees a password or a session. Your provider tells it who the user is; UNIORA decides what that identity may do inside an organization.</p>
+      </article>
+      <article class="card tilt reveal">
+        <div class="ico">◈</div>
+        <h3 data-i18n="what.c2t">Not a SaaS</h3>
+        <p data-i18n="what.c2p">No central UNIORA service holds your data. Organizations, memberships, roles, permissions and audit logs live under a dedicated <code>uniora.*</code> schema in your Postgres — or SQLite.</p>
+      </article>
+      <article class="card tilt reveal">
+        <div class="ico">⬡</div>
+        <h3 data-i18n="what.c3t">Provider-agnostic</h3>
+        <p data-i18n="what.c3p">Swap Supabase for Clerk, or run Auth0 alongside it, without rewriting authorization. Identity links even let a user migrate providers without losing their org, roles or permissions.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── PLAYGROUND ───────── -->
+<section class="sec alt" id="playground">
+  <div class="wrap">
+    <header class="sec-head reveal">
+      <span class="eyebrow">02 · <span data-i18n="pg.eyebrow">Interactive</span></span>
+      <h2 data-i18n="pg.title">Break it. <em class="amber">It will still say no.</em></h2>
+      <p class="lead" data-i18n="pg.lead">A faithful miniature of the authorization engine running in your browser. Pick who is asking, where, and what for — then try to trip it: suspend the organization, block the member, ask for a permission nobody registered. The trace shows exactly which check decided.</p>
+    </header>
+
+    <div class="pg reveal" id="pg">
+      <div class="pg-controls">
+        <fieldset>
+          <legend data-i18n="pg.who">1 · Who is asking?</legend>
+          <div class="chips" id="pgWho"></div>
+        </fieldset>
+        <fieldset>
+          <legend data-i18n="pg.where">2 · In which organization?</legend>
+          <div class="chips" id="pgOrg"></div>
+        </fieldset>
+        <fieldset>
+          <legend data-i18n="pg.what">3 · What do they want to do?</legend>
+          <div class="chips" id="pgPerm"></div>
+        </fieldset>
+        <fieldset>
+          <legend data-i18n="pg.feat">4 · Also require a feature?</legend>
+          <div class="chips" id="pgFeat"></div>
+        </fieldset>
+        <fieldset>
+          <legend data-i18n="pg.chaos">Chaos switches</legend>
+          <label class="switch"><input type="checkbox" id="swOrg"><span class="track"></span><span data-i18n="pg.swOrg">Suspend this organization</span></label>
+          <label class="switch"><input type="checkbox" id="swMember"><span class="track"></span><span data-i18n="pg.swMember">Block this member</span></label>
+          <label class="switch"><input type="checkbox" id="swFeature"><span class="track"></span><span data-i18n="pg.swFeature">Enable the feature for this organization</span></label>
+        </fieldset>
+      </div>
+
+      <div class="pg-out">
+        <pre class="pg-code" id="pgCode" aria-label="Equivalent code"></pre>
+        <ol class="trace" id="pgTrace"></ol>
+        <div class="verdict-big" id="pgVerdict" role="status" aria-live="polite">
+          <span class="vb-word">—</span>
+          <span class="vb-reason"></span>
+        </div>
+      </div>
+    </div>
+    <p class="fine reveal" data-i18n="pg.fine">Simulation using the same order of checks and reason codes as <code>@uniora/core</code>: malformed input → inactive membership → inactive organization → permission. Owners pass every <i>registered</i> permission; nobody passes an unregistered one.</p>
+  </div>
+</section>
+
+<!-- ───────── MISSION / VISION ───────── -->
+<section class="sec" id="mission">
+  <div class="wrap">
+    <header class="sec-head reveal">
+      <span class="eyebrow">03 · <span data-i18n="mv.eyebrow">Mission & vision</span></span>
+      <h2 data-i18n="mv.title">Authorization is a layer you <em class="amber">own</em> — not a feature you rent.</h2>
+    </header>
+    <div class="mv">
+      <article class="mv-card mission tilt reveal">
+        <div class="mv-tag"><span class="bar"></span><span data-i18n="mv.mission">Mission</span></div>
+        <h3 data-i18n="mv.mt">Give every product a clean, secure, provider-independent way to answer one question.</h3>
+        <p data-i18n="mv.mp1">“Given an identity and an organization, what may this person do — and what has the organization unlocked?”</p>
+        <p data-i18n="mv.mp2">UNIORA exists so that teams stop re-implementing multi-tenancy, roles, invitations, feature flags and audit trails by hand — the place where privilege-escalation bugs are born — and instead get one tested, framework-independent core that keeps its data in their own database and refuses by default.</p>
+        <ul class="ticks">
+          <li data-i18n="mv.m1">Secure by default: unknown, missing or inconsistent → <b>DENY</b></li>
+          <li data-i18n="mv.m2">Your data stays in your database — no central service</li>
+          <li data-i18n="mv.m3">Explicit over implicit: membership is always verified</li>
+        </ul>
+      </article>
+      <article class="mv-card vision tilt reveal">
+        <div class="mv-tag"><span class="bar"></span><span data-i18n="mv.vision">Vision</span></div>
+        <h3 data-i18n="mv.vt">A world where changing your auth provider never means rewriting who can do what.</h3>
+        <p data-i18n="mv.vp1">Authentication is a commodity you should be free to swap. Authorization is the model of your business — organizations, responsibilities, capabilities, quotas — and it should outlive any vendor.</p>
+        <p data-i18n="mv.vp2">The destination is a universal organization & authorization layer: every decision explainable, every change audited in a tamper-evident log, from a weekend prototype on SQLite to millions of memberships on PostgreSQL — and administrable by humans through a local-first Studio.</p>
+        <ul class="ticks">
+          <li data-i18n="mv.v1">One model across Supabase, Clerk, Auth0, Better Auth and whatever comes next</li>
+          <li data-i18n="mv.v2">Every decision explainable, every change audited</li>
+          <li data-i18n="mv.v3">Resource-level permissions, role inheritance, per-org policies</li>
+        </ul>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── PILLARS ───────── -->
+<section class="sec alt" id="pillars">
+  <div class="wrap">
+    <header class="sec-head reveal">
+      <span class="eyebrow">04 · <span data-i18n="pil.eyebrow">Principles</span></span>
+      <h2 data-i18n="pil.title">Built like it will be attacked.</h2>
+      <p class="lead" data-i18n="pil.lead">Every guarantee below is enforced in code and tested — several of them with a real database constraint, not just application logic.</p>
+    </header>
+    <div class="pillars">
+      <article class="pillar tilt reveal">
+        <span class="num">01</span>
+        <h3 data-i18n="pil.1t">Deny-by-default</h3>
+        <p data-i18n="pil.1p">The engine never grants access it can't confidently justify. Unknown permission, missing membership, wrong organization, suspended tenant: always DENY — never a silent fallback to ALLOW.</p>
+        <code>can() → false</code>
+      </article>
+      <article class="pillar tilt reveal">
+        <span class="num">02</span>
+        <h3 data-i18n="pil.2t">Organizations can't be orphaned</h3>
+        <p data-i18n="pil.2p">Every organization is born with a protected Owner, created atomically. The last Owner can't be removed, blocked or demoted — enforced by a database constraint, so two simultaneous requests can't both win.</p>
+        <code>last_owner ✕</code>
+      </article>
+      <article class="pillar tilt reveal">
+        <span class="num">03</span>
+        <h3 data-i18n="pil.3t">Tamper-evident audit log</h3>
+        <p data-i18n="pil.3p">Append-only and hash-chained: edit or delete an entry and <code>verifyIntegrity()</code> catches it. Every change made through Studio, invitations or identity links is recorded in the same transaction.</p>
+        <code>sha256 ⛓ sha256</code>
+      </article>
+      <article class="pillar tilt reveal">
+        <span class="num">04</span>
+        <h3 data-i18n="pil.4t">Organizations <i>and</i> entitlements</h3>
+        <p data-i18n="pil.4p">Permissions answer “what can this user do”. Features answer “what has this organization unlocked”. Quotas count seats and reports atomically. Three different questions, modeled separately.</p>
+        <code>permission + feature + quota</code>
+      </article>
+      <article class="pillar tilt reveal">
+        <span class="num">05</span>
+        <h3 data-i18n="pil.5t">Framework-independent core</h3>
+        <p data-i18n="pil.5p"><code>@uniora/core</code> has zero dependency on Next.js, Express or any database driver. Adapters plug in around it; storage adapters are held to one shared conformance suite.</p>
+        <code>core ← adapters</code>
+      </article>
+      <article class="pillar tilt reveal">
+        <span class="num">06</span>
+        <h3 data-i18n="pil.6t">Server-side is the only real auth</h3>
+        <p data-i18n="pil.6p">React helpers like <code>&lt;Can&gt;</code> are UX sugar, deliberately headless. The browser never talks to your database; the server computes a bounded snapshot and independently authorizes every real operation.</p>
+        <code>UI hides · server decides</code>
+      </article>
+    </div>
+
+    <div class="everything reveal">
+      <h3 data-i18n="all.title">…and the rest of the toolbox</h3>
+      <div class="tags">
+        <span data-i18n="all.1">Custom roles</span><span data-i18n="all.2">Permission groups & implications</span><span data-i18n="all.3">Teams</span><span data-i18n="all.4">Conditional policies</span><span data-i18n="all.5">Single-use invitations</span><span data-i18n="all.6">Identity linking</span><span data-i18n="all.7">Quotas (entitlements)</span><span data-i18n="all.8">Outbox events after commit</span><span data-i18n="all.9">Webhooks</span><span data-i18n="all.10">Support grants</span><span data-i18n="all.11">Platform administrators</span><span data-i18n="all.12">Delegated administration</span><span data-i18n="all.13">PostgreSQL row-level security</span><span data-i18n="all.14">Self-hosted HTTP server</span><span data-i18n="all.15">Typed client</span><span data-i18n="all.16">CLI with migration ledger</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── ARCHITECTURE ───────── -->
+<section class="sec" id="architecture">
+  <div class="wrap">
+    <header class="sec-head reveal">
+      <span class="eyebrow">05 · <span data-i18n="arch.eyebrow">Architecture</span></span>
+      <h2 data-i18n="arch.title">One core. <em class="amber">Plug anything around it.</em></h2>
+      <p class="lead" data-i18n="arch.lead">Click any package to see what it does. Identity adapters only ever answer “who is this?” — the decision always belongs to the AuthorizationEngine.</p>
+    </header>
+
+    <div class="arch reveal" id="arch">
+      <svg class="arch-lines" id="archLines" aria-hidden="true"></svg>
+      <div class="arch-col">
+        <h4 data-i18n="arch.c1">Identity</h4>
+        <button class="node" data-pkg="supabase">@uniora/supabase</button>
+        <button class="node" data-pkg="clerk">@uniora/clerk</button>
+        <button class="node" data-pkg="auth0">@uniora/auth0</button>
+        <button class="node" data-pkg="better-auth">@uniora/better-auth</button>
+      </div>
+      <div class="arch-col mid">
+        <h4 data-i18n="arch.c2">Core</h4>
+        <button class="node core-node active" data-pkg="core" id="archCore">
+          <span class="brand-mark">U</span>
+          <b>@uniora/core</b>
+          <small>AuthorizationEngine</small>
+        </button>
+        <button class="node" data-pkg="server">@uniora/server</button>
+        <button class="node" data-pkg="client">@uniora/client</button>
+      </div>
+      <div class="arch-col">
+        <h4 data-i18n="arch.c3">Your app</h4>
+        <button class="node" data-pkg="express">@uniora/express</button>
+        <button class="node" data-pkg="next">@uniora/next</button>
+        <button class="node" data-pkg="react">@uniora/react</button>
+        <button class="node" data-pkg="mailer-smtp">@uniora/mailer-smtp</button>
+      </div>
+      <div class="arch-col">
+        <h4 data-i18n="arch.c4">Storage & tools</h4>
+        <button class="node" data-pkg="postgres">@uniora/postgres</button>
+        <button class="node" data-pkg="sqlite">@uniora/sqlite</button>
+        <button class="node" data-pkg="cli">@uniora/cli</button>
+        <button class="node" data-pkg="studio">@uniora/studio</button>
+      </div>
+    </div>
+    <div class="pkg-panel reveal" id="pkgPanel" aria-live="polite">
+      <div class="pkg-head"><code id="pkgName">@uniora/core</code><button class="mini" type="button" id="pkgCopy" data-i18n="copy">copy</button></div>
+      <p id="pkgDesc"></p>
+      <code class="pkg-install" id="pkgInstall">npm install @uniora/core</code>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── STUDIO ───────── -->
+<section class="sec alt" id="studio">
+  <div class="wrap">
+    <header class="sec-head reveal">
+      <span class="eyebrow">06 · UNIORA Studio</span>
+      <h2 data-i18n="st.title">A local-first admin UI. <em class="amber">Over your data, on your machine.</em></h2>
+      <p class="lead" data-i18n="st.lead">Browse and manage organizations, members, roles, permissions, features, invitations and the append-only activity log. One command — and it never sends a byte anywhere. These are real screenshots of Studio running on a demo database.</p>
+    </header>
+
+    <div class="studio reveal">
+      <div class="studio-tabs" role="tablist" id="studioTabs">
+        <button role="tab" class="active" data-shot="overview" data-i18n="st.t1">Overview</button>
+        <button role="tab" data-shot="members" data-i18n="st.t2">Members</button>
+        <button role="tab" data-shot="roles" data-i18n="st.t3">Roles & permissions</button>
+        <button role="tab" data-shot="permissions" data-i18n="st.t4">Permission catalog</button>
+        <button role="tab" data-shot="features" data-i18n="st.t5">Features</button>
+        <button role="tab" data-shot="activity" data-i18n="st.t6">Audit log</button>
+      </div>
+      <div class="device tilt-big" id="device">
+        <div class="device-bar"><i></i><i></i><i></i><span class="url">127.0.0.1:4321</span><span class="badge">SQLite</span></div>
+        <div class="device-screen" id="deviceScreen">
+          <img class="shot active" data-shot="overview" src="assets/studio/overview.webp" alt="UNIORA Studio overview: organizations, members, roles, permissions, features and recent activity" width="1800" height="1125" loading="lazy">
+          <img class="shot" data-shot="members" src="assets/studio/members.webp" alt="Studio members table with roles, statuses and the protected Owner" width="1800" height="1125" loading="lazy">
+          <img class="shot" data-shot="roles" src="assets/studio/roles.webp" alt="Studio role editor with a checklist of permissions" width="1800" height="1125" loading="lazy">
+          <img class="shot" data-shot="permissions" src="assets/studio/permissions.webp" alt="Studio global permission catalog" width="1800" height="1125" loading="lazy">
+          <img class="shot" data-shot="features" src="assets/studio/features.webp" alt="Studio features catalog with adoption per organization" width="1800" height="1125" loading="lazy">
+          <img class="shot" data-shot="activity" src="assets/studio/activity.webp" alt="Studio append-only audit log" width="1800" height="1125" loading="lazy">
+          <div class="scan" aria-hidden="true"></div>
+        </div>
+        <button class="zoom" type="button" id="zoomBtn" aria-label="Fullscreen">⤢</button>
+      </div>
+      <ul class="studio-facts">
+        <li><b>127.0.0.1</b><span data-i18n="st.f1">Listens on loopback only</span></li>
+        <li><b>token</b><span data-i18n="st.f2">Unlocked by a random per-launch token</span></li>
+        <li><b>audited</b><span data-i18n="st.f3">Every change recorded in the audit log</span></li>
+        <li><b>--read-only</b><span data-i18n="st.f4">A safe viewer mode, enforced at the connection</span></li>
+      </ul>
+      <div class="install wide" data-copy="npx uniora studio" role="button" tabindex="0"><span class="prompt">$</span><code>npx uniora studio</code><span class="copy-hint" data-i18n="copy">copy</span></div>
+    </div>
+  </div>
+</section>
+<div class="lightbox" id="lightbox" hidden><img alt=""><button type="button" aria-label="Close">✕</button></div>
+
+<!-- ───────── CODE ───────── -->
+<section class="sec" id="code">
+  <div class="wrap">
+    <header class="sec-head reveal">
+      <span class="eyebrow">07 · <span data-i18n="code.eyebrow">Developer experience</span></span>
+      <h2 data-i18n="code.title">One call. <em class="amber">Typed. Boring. Safe.</em></h2>
+    </header>
+    <div class="code-box reveal">
+      <div class="code-tabs" id="codeTabs" role="tablist">
+        <button role="tab" class="active" data-code="core">Core</button>
+        <button role="tab" data-code="owner" data-i18n="code.t2">Owner</button>
+        <button role="tab" data-code="express">Express</button>
+        <button role="tab" data-code="next">Next.js</button>
+        <button role="tab" data-code="react">React</button>
+        <button role="tab" data-code="sqlite">SQLite</button>
+      </div>
+      <pre class="code" id="codeView"><code></code></pre>
+      <div class="code-note" id="codeNote"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── METRICS / LIVE REPO ───────── -->
+<section class="sec alt" id="metrics">
+  <div class="wrap">
+    <header class="sec-head reveal">
+      <span class="eyebrow">08 · <span data-i18n="mx.eyebrow">Live from the repository</span></span>
+      <h2 data-i18n="mx.title">Wired to <em class="amber">GitHub</em>. In real time.</h2>
+      <p class="lead" data-i18n="mx.lead">These numbers are fetched from the GitHub API when you open this page — stars, forks, releases and the code itself.</p>
+    </header>
+
+    <div class="stats reveal">
+      <div class="stat big star-stat">
+        <div class="stat-label"><svg viewBox="0 0 16 16" width="18" height="18"><path fill="currentColor" d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg><span data-i18n="mx.stars">GitHub stars</span></div>
+        <div class="stat-num" data-stars data-count>0</div>
+        <a class="btn primary small" href="https://github.com/CodexSploitx/uniora" target="_blank" rel="noopener" data-i18n="mx.starcta" id="starCta">Give it a star</a>
+      </div>
+      <div class="stat"><div class="stat-label" data-i18n="mx.forks">Forks</div><div class="stat-num" id="stForks" data-count>0</div></div>
+      <div class="stat"><div class="stat-label" data-i18n="mx.issues">Open issues</div><div class="stat-num" id="stIssues" data-count>0</div></div>
+      <div class="stat"><div class="stat-label" data-i18n="mx.watch">Watchers</div><div class="stat-num" id="stWatch" data-count>0</div></div>
+      <div class="stat"><div class="stat-label" data-i18n="mx.push">Last push</div><div class="stat-num sm" id="stPush">–</div></div>
+    </div>
+
+    <div class="charts">
+      <div class="panel reveal">
+        <h3 data-i18n="mx.lang">Language breakdown</h3>
+        <div class="donut-wrap">
+          <svg class="donut" id="donut" viewBox="0 0 120 120" aria-hidden="true"></svg>
+          <ul class="legend" id="langLegend"></ul>
+        </div>
+      </div>
+      <div class="panel reveal">
+        <h3 data-i18n="mx.rel">Release timeline</h3>
+        <ol class="timeline" id="timeline"></ol>
+      </div>
+    </div>
+
+    <div class="facts reveal">
+      <div class="fact"><b data-count data-to="15">0</b><span data-i18n="mx.f1">npm packages in the @uniora scope</span></div>
+      <div class="fact"><b data-count data-to="25">0</b><span data-i18n="mx.f2">documentation guides</span></div>
+      <div class="fact"><b data-count data-to="145" data-plus>0</b><span data-i18n="mx.f3">test files, incl. real Postgres & SQLite</span></div>
+      <div class="fact"><b data-count data-to="5" data-suffix="M">0</b><span data-i18n="mx.f4">memberships in the published benchmark</span></div>
+    </div>
+
+    <div class="gazers reveal">
+      <h3 data-i18n="mx.gaz">Stargazers</h3>
+      <div class="avatars" id="avatars"></div>
+      <p class="fine" id="gazNote"></p>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── LICENSE ───────── -->
+<section class="sec" id="license">
+  <div class="wrap">
+    <header class="sec-head reveal">
+      <span class="eyebrow">09 · <span data-i18n="lic.eyebrow">License</span></span>
+      <h2 data-i18n="lic.title">Source-available under <em class="amber">PolyForm Shield 1.0.0</em></h2>
+      <p class="lead" data-i18n="lic.lead">Free to use — it just can't be sold or used to build a competing product. Not an OSI-approved “open source” license. Tap a use case and see where you stand.</p>
+    </header>
+
+    <div class="lic reveal">
+      <div class="lic-cols">
+        <div class="lic-col yes">
+          <h3><span class="badge ok">✓</span><span data-i18n="lic.you">You can</span></h3>
+          <div class="chips" id="licYes"></div>
+        </div>
+        <div class="lic-col no">
+          <h3><span class="badge bad">✕</span><span data-i18n="lic.cant">You can't</span></h3>
+          <div class="chips" id="licNo"></div>
+        </div>
+      </div>
+      <div class="lic-verdict" id="licVerdict" role="status" aria-live="polite">
+        <span class="lv-mark">?</span>
+        <div><b data-i18n="lic.pick">Pick a use case above.</b><p></p></div>
+      </div>
+      <div class="lic-links">
+        <a href="https://github.com/CodexSploitx/uniora/blob/main/LICENSE" target="_blank" rel="noopener" data-i18n="lic.l1">Read the LICENSE →</a>
+        <a href="https://polyformproject.org/licenses/shield/1.0.0" target="_blank" rel="noopener" data-i18n="lic.l2">PolyForm Shield 1.0.0 →</a>
+      </div>
+      <p class="fine" data-i18n="lic.fine">This is a plain-language summary. The LICENSE file is the only thing that governs. Keep the license text and the <code>Required Notice</code> line when you redistribute.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── ROADMAP ───────── -->
+<section class="sec alt" id="roadmap">
+  <div class="wrap">
+    <header class="sec-head reveal">
+      <span class="eyebrow">10 · Roadmap</span>
+      <h2 data-i18n="rm.title">Honest about what's <em class="amber">not there yet.</em></h2>
+      <p class="lead" data-i18n="rm.lead">Nothing here is promised; it is the list the maintainers would pick from.</p>
+    </header>
+    <div class="road">
+      <div class="road-col reveal">
+        <h3><span class="dot amberdot"></span><span data-i18n="rm.next">Next</span></h3>
+        <ul>
+          <li data-i18n="rm.n1"><b>Archive organizations</b> — keep the audit trail, no hard delete</li>
+          <li data-i18n="rm.n2"><b>CLI invitations</b> — resend & revoke, scriptable</li>
+          <li data-i18n="rm.n3"><b>Batch checks</b> — <code>canAll()</code> for one-round-trip UIs</li>
+        </ul>
+      </div>
+      <div class="road-col reveal">
+        <h3><span class="dot violet"></span><span data-i18n="rm.later">Later</span></h3>
+        <ul>
+          <li data-i18n="rm.l1"><b>Resource-level permissions</b> — “edit <i>this</i> project”</li>
+          <li data-i18n="rm.l2"><b>Role inheritance & templates</b></li>
+          <li data-i18n="rm.l3"><b>Per-organization policies</b></li>
+          <li data-i18n="rm.l4"><b>Server</b> — delegated reads, container image, OpenTelemetry</li>
+          <li data-i18n="rm.l5"><b>More storage adapters</b> — the conformance suite is the contract</li>
+        </ul>
+      </div>
+      <div class="road-col out reveal">
+        <h3><span class="dot red"></span><span data-i18n="rm.out">Out of scope — on purpose</span></h3>
+        <ul>
+          <li data-i18n="rm.o1"><b>Authentication.</b> UNIORA answers “what can this identity do”, never “who is this”.</li>
+          <li data-i18n="rm.o2"><b>A hosted service.</b> Your data stays in your database.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── GET STARTED ───────── -->
+<section class="sec" id="start">
+  <div class="wrap">
+    <header class="sec-head reveal center">
+      <span class="eyebrow">11 · <span data-i18n="gs.eyebrow">Get started</span></span>
+      <h2 data-i18n="gs.title">From zero to <em class="amber">ALLOW</em> in ten minutes.</h2>
+    </header>
+    <div class="steps reveal">
+      <div class="step">
+        <span class="step-n">1</span>
+        <h3 data-i18n="gs.s1">Install</h3>
+        <div class="install" data-copy="npm install @uniora/core" role="button" tabindex="0"><span class="prompt">$</span><code>npm install @uniora/core</code><span class="copy-hint" data-i18n="copy">copy</span></div>
+      </div>
+      <div class="step">
+        <span class="step-n">2</span>
+        <h3 data-i18n="gs.s2">Scaffold & migrate</h3>
+        <div class="install" data-copy="npx @uniora/cli init" role="button" tabindex="0"><span class="prompt">$</span><code>npx @uniora/cli init</code><span class="copy-hint" data-i18n="copy">copy</span></div>
+        <div class="install" data-copy="npx uniora migrate" role="button" tabindex="0"><span class="prompt">$</span><code>npx uniora migrate</code><span class="copy-hint" data-i18n="copy">copy</span></div>
+      </div>
+      <div class="step">
+        <span class="step-n">3</span>
+        <h3 data-i18n="gs.s3">Open Studio</h3>
+        <div class="install" data-copy="npx uniora studio" role="button" tabindex="0"><span class="prompt">$</span><code>npx uniora studio</code><span class="copy-hint" data-i18n="copy">copy</span></div>
+      </div>
+    </div>
+    <div class="cta-final reveal">
+      <a class="btn primary big magnetic" href="https://github.com/CodexSploitx/uniora/blob/main/guides/getting-started.md" target="_blank" rel="noopener" data-i18n="gs.docs">Read the Getting started guide</a>
+      <a class="btn ghost big magnetic" href="https://github.com/CodexSploitx/uniora" target="_blank" rel="noopener"><span data-i18n="hero.cta2">Star on GitHub</span><b class="star-count" data-stars>–</b></a>
+      <a class="btn ghost big magnetic" href="https://www.npmjs.com/org/uniora" target="_blank" rel="noopener">npm</a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap foot-grid">
+    <div>
+      <a class="brand" href="#top"><span class="brand-mark">U</span><span class="brand-name">UNIORA</span></a>
+      <p class="fine" data-i18n="foot.tag">Universal Organization & Authorization.<br>Source-available under PolyForm Shield 1.0.0.</p>
+    </div>
+    <div class="foot-links">
+      <a href="https://github.com/CodexSploitx/uniora" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/CodexSploitx/uniora/tree/main/guides" target="_blank" rel="noopener" data-i18n="foot.docs">Documentation</a>
+      <a href="https://github.com/CodexSploitx/uniora/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
+      <a href="https://github.com/CodexSploitx/uniora/blob/main/guides/roadmap.md" target="_blank" rel="noopener">Roadmap</a>
+      <a href="https://github.com/CodexSploitx/uniora/blob/main/SECURITY.md" target="_blank" rel="noopener" data-i18n="foot.sec">Security</a>
+      <a href="https://github.com/CodexSploitx/uniora/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener" data-i18n="foot.contrib">Contributing</a>
+    </div>
+    <p class="fine">© 2026 CodexSploitx</p>
+  </div>
+</footer>
+
+<script type="module" src="js/main.js"></script>
+<noscript><style>.reveal{opacity:1!important;transform:none!important}</style></noscript>
+</body>
+</html>
