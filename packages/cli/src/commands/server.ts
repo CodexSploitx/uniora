@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { userInfo } from "node:os";
-import { API_SCOPE_LIST, ApiCredentialError, createApiCredentialService } from "@uniora/core";
+import { API_SCOPE_LIST, ApiCredentialError, createApiCredentialService, isApiKeyActive, normalizeApiClientName } from "@uniora/core";
 import type { ApiClient, ApiCredentialService, ApiKey, ApiScope } from "@uniora/core";
 import { createUnioraServer } from "@uniora/server";
 import type { RunningServer } from "@uniora/server";
@@ -130,11 +130,17 @@ function describeClient(client: ApiClient, keys?: readonly ApiKey[]): Record<str
 const orgsText = (client: ApiClient): string => (client.organizations === "*" ? "todas" : `${client.organizations.length} organización(es)`);
 
 async function resolveClient(service: ApiCredentialService, reference: string): Promise<ApiClient> {
-  const direct = await service.getClient(reference);
+  const direct = await service.getClient(reference.trim());
   if (direct) return direct;
-  const needle = reference.toLowerCase();
-  const byName = (await service.listClients({ limit: 200 })).find((client) => client.name.toLowerCase() === needle);
-  if (byName) return byName;
+  const needle = normalizeApiClientName(reference);
+  // Every page: a deployment can have more than one page of clients, and a name must be found wherever it is.
+  for (let after: string | undefined; ; ) {
+    const page = await service.listClients({ limit: 200, ...(after !== undefined ? { after } : {}) });
+    const byName = page.find((client) => normalizeApiClientName(client.name) === needle);
+    if (byName) return byName;
+    if (page.length < 200) break;
+    after = page.at(-1)!.id;
+  }
   throw new ApiCredentialError(`No hay ningún cliente con id o nombre "${reference}".`, "api_client_not_found");
 }
 
@@ -206,9 +212,18 @@ export async function runServer(args: readonly string[], cwd: string = process.c
   }
 
   const mutating = !(group === "clients" && (action === "list" || action === "show"));
+  // Looking is not touching: the migrations are checked with a connection that cannot create the database, and only a database
+  // that is ready is opened for writing (a typo in the path must not leave a new empty file behind).
   let driver: DatabaseDriver;
+  let pending = 0;
   try {
-    driver = await openDriver(config.database, cwd, mutating ? "write" : "inspect");
+    const looking = await openDriver(config.database, cwd, "inspect");
+    try {
+      pending = (await looking.migrationStatus()).pending.length;
+    } finally {
+      await looking.close();
+    }
+    driver = await openDriver(config.database, cwd, pending === 0 && mutating ? "write" : "inspect");
   } catch (error) {
     emit(failReport(command, "Base de datos", error), json);
     return;
@@ -216,9 +231,8 @@ export async function runServer(args: readonly string[], cwd: string = process.c
 
   let report: Report;
   try {
-    const status = await driver.migrationStatus();
-    if (status.pending.length > 0) {
-      report = { command, checks: [{ name: "Migraciones", severity: "fail", message: `faltan migraciones (${status.pending.length}): corre "uniora migrate" primero` }], data: { target: driver.target } };
+    if (pending > 0) {
+      report = { command, checks: [{ name: "Migraciones", severity: "fail", message: `faltan migraciones (${pending}): corre "uniora migrate" primero` }], data: { target: driver.target } };
     } else {
       const service = createApiCredentialService({ storage: driver.apiCredentials() });
       report = await perform(service, command, group, action, { reference, name, scopes, orgs, client: options.client, expiresAt }, driver.target, json);
@@ -273,7 +287,7 @@ async function perform(service: ApiCredentialService, command: string, group: st
         const checks: CheckResult[] = clients.map((client) => ({
           name: client.name,
           severity: client.status === "active" ? "ok" : "warn",
-          message: `${client.id} · ${client.status} · ${client.scopes.join(", ")} · ${orgsText(client)} · ${client.keys.filter((key) => !key.revokedAt).length} clave(s) activa(s)`,
+          message: `${client.id} · ${client.status} · ${client.scopes.join(", ")} · ${orgsText(client)} · ${client.keys.filter((key) => isApiKeyActive(key, new Date())).length} clave(s) activa(s)`,
         }));
         if (checks.length === 0) checks.push({ name: "Clientes", severity: "ok", message: 'ninguno todavía: crea uno con "uniora server clients create"' });
         return { command, checks, data: { target, clients: clients.map((client) => describeClient(client, client.keys)) } };
@@ -285,8 +299,8 @@ async function perform(service: ApiCredentialService, command: string, group: st
           { name: full.name, severity: full.status === "active" ? "ok" : "warn", message: `${full.id} · ${full.status} · ${full.scopes.join(", ")} · ${orgsText(full)}` },
           ...full.keys.map((key) => ({
             name: `clave ${key.id}`,
-            severity: key.revokedAt ? ("warn" as const) : ("ok" as const),
-            message: `${key.hint} · ${key.revokedAt ? "revocada" : "activa"}${key.lastUsedAt ? ` · último uso ${key.lastUsedAt.toISOString()}` : " · sin usar"}`,
+            severity: isApiKeyActive(key, new Date()) ? ("ok" as const) : ("warn" as const),
+            message: `${key.hint} · ${key.revokedAt ? "revocada" : !isApiKeyActive(key, new Date()) ? "caducada" : "activa"}${key.lastUsedAt ? ` · último uso ${key.lastUsedAt.toISOString()}` : " · sin usar"}`,
           })),
         ];
         return { command, checks, data: { target, client: describeClient(full, full.keys) } };
@@ -320,7 +334,8 @@ async function perform(service: ApiCredentialService, command: string, group: st
 
 function positiveInt(flag: string, text: string | undefined, min: number, max: number): number | undefined {
   if (text === undefined) return undefined;
-  const value = Number(text);
+  // Digits only: `Number(" ")` is 0 and `Number("0x50")` is 80, neither of which anybody meant.
+  const value = /^\d{1,6}$/.test(text) ? Number(text) : Number.NaN;
   if (!Number.isInteger(value) || value < min || value > max) throw new UsageError(`--${flag} necesita un número entero entre ${min} y ${max}.`);
   return value;
 }
@@ -348,6 +363,18 @@ export async function runServerStart(cwd: string, options: ServerOptions): Promi
   }
   let driver: DatabaseDriver;
   try {
+    // Same rule as the other commands: look first with a connection that cannot create the database.
+    const looking = await openDriver(config.database, cwd, "inspect");
+    let status;
+    try {
+      status = await looking.migrationStatus();
+    } finally {
+      await looking.close();
+    }
+    if (status.pending.length > 0 || status.modified.length > 0) {
+      emit({ command, checks: [{ name: "Migraciones", severity: "fail", message: `la base no está al día (${status.pending.length} pendiente(s), ${status.modified.length} modificada(s)): corre "uniora migrate"` }] }, json);
+      return;
+    }
     driver = await openDriver(config.database, cwd, "write");
   } catch (error) {
     emit(failReport(command, "Base de datos", error), json);
@@ -356,12 +383,6 @@ export async function runServerStart(cwd: string, options: ServerOptions): Promi
 
   let running: RunningServer | undefined;
   try {
-    const status = await driver.migrationStatus();
-    if (status.pending.length > 0 || status.modified.length > 0) {
-      emit({ command, checks: [{ name: "Migraciones", severity: "fail", message: `la base no está al día (${status.pending.length} pendiente(s), ${status.modified.length} modificada(s)): corre "uniora migrate"` }] }, json);
-      await driver.close();
-      return;
-    }
     const server = createUnioraServer({
       storage: driver.storage(),
       credentials: driver.apiCredentials(),

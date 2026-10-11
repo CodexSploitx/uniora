@@ -28,6 +28,7 @@ import { MIGRATION_0025_POLICIES } from "./migrations/0025_policies.js";
 import { MIGRATION_0026_POLICY_REVISION_SEQUENCE } from "./migrations/0026_policy_revision_sequence.js";
 import { MIGRATION_0027_POLICY_KINDS } from "./migrations/0027_policy_kinds.js";
 import { MIGRATION_0028_API_CREDENTIALS } from "./migrations/0028_api_credentials.js";
+import { MIGRATION_0029_RATE_LIMITS } from "./migrations/0029_rate_limits.js";
 
 interface Migration {
   readonly id: string;
@@ -64,6 +65,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0026_policy_revision_sequence", sql: MIGRATION_0026_POLICY_REVISION_SEQUENCE },
   { id: "0027_policy_kinds", sql: MIGRATION_0027_POLICY_KINDS },
   { id: "0028_api_credentials", sql: MIGRATION_0028_API_CREDENTIALS },
+  { id: "0029_rate_limits", sql: MIGRATION_0029_RATE_LIMITS },
 ];
 
 const LEDGER_TABLE = "uniora_schema_migrations";

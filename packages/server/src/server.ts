@@ -3,6 +3,7 @@ import { createServer as createHttpServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import type { ServerOptions as HttpsServerOptions } from "node:https";
+import { isIPv6 } from "node:net";
 import type { AddressInfo } from "node:net";
 import { authenticateApiKey, clientMayAccessOrganization, createAuthorizationEngine } from "@uniora/core";
 import type { ApiPrincipal, Identity } from "@uniora/core";
@@ -10,9 +11,13 @@ import { ServerConfigError, isLoopbackHost, resolveConfig } from "./config.js";
 import type { ResolvedConfig, UnioraServerOptions } from "./config.js";
 import { ApiError, errors, problemOf, toApiError } from "./errors.js";
 import { assertJsonContentType, hasBody, parseJsonBody, queryToObject, readBody, send } from "./http.js";
+import { ActorTokenError, createActorTokenVerifier } from "./actor-token.js";
+import type { VerifiedActor } from "./actor-token.js";
 import { createApplicationContext, createDelegatedContext } from "./delegation.js";
 import { actorFromHeaders, completeIdentity } from "./identity.js";
 import { ConcurrencyGate, FailureThrottle, RateLimiter } from "./limits.js";
+import type { RateLimitDecision } from "./limits.js";
+import { SharedRateLimiter } from "./shared-limit.js";
 import { matchRoute } from "./route.js";
 import type { ApplicationContext, DelegatedContext, Route, RouteContext } from "./route.js";
 import { allRoutes } from "./routes/index.js";
@@ -53,9 +58,14 @@ const EMPTY_OBJECT = s.object({});
 const MAX_URL_LENGTH = 2048;
 const READY_PROBE_ID = "uniora_ready_probe";
 const READY_DEADLINE_MS = 2_000;
+/** A readiness answer is shared by every probe for this long, so an unauthenticated flood costs the database one probe a second, not one per request. */
+const READY_CACHE_MS = 1_000;
+/** A target that two parsers could read differently: doubled or backslash slashes, dot segments (also percent-encoded), a fragment. */
+const AMBIGUOUS_TARGET = /\/\/|\\|#|%2e|%5c|(?:^|\/)\.\.?(?:\/|$)/i;
 
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{1,128}$/;
-const IF_MATCH = /^(?:W\/)?"(\d{1,15})"$/;
+// Versions start at 1: "0" can never match, and the core refuses it.
+const IF_MATCH = /^(?:W\/)?"([1-9]\d{0,14})"$/;
 
 /** Every value of a header as the client wrote it: Node folds repeats into one string, which would hide a duplicated header. */
 function headerValues(req: IncomingMessage, name: string): string[] {
@@ -68,12 +78,33 @@ function headerValues(req: IncomingMessage, name: string): string[] {
 
 const requestIdOf = (): string => `req_${randomBytes(12).toString("base64url")}`;
 
+/**
+ * The address a failure is counted against. An IPv4-mapped IPv6 address is the IPv4 one, and an IPv6 address is counted by its /64,
+ * the smallest block a network is handed: a client that owns one can use billions of addresses inside it for free.
+ */
+export function throttleKey(address: string): string {
+  const bare = address.startsWith("::ffff:") && address.includes(".") ? address.slice(7) : address;
+  if (!isIPv6(bare)) return bare;
+  const [head = "", tail] = bare.split("::");
+  const front = head === "" ? [] : head.split(":");
+  const back = tail === undefined || tail === "" ? [] : tail.split(":");
+  const groups = tail === undefined ? front : [...front, ...Array<string>(Math.max(0, 8 - front.length - back.length)).fill("0"), ...back];
+  return `${groups.slice(0, 4).map((group) => group.toLowerCase().replace(/^0+(?=.)/, "")).join(":")}::/64`;
+}
+
 function sourceOf(req: IncomingMessage, hops: number): string {
   const socket = req.socket.remoteAddress ?? "unknown";
   if (hops === 0) return socket;
   const header = req.headers["x-forwarded-for"];
   const list = (Array.isArray(header) ? header.join(",") : (header ?? "")).split(",").map((part) => part.trim()).filter((part) => part !== "");
   return (list[list.length - hops] ?? socket).slice(0, 64);
+}
+
+/** `x-forwarded-proto` as the nearest proxy wrote it: the last value of a list, any case. */
+function forwardedProto(req: IncomingMessage): string {
+  const header = req.headers["x-forwarded-proto"];
+  const text = Array.isArray(header) ? header.join(",") : (header ?? "");
+  return (text.split(",").pop() ?? "").trim().toLowerCase();
 }
 
 const decodeSegment = (value: string): string => {
@@ -97,28 +128,52 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
   const engine = createAuthorizationEngine(config.storage, config.engine);
   const routes = allRoutes();
   const limits = config.limits;
-  const log = config.logger;
+  // A logger that throws must never take a request, or the process, down with it.
+  const log: typeof config.logger = (entry) => {
+    try {
+      config.logger(entry);
+    } catch {
+      /* the operator's sink is down: nothing else to do */
+    }
+  };
 
-  const rate = new RateLimiter({ perSecond: limits.ratePerSecond, burst: limits.rateBurst });
+  const localRate = new RateLimiter({ perSecond: limits.ratePerSecond, burst: limits.rateBurst });
+  // Several instances share one budget per key when the storage keeps it (`sharedRateLimit`); each falls back to its own limit if the storage fails.
+  const rate: { take(key: string): RateLimitDecision | Promise<RateLimitDecision> } =
+    config.sharedRateLimit && config.credentials.rateLimits
+      ? new SharedRateLimiter({ store: config.credentials.rateLimits, perSecond: limits.ratePerSecond, burst: limits.rateBurst, fallback: localRate, onError: (error) => log({ level: "error", msg: "shared rate limit unavailable, limiting per process", error }) })
+      : localRate;
   const concurrency = new ConcurrencyGate({ perKey: limits.maxConcurrencyPerKey, global: Number.POSITIVE_INFINITY });
+  const verifier = config.actorProviders.length > 0 ? createActorTokenVerifier(config.actorProviders, { now: config.now, onWarning: (message, detail) => log({ level: "warn", msg: message, ...detail }) }) : undefined;
   const failures = new FailureThrottle({ maxFailures: limits.authFailuresPerMinute, windowMs: 60_000 });
   let inFlight = 0;
-  let behindTlsProxy = false;
+  let closing = false;
 
-  async function ready(): Promise<boolean> {
-    try {
-      await withDeadline(
-        Promise.all([config.storage.organizations.findById(READY_PROBE_ID), config.credentials.apiClients.findById(READY_PROBE_ID)]),
-        READY_DEADLINE_MS,
-      );
-      return true;
-    } catch (error) {
-      log({ level: "error", msg: "readiness check failed", error });
-      return false;
-    }
+  // One probe at a time, its answer shared for a second: `/readyz` needs no credentials, so it must not scale the database load with the number of callers.
+  let readyAt = 0;
+  let readyAnswer = false;
+  let readyProbe: Promise<boolean> | undefined;
+  function ready(): Promise<boolean> {
+    if (readyProbe) return readyProbe;
+    if (Date.now() - readyAt < READY_CACHE_MS) return Promise.resolve(readyAnswer);
+    const work = Promise.all([config.storage.organizations.findById(READY_PROBE_ID), config.credentials.apiClients.findById(READY_PROBE_ID)]);
+    work.catch(() => undefined); // a probe that outlived its deadline must not become an unhandled rejection
+    readyProbe = withDeadline(work, READY_DEADLINE_MS).then(
+      () => true,
+      (error: unknown) => {
+        log({ level: "error", msg: "readiness check failed", error });
+        return false;
+      },
+    ).then((answer) => {
+      readyAnswer = answer;
+      readyAt = Date.now();
+      readyProbe = undefined;
+      return answer;
+    });
+    return readyProbe;
   }
 
-  async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  async function handle(req: IncomingMessage, res: ServerResponse, requireHttps: boolean): Promise<void> {
     const requestId = requestIdOf();
     const started = Date.now();
     const method = req.method ?? "GET";
@@ -129,6 +184,7 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
     let bodyRead = false;
     let releaseSlot: (() => void) | undefined;
     let handlerRunning: Promise<unknown> | undefined;
+    let timedOut = false;
     let delegatedContext: DelegatedContext | undefined;
     let applicationContext: ApplicationContext | undefined;
     const source = sourceOf(req, config.trustedProxyHops);
@@ -140,29 +196,35 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
         requestId,
         headers: { ...extra, ...headers },
         ...(contentType ? { contentType } : {}),
-        close: hasBody(req) && !bodyRead,
+        close: (hasBody(req) && !bodyRead) || closing,
       });
     };
 
-    inFlight += 1;
+    let counted = false;
     try {
       const target = req.url ?? "";
       if (!target.startsWith("/") || target.length > MAX_URL_LENGTH) throw errors.notFound();
-      const url = new URL(target, "http://uniora.invalid");
-      const pathname = url.pathname;
+      // Routed on the path exactly as the client wrote it. Normalizing it (`//x/v1/..`, `/v1/./check`, `%2e%2e`) would let a front proxy that
+      // enforces rules on the raw path and this server disagree about which route a request is.
+      const queryAt = target.indexOf("?");
+      const pathname = queryAt < 0 ? target : target.slice(0, queryAt);
+      const search = queryAt < 0 ? "" : target.slice(queryAt + 1);
+      if (AMBIGUOUS_TARGET.test(pathname) || search.includes("#")) throw errors.notFound();
 
       // Liveness and readiness: no credentials, and no detail about what is wrong.
-      if (method === "GET" && (pathname === "/healthz" || pathname === "/readyz")) {
+      if ((method === "GET" || method === "HEAD") && (pathname === "/healthz" || pathname === "/readyz")) {
         if (pathname === "/healthz") return respond({ status: "ok" }, 200);
         return (await ready()) ? respond({ status: "ready" }, 200) : respond({ status: "unavailable" }, 503);
       }
       if (!pathname.startsWith("/v1/")) throw errors.notFound();
 
+      inFlight += 1;
+      counted = true;
       if (inFlight > limits.maxInFlight) throw errors.overloaded();
-      if (behindTlsProxy && req.headers["x-forwarded-proto"] !== "https") throw new ApiError(403, "tls_required");
+      if (requireHttps && forwardedProto(req) !== "https") throw new ApiError(403, "tls_required");
 
       // 1. Who is calling. Everything below /v1 needs a valid key, even to learn that a route does not exist.
-      const blockedFor = failures.blockedFor(source);
+      const blockedFor = failures.blockedFor(throttleKey(source));
       if (blockedFor > 0) throw errors.rateLimited(blockedFor);
       try {
         principal = (await authenticateApiKey(config.credentials, req.headers.authorization, { now: config.now() })) ?? undefined;
@@ -171,12 +233,12 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
         throw new ApiError(503, "unavailable", { headers: { "Retry-After": "5" } });
       }
       if (!principal) {
-        failures.recordFailure(source);
+        failures.recordFailure(throttleKey(source));
         throw errors.unauthenticated();
       }
 
       // 2. How much it may ask.
-      const decision = rate.take(principal.key.id);
+      const decision = await rate.take(principal.key.id);
       extra["RateLimit-Limit"] = String(decision.limit);
       extra["RateLimit-Remaining"] = String(decision.remaining);
       if (!decision.allowed) throw errors.rateLimited(decision.retryAfterSeconds);
@@ -202,15 +264,45 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
         throw errors.forbidden();
       }
 
-      // A delegated call speaks for an end user: it needs the separate `actor:assert` scope, and says who in its own headers.
+      // Who the call speaks for. A delegated call changes things as an end user: either the server verified the user's own token
+      // (`actor:verified`, or `actor:assert`), or the caller asserted who they are in headers (`actor:assert`: a key that holds it can
+      // name anybody, which is why `requireVerifiedActors` can switch it off). A route that only profits from knowing the person may
+      // take the token too; no other route takes an actor at all.
       let actor: Identity | undefined;
-      if (route.delegated) {
+      let verifiedActor: VerifiedActor | undefined;
+      let actorMode: "asserted" | "verified" | undefined;
+      const tokenValues = headerValues(req, "uniora-actor-token");
+      const subjectValues = headerValues(req, "uniora-actor-subject");
+      const providerValues = headerValues(req, "uniora-actor-provider");
+      const takesActor = route.delegated || route.actorToken;
+      if (!route.delegated && (subjectValues.length > 0 || providerValues.length > 0)) throw errors.invalidRequest([{ path: subjectValues.length > 0 ? "Uniora-Actor-Subject" : "Uniora-Actor-Provider", code: "unknown_field" }]);
+      if (tokenValues.length > 0) {
+        if (!takesActor) throw errors.invalidRequest([{ path: "Uniora-Actor-Token", code: "unknown_field" }]);
+        if (tokenValues.length > 1 || subjectValues.length > 0 || providerValues.length > 0) throw errors.invalidRequest([{ path: "Uniora-Actor-Token", code: "too_many" }]);
+        if (!verifier) throw errors.notImplemented("actor_token_unsupported");
+        if (route.delegated && !principal.client.scopes.includes("actor:verified") && !principal.client.scopes.includes("actor:assert")) {
+          log({ level: "warn", msg: "scope refused", requestId, route: route.id, clientId: principal.client.id, scope: "actor:verified" });
+          throw errors.forbidden();
+        }
+        try {
+          verifiedActor = await verifier.verify(tokenValues[0]!);
+        } catch (error) {
+          if (!(error instanceof ActorTokenError)) throw error;
+          // Always the same answer to the caller; the reason is for the operator (never the token).
+          log({ level: "warn", msg: "actor token refused", requestId, clientId: principal.client.id, kind: error.kind, reason: error.reason });
+          if (error.kind === "unavailable") throw new ApiError(503, "actor_token_unavailable", { headers: { "Retry-After": "5" } });
+          throw new ApiError(401, "actor_token_invalid", { headers: { "WWW-Authenticate": 'Bearer realm="uniora", error="invalid_token"' } });
+        }
+        actor = verifiedActor.identity;
+        actorMode = "verified";
+      } else if (route.delegated) {
+        if (config.requireVerifiedActors) throw new ApiError(403, "actor_token_required");
         if (!principal.client.scopes.includes("actor:assert")) {
           log({ level: "warn", msg: "scope refused", requestId, route: route.id, clientId: principal.client.id, scope: "actor:assert" });
           throw errors.forbidden();
         }
-        if (req.headers["uniora-actor-token"] !== undefined) throw errors.notImplemented("actor_token_unsupported");
-        actor = actorFromHeaders({ subject: headerValues(req, "uniora-actor-subject"), provider: headerValues(req, "uniora-actor-provider") }, config.defaultProvider);
+        actor = actorFromHeaders({ subject: subjectValues, provider: providerValues }, config.defaultProvider);
+        actorMode = "asserted";
       }
       const keyHeader = req.headers["idempotency-key"];
       if (keyHeader !== undefined && !route.idempotent) throw errors.invalidRequest([{ path: "Idempotency-Key", code: "unknown_field" }]);
@@ -231,7 +323,7 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
       const params = route.params ? parseInput(route.params, rawParams) : undefined;
       if (params && !params.ok) issues.push(...params.issues);
 
-      const query = queryToObject(route.query, url.searchParams);
+      const query = queryToObject(route.query, new URLSearchParams(search));
       issues.push(...query.issues);
       const parsedQuery = parseInput(route.query ?? EMPTY_OBJECT, query.value);
       if (!parsedQuery.ok) issues.push(...parsedQuery.issues);
@@ -268,14 +360,15 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
         engine,
         now: config.now,
         resolveIdentity: (identity, path) => completeIdentity(identity, config.defaultProvider, path),
+        verifiedActor,
         application: () => {
           if (!principal) throw new Error("No principal.");
-          applicationContext ??= delegatedContext ?? createApplicationContext(config, principal, requestId);
+          applicationContext ??= delegatedContext ?? createApplicationContext(config, principal, requestId, actorMode);
           return applicationContext;
         },
         delegated: () => {
           if (!actor || !principal) throw new Error(`Route ${route!.id} asked for a delegated context but is not marked delegated.`);
-          delegatedContext ??= createDelegatedContext(config, principal, requestId, actor);
+          delegatedContext ??= createDelegatedContext(config, principal, requestId, actor, actorMode!);
           return delegatedContext;
         },
         ifMatch,
@@ -286,7 +379,13 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
         },
       };
       handlerRunning = route.handler(context, input as never);
-      const result = await withDeadline(handlerRunning, limits.requestTimeoutMs);
+      let result: unknown;
+      try {
+        result = await withDeadline(handlerRunning, limits.requestTimeoutMs);
+      } catch (error) {
+        if (error instanceof ApiError && error.code === "timeout") timedOut = true;
+        throw error;
+      }
       let payload: unknown;
       try {
         payload = project(route.response, result);
@@ -301,11 +400,16 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
       if (error.status >= 500 || error.cause !== undefined) log({ level, msg: "request failed", requestId, route: route?.id, code: error.code, error: error.cause ?? error });
       respond(problemOf(error, requestId), error.status, { ...error.headers }, "application/problem+json; charset=utf-8");
     } finally {
-      inFlight -= 1;
+      if (counted) inFlight -= 1;
       const release = releaseSlot;
       if (release) {
-        if (handlerRunning) void handlerRunning.then(release, release);
-        else release();
+        if (handlerRunning) {
+          // The caller already got its 503 `timeout`; a write that fails afterwards must still leave a trace.
+          void handlerRunning.then(release, (error: unknown) => {
+            if (timedOut) log({ level: "error", msg: "request failed after its deadline", requestId, route: route?.id, error });
+            release();
+          });
+        } else release();
       }
       log({
         level: "info",
@@ -322,14 +426,15 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
     }
   }
 
-  const handler = (req: IncomingMessage, res: ServerResponse): void => {
-    handle(req, res).catch((error: unknown) => {
+  const run = (requireHttps: boolean) => (req: IncomingMessage, res: ServerResponse): void => {
+    handle(req, res, requireHttps).catch((error: unknown) => {
       // `handle` answers its own errors; reaching here means the answer itself failed. Never let it crash the process.
       log({ level: "error", msg: "unhandled failure", error });
       if (!res.headersSent) res.statusCode = 500;
       res.end();
     });
   };
+  const handler = run(false);
 
   async function listen(listenOptions: ListenOptions = {}): Promise<RunningServer> {
     const host = listenOptions.host ?? "127.0.0.1";
@@ -342,11 +447,12 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
       throw new ServerConfigError("`behindTlsProxy` needs `trustedProxyHops` of at least 1, so the caller's address (and the failed-authentication throttle) is the real one.");
     }
     if (listenOptions.tls && listenOptions.behindTlsProxy) throw new ServerConfigError("Choose `tls` or `behindTlsProxy`, not both.");
-    behindTlsProxy = listenOptions.behindTlsProxy === true;
 
+    // Node enforces the header and body timeouts only when it sweeps connections (every 30 s by default): sweep often enough that a slow client lives about as long as configured.
+    const connectionsCheckingInterval = Math.min(5_000, Math.max(250, Math.floor(Math.min(limits.headersTimeoutMs, limits.requestBodyTimeoutMs) / 2)));
     const server: Server = listenOptions.tls
-      ? createHttpsServer({ ...listenOptions.tls, maxHeaderSize: limits.maxHeaderBytes }, handler)
-      : createHttpServer({ maxHeaderSize: limits.maxHeaderBytes }, handler);
+      ? createHttpsServer({ ...listenOptions.tls, maxHeaderSize: limits.maxHeaderBytes, connectionsCheckingInterval }, run(false))
+      : createHttpServer({ maxHeaderSize: limits.maxHeaderBytes, connectionsCheckingInterval }, run(listenOptions.behindTlsProxy === true));
     server.headersTimeout = limits.headersTimeoutMs;
     server.requestTimeout = limits.requestBodyTimeoutMs;
     server.keepAliveTimeout = limits.keepAliveTimeoutMs;
@@ -371,9 +477,12 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
       url: `${scheme}://${shownHost}:${address.port}`,
       close: (graceMs = 10_000) =>
         new Promise<void>((resolve) => {
+          closing = true; // every answer from now on says `Connection: close`, so a keep-alive connection does not hold the shutdown open
           const force = setTimeout(() => server.closeAllConnections(), graceMs);
+          const sweep = setInterval(() => server.closeIdleConnections(), 100);
           server.close(() => {
             clearTimeout(force);
+            clearInterval(sweep);
             resolve();
           });
           server.closeIdleConnections();

@@ -150,6 +150,7 @@ function clientSnippet(item: Recorded): string {
   const call = `uniora.${group}.${method}`;
   const options: string[] = [];
   if (item.step.actor !== undefined) options.push(`actor: { subject: ${JSON.stringify(item.step.actor)} }`);
+  if (item.step.verifiedAs !== undefined) options.push(`actor: { token: userToken }`);
   const match = item.request.headers["If-Match"];
   if (match) options.push(`ifMatch: ${match.replace(/"/g, "")}`);
   if (item.step.idempotencyKey) options.push(`idempotencyKey: ${JSON.stringify(item.step.idempotencyKey)}`);
@@ -193,6 +194,10 @@ const STATUS_OF: Readonly<Record<string, number>> = {
   organization_not_found: 404,
   invitation_not_found: 404,
   actor_token_unsupported: 501,
+  actor_token_invalid: 401,
+  actor_token_required: 403,
+  actor_token_unavailable: 503,
+  actor_mismatch: 400,
   invitations_not_configured: 501,
   idempotency_key_reused: 422,
   idempotency_in_progress: 409,
@@ -211,7 +216,7 @@ function operationSection(route: Route, examples: readonly Recorded[]): string {
   out.push("");
   out.push(
     [
-      `- **Scope:** \`${route.scope}\`${route.delegated ? " and `actor:assert`" : ""}`,
+      `- **Scope:** \`${route.scope}\`${route.delegated ? " and `actor:verified` (with a token) or `actor:assert` (asserted)" : ""}`,
       `- **Kind:** ${route.delegated ? "delegated (speaks for an end user)" : "application (your backend asks as itself)"}`,
       `- **Changes data:** ${route.write ? "yes (refused with `503 read_only` while the server is read-only)" : "no"}`,
       ...(route.allOrganizations ? ["- **Client:** one that may reach every organization (`*`)"] : []),
@@ -228,7 +233,10 @@ function operationSection(route: Route, examples: readonly Recorded[]): string {
     out.push(table(request, true));
   }
   if (route.delegated) {
-    out.push("Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.");
+    out.push("Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).");
+    out.push("");
+  } else if (route.actorToken) {
+    out.push("Optionally send `Uniora-Actor-Token` (the user's own token): the server verifies it, the question must be about that user, and `authorize` takes the session facts from it.");
     out.push("");
   }
   const response = route.status === 204 ? [] : rows(route.response);
@@ -272,7 +280,7 @@ const INTRO = `# The UNIORA API reference
 
 - **Transport.** HTTPS and JSON. Send \`Content-Type: application/json\` on anything with a body. Paths live under \`/v1\`. Plain HTTP is only for a server on the same machine.
 - **Authentication.** \`Authorization: Bearer uniora_sk_…\` on every call under \`/v1\`. A key belongs to an **API client**, which has **scopes** and a list of **organizations**; a call outside them is refused. Keys are created in Studio or with \`uniora server keys create\`: there is no route that creates or changes one.
-- **Application and delegated calls.** An application call is your backend asking as itself (decisions, reads, creating an organization). A **delegated** call changes things on behalf of an end user, who travels in \`Uniora-Actor-Subject\` (percent-encoded) and, if the server has no default label, \`Uniora-Actor-Provider\`. It needs the \`actor:assert\` scope too, and it succeeds only if that user may do it: a key can never do more than the user it speaks for. Never copy the actor from what the end user sent.
+- **Application and delegated calls.** An application call is your backend asking as itself (decisions, reads, creating an organization). A **delegated** call changes things on behalf of an end user, and says who in one of two ways. **Verified**: the user's own token from your identity provider in \`Uniora-Actor-Token\`; the server checks it (issuer, audience, pinned algorithm, signature against the keys you configured, expiry) and the identity comes out of the token, so a leaked API key can only speak for users who hold a token right now. It needs the \`actor:verified\` scope. **Asserted**: \`Uniora-Actor-Subject\` (percent-encoded) and, if the server has no default label, \`Uniora-Actor-Provider\`; it needs \`actor:assert\`, and a key that holds it can name anybody, so a server can refuse it (\`requireVerifiedActors\`). Either way it succeeds only if that user may do it: a key can never do more than the user it speaks for. Never copy the actor from what the end user sent.
 - **Identities.** \`{ "subject": "…" }\` is the user's id in your auth provider. \`provider\` is an opaque label you choose (it does not have to name your vendor); leave it out and the server's default label is used. The labels \`uniora-api\`, \`uniora-studio\`, \`uniora-cli\` and \`uniora-platform\` are reserved.
 - **Versions.** Resources that change carry a \`version\`. It is also the \`ETag\` (quoted). Send it back as \`If-Match\` to refuse an edit made from a stale copy (\`412\`).
 - **Idempotency.** Operations that create something accept \`Idempotency-Key\` (1–128 letters, digits and \`._:-\`). The same key with the same request answers the first result and does nothing again; the same key with a different request is refused. Keys are per API client.
@@ -299,8 +307,10 @@ Errors are \`application/problem+json\` (RFC 9457):
 | Status | \`code\` | Meaning |
 | --- | --- | --- |
 | 400 | \`invalid_request\`, \`invalid_json\`, \`unexpected_body\`, \`invalid_cursor\` | The request is not acceptable. Unknown fields are refused, not ignored. |
-| 400 | \`actor_required\`, \`identity_provider_required\`, \`identity_provider_reserved\` | A delegated call without a usable actor, or an identity with no provider label and no server default. |
+| 400 | \`actor_required\`, \`actor_mismatch\`, \`identity_provider_required\`, \`identity_provider_reserved\` | A delegated call without a usable actor, a question about someone other than the user in the token, or an identity with no provider label and no server default. |
 | 401 | \`unauthenticated\` | No key, or one that is not valid: unknown, wrong, revoked, expired and disabled all answer the same. |
+| 401 | \`actor_token_invalid\` | The end user's token is not acceptable: expired, wrong audience or issuer, bad signature, unknown key... all answer the same; the reason is in the server's log. |
+| 403 | \`actor_token_required\` | The server only accepts verified end users and the call asserted one. |
 | 403 | \`forbidden\` | The client lacks the scope, the end user lacks the permission, or the target is out of reach. Never says which. |
 | 403 | \`access_self_change\`, \`access_escalation\`, \`access_target_stronger\`, \`access_owner_protected\` | One of the four anti-escalation rules stopped a user who had the permission. |
 | 404 | \`organization_not_found\` and the \`*_not_found\` of each resource | An organization outside the client's list answers exactly like one that does not exist. |
@@ -310,8 +320,8 @@ Errors are \`application/problem+json\` (RFC 9457):
 | 422 | \`idempotency_key_reused\` | The key was used for a different request. |
 | 429 | \`rate_limited\` | Too many requests, per key or per source after failed authentications. \`Retry-After\` says when. |
 | 500 | \`internal_error\` | A bug or a failure of the server. Nothing was exposed; quote the \`requestId\`. |
-| 501 | \`actor_token_unsupported\`, \`invitations_not_configured\` | Not available in this deployment. |
-| 503 | \`overloaded\`, \`timeout\`, \`unavailable\`, \`read_only\` | The server cannot take this now. \`Retry-After\` when it knows. |
+| 501 | \`actor_token_unsupported\`, \`invitations_not_configured\` | Not available in this deployment (no identity provider configured, or no invitations). |
+| 503 | \`overloaded\`, \`timeout\`, \`unavailable\`, \`read_only\`, \`actor_token_unavailable\` | The server cannot take this now. \`Retry-After\` when it knows. |
 
 ## Scopes
 

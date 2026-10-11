@@ -9,7 +9,7 @@
 
 - **Transport.** HTTPS and JSON. Send `Content-Type: application/json` on anything with a body. Paths live under `/v1`. Plain HTTP is only for a server on the same machine.
 - **Authentication.** `Authorization: Bearer uniora_sk_…` on every call under `/v1`. A key belongs to an **API client**, which has **scopes** and a list of **organizations**; a call outside them is refused. Keys are created in Studio or with `uniora server keys create`: there is no route that creates or changes one.
-- **Application and delegated calls.** An application call is your backend asking as itself (decisions, reads, creating an organization). A **delegated** call changes things on behalf of an end user, who travels in `Uniora-Actor-Subject` (percent-encoded) and, if the server has no default label, `Uniora-Actor-Provider`. It needs the `actor:assert` scope too, and it succeeds only if that user may do it: a key can never do more than the user it speaks for. Never copy the actor from what the end user sent.
+- **Application and delegated calls.** An application call is your backend asking as itself (decisions, reads, creating an organization). A **delegated** call changes things on behalf of an end user, and says who in one of two ways. **Verified**: the user's own token from your identity provider in `Uniora-Actor-Token`; the server checks it (issuer, audience, pinned algorithm, signature against the keys you configured, expiry) and the identity comes out of the token, so a leaked API key can only speak for users who hold a token right now. It needs the `actor:verified` scope. **Asserted**: `Uniora-Actor-Subject` (percent-encoded) and, if the server has no default label, `Uniora-Actor-Provider`; it needs `actor:assert`, and a key that holds it can name anybody, so a server can refuse it (`requireVerifiedActors`). Either way it succeeds only if that user may do it: a key can never do more than the user it speaks for. Never copy the actor from what the end user sent.
 - **Identities.** `{ "subject": "…" }` is the user's id in your auth provider. `provider` is an opaque label you choose (it does not have to name your vendor); leave it out and the server's default label is used. The labels `uniora-api`, `uniora-studio`, `uniora-cli` and `uniora-platform` are reserved.
 - **Versions.** Resources that change carry a `version`. It is also the `ETag` (quoted). Send it back as `If-Match` to refuse an edit made from a stale copy (`412`).
 - **Idempotency.** Operations that create something accept `Idempotency-Key` (1–128 letters, digits and `._:-`). The same key with the same request answers the first result and does nothing again; the same key with a different request is refused. Keys are per API client.
@@ -36,8 +36,10 @@ Errors are `application/problem+json` (RFC 9457):
 | Status | `code` | Meaning |
 | --- | --- | --- |
 | 400 | `invalid_request`, `invalid_json`, `unexpected_body`, `invalid_cursor` | The request is not acceptable. Unknown fields are refused, not ignored. |
-| 400 | `actor_required`, `identity_provider_required`, `identity_provider_reserved` | A delegated call without a usable actor, or an identity with no provider label and no server default. |
+| 400 | `actor_required`, `actor_mismatch`, `identity_provider_required`, `identity_provider_reserved` | A delegated call without a usable actor, a question about someone other than the user in the token, or an identity with no provider label and no server default. |
 | 401 | `unauthenticated` | No key, or one that is not valid: unknown, wrong, revoked, expired and disabled all answer the same. |
+| 401 | `actor_token_invalid` | The end user's token is not acceptable: expired, wrong audience or issuer, bad signature, unknown key... all answer the same; the reason is in the server's log. |
+| 403 | `actor_token_required` | The server only accepts verified end users and the call asserted one. |
 | 403 | `forbidden` | The client lacks the scope, the end user lacks the permission, or the target is out of reach. Never says which. |
 | 403 | `access_self_change`, `access_escalation`, `access_target_stronger`, `access_owner_protected` | One of the four anti-escalation rules stopped a user who had the permission. |
 | 404 | `organization_not_found` and the `*_not_found` of each resource | An organization outside the client's list answers exactly like one that does not exist. |
@@ -47,8 +49,8 @@ Errors are `application/problem+json` (RFC 9457):
 | 422 | `idempotency_key_reused` | The key was used for a different request. |
 | 429 | `rate_limited` | Too many requests, per key or per source after failed authentications. `Retry-After` says when. |
 | 500 | `internal_error` | A bug or a failure of the server. Nothing was exposed; quote the `requestId`. |
-| 501 | `actor_token_unsupported`, `invitations_not_configured` | Not available in this deployment. |
-| 503 | `overloaded`, `timeout`, `unavailable`, `read_only` | The server cannot take this now. `Retry-After` when it knows. |
+| 501 | `actor_token_unsupported`, `invitations_not_configured` | Not available in this deployment (no identity provider configured, or no invitations). |
+| 503 | `overloaded`, `timeout`, `unavailable`, `read_only`, `actor_token_unavailable` | The server cannot take this now. `Retry-After` when it knows. |
 
 ## Scopes
 
@@ -63,6 +65,7 @@ Errors are `application/problem+json` (RFC 9457):
 | `policies:write` | Manage an organization's policies, on behalf of a user. **Sensitive.** |
 | `invitations:write` | Invite, resend and revoke invitations, on behalf of a user. **Sensitive.** |
 | `audit:read` | Read an organization's audit log. |
+| `actor:verified` | Act on behalf of an end user who presents a valid token from your identity provider. A leaked key alone cannot impersonate anyone. |
 | `actor:assert` | Act on behalf of an end user. A key with this scope can speak for ANY user of its organizations. **Sensitive.** |
 
 ## Operations
@@ -147,7 +150,7 @@ Ask whether a user may do something. Application calls: your backend asks about 
 
 **May this identity do this?** · operation `decisions.check`
 
-Answers with the role-based decision of the engine: whether the identity holds the permission in the organization (and, if asked, whether the organization has the feature enabled). Anything the engine cannot justify is `false`; an unknown organization, a non-member and a malformed key all answer `false` the same way. Policies are not applied here: use `authorize` for that.
+Answers with the role-based decision of the engine: whether the identity holds the permission in the organization (and, if asked, whether the organization has the feature enabled). Anything the engine cannot justify is `false`; an unknown organization, a non-member and a malformed key all answer `false` the same way. Policies are not applied here: use `authorize` for that. Send the end user's token in `Uniora-Actor-Token` and the server verifies it: the question must then be about that person.
 
 - **Scope:** `check`
 - **Kind:** application (your backend asks as itself)
@@ -164,6 +167,8 @@ Answers with the role-based decision of the engine: whether the identity holds t
 | `permission` | string (1–200 chars) | no | The permission the identity needs. |
 | `feature` | string (1–200 chars) | no | The feature the organization needs enabled. |
 | `teamId` | string (1–200 chars) | no | Ask inside this team: it can only narrow the answer. |
+
+Optionally send `Uniora-Actor-Token` (the user's own token): the server verifies it, the question must be about that user, and `authorize` takes the session facts from it.
 
 **Response `200`**
 
@@ -283,7 +288,7 @@ HTTP/1.1 400 Bad Request
 
 **Several questions about one identity in one round trip** · operation `decisions.checkBatch`
 
-Each check is evaluated independently, in the order given, and the answers come back in the same order. Use it to render a whole screen in one call. A malformed check answers `false` for that entry only.
+Each check is evaluated independently, in the order given, and the answers come back in the same order. Use it to render a whole screen in one call. A malformed check answers `false` for that entry only. Send the end user's token in `Uniora-Actor-Token` and the server verifies it: the question must then be about that person.
 
 - **Scope:** `check`
 - **Kind:** application (your backend asks as itself)
@@ -301,6 +306,8 @@ Each check is evaluated independently, in the order given, and the answers come 
 | `checks[].permission` | string (1–200 chars) | no | The permission the identity needs. |
 | `checks[].feature` | string (1–200 chars) | no | The feature the organization needs enabled. |
 | `checks[].teamId` | string (1–200 chars) | no | Ask inside this team: it can only narrow the answer. |
+
+Optionally send `Uniora-Actor-Token` (the user's own token): the server verifies it, the question must be about that user, and `authorize` takes the session facts from it.
 
 **Response `200`**
 
@@ -366,7 +373,7 @@ HTTP/1.1 200 OK
 
 **The full decision, with the organization's policies** · operation `decisions.authorize`
 
-Like `check`, and then the organization's policies are applied on top of the roles (they can only restrict). Pass what YOUR server knows: the resource, the signals about the request (`context`) and how the person authenticated (`session`). UNIORA cannot verify those, so never copy them from what the end user sent. The answer never throws: a failure while deciding is `allowed: false`. When the refusal comes only from policies that stronger or fresher authentication could satisfy, `stepUp` says so: send the person to your own sign-in flow and ask again.
+Like `check`, and then the organization's policies are applied on top of the roles (they can only restrict). Pass what YOUR server knows: the resource, the signals about the request (`context`) and how the person authenticated (`session`). UNIORA cannot verify those, so never copy them from what the end user sent. The answer never throws: a failure while deciding is `allowed: false`. When the refusal comes only from policies that stronger or fresher authentication could satisfy, `stepUp` says so: send the person to your own sign-in flow and ask again. With a verified `Uniora-Actor-Token` the server takes the `session` from the token (`auth_time`, `amr`, `acr`) and refuses a `session` in the body: facts the user's own provider signed, instead of what your server says.
 
 - **Scope:** `check`
 - **Kind:** application (your backend asks as itself)
@@ -396,6 +403,8 @@ Like `check`, and then the organization's policies are applied on top of the rol
 | `session.assuranceLevel` | integer (0–100) | no |  |
 | `session.methods` | array (≤ 16) | no |  |
 | `requireApplicablePolicy` | boolean | no | A protected operation: with no applicable policy the answer is deny. |
+
+Optionally send `Uniora-Actor-Token` (the user's own token): the server verifies it, the question must be about that user, and `authorize` takes the session facts from it.
 
 **Response `200`**
 
@@ -503,6 +512,52 @@ HTTP/1.1 200 OK
 }
 ```
 
+**Example: With the user's token the session comes from the token: recently signed in with a second factor**
+
+```bash
+curl -X POST "https://uniora.example.com/v1/authorize" \
+  -H "Authorization: Bearer $UNIORA_API_KEY" \
+  -H 'Uniora-Actor-Token: <the user'\''s token from your identity provider>' \
+  -H "Content-Type: application/json" \
+  -d '{
+    "identity": {
+      "subject": "ana"
+    },
+    "organizationId": "org_acme",
+    "permission": "reports.read",
+    "resource": {
+      "type": "report",
+      "id": "rep_42",
+      "organizationId": "org_acme"
+    }
+  }'
+```
+
+```ts
+const result = await uniora.decisions.authorize(
+  {
+    identity: { subject: "ana" },
+    organizationId: "org_acme",
+    permission: "reports.read",
+    resource: { type: "report", id: "rep_42", organizationId: "org_acme" },
+  },
+  { actor: { token: userToken } },
+);
+```
+
+```http
+HTTP/1.1 200 OK
+
+{
+  "allowed": false,
+  "decision": "deny",
+  "reason": "policy_denied",
+  "via": "membership",
+  "policyRevision": 4,
+  "evaluatedAt": "2026-03-02T09:02:00.000Z"
+}
+```
+
 **Example: From now on the policy decides**
 
 ```bash
@@ -537,7 +592,7 @@ HTTP/1.1 200 OK
   "reason": "policy_denied",
   "via": "membership",
   "policyRevision": 4,
-  "evaluatedAt": "2026-03-02T09:02:00.000Z"
+  "evaluatedAt": "2026-03-02T09:03:00.000Z"
 }
 ```
 
@@ -545,7 +600,7 @@ HTTP/1.1 200 OK
 
 **A bounded set of decisions for a UI, in one call** · operation `decisions.snapshot`
 
-Resolves exactly the permissions and features listed, for one identity in one organization. It is bounded on purpose: this is not "everything this person can do" (which is not even defined for an Owner). A key you did not list is absent, and a consumer must treat an absent key as denied. Safe to hand to client-side UI after your own server authorizes the request.
+Resolves exactly the permissions and features listed, for one identity in one organization. It is bounded on purpose: this is not "everything this person can do" (which is not even defined for an Owner). A key you did not list is absent, and a consumer must treat an absent key as denied. Safe to hand to client-side UI after your own server authorizes the request. Send the end user's token in `Uniora-Actor-Token` and the server verifies it: the question must then be about that person.
 
 - **Scope:** `check`
 - **Kind:** application (your backend asks as itself)
@@ -561,6 +616,8 @@ Resolves exactly the permissions and features listed, for one identity in one or
 | `organizationId` | string (1–200 chars) | yes | The organization the snapshot is about. |
 | `permissions` | array (≤ 100) | no |  |
 | `features` | array (≤ 100) | no |  |
+
+Optionally send `Uniora-Actor-Token` (the user's own token): the server verifies it, the question must be about that user, and `authorize` takes the session facts from it.
 
 **Response `200`**
 
@@ -685,7 +742,7 @@ HTTP/1.1 200 OK
       "slug": "acme",
       "name": "Acme",
       "status": "active",
-      "createdAt": "2026-03-02T09:03:00.000Z",
+      "createdAt": "2026-03-02T09:04:00.000Z",
       "version": 1
     },
     {
@@ -693,7 +750,7 @@ HTTP/1.1 200 OK
       "slug": "globex",
       "name": "Globex",
       "status": "active",
-      "createdAt": "2026-03-02T09:04:00.000Z",
+      "createdAt": "2026-03-02T09:05:00.000Z",
       "version": 1
     }
   ],
@@ -773,7 +830,7 @@ HTTP/1.1 200 OK
   "slug": "acme",
   "name": "Acme",
   "status": "active",
-  "createdAt": "2026-03-02T09:05:00.000Z",
+  "createdAt": "2026-03-02T09:06:00.000Z",
   "version": 1
 }
 ```
@@ -937,7 +994,7 @@ HTTP/1.1 201 Created
     "slug": "initech",
     "name": "Initech",
     "status": "active",
-    "createdAt": "2026-03-02T09:06:00.000Z",
+    "createdAt": "2026-03-02T09:07:00.000Z",
     "version": 1
   },
   "ownerRole": {
@@ -960,8 +1017,8 @@ HTTP/1.1 201 Created
       "role_EXAMPLE0002_____________"
     ],
     "status": "active",
-    "createdAt": "2026-03-02T09:07:00.000Z",
-    "updatedAt": "2026-03-02T09:08:00.000Z",
+    "createdAt": "2026-03-02T09:08:00.000Z",
+    "updatedAt": "2026-03-02T09:09:00.000Z",
     "version": 1
   }
 }
@@ -998,7 +1055,7 @@ HTTP/1.1 201 Created
     "slug": "initech",
     "name": "Initech",
     "status": "active",
-    "createdAt": "2026-03-02T09:09:00.000Z",
+    "createdAt": "2026-03-02T09:10:00.000Z",
     "version": 1
   },
   "ownerRole": {
@@ -1021,8 +1078,8 @@ HTTP/1.1 201 Created
       "role_EXAMPLE0002_____________"
     ],
     "status": "active",
-    "createdAt": "2026-03-02T09:10:00.000Z",
-    "updatedAt": "2026-03-02T09:11:00.000Z",
+    "createdAt": "2026-03-02T09:11:00.000Z",
+    "updatedAt": "2026-03-02T09:12:00.000Z",
     "version": 1
   },
   "replayed": true
@@ -1144,8 +1201,8 @@ HTTP/1.1 200 OK
         "role_viewer"
       ],
       "status": "active",
-      "createdAt": "2026-03-02T09:12:00.000Z",
-      "updatedAt": "2026-03-02T09:13:00.000Z",
+      "createdAt": "2026-03-02T09:13:00.000Z",
+      "updatedAt": "2026-03-02T09:14:00.000Z",
       "version": 1
     },
     {
@@ -1157,8 +1214,8 @@ HTTP/1.1 200 OK
       },
       "roleIds": [],
       "status": "active",
-      "createdAt": "2026-03-02T09:14:00.000Z",
-      "updatedAt": "2026-03-02T09:15:00.000Z",
+      "createdAt": "2026-03-02T09:15:00.000Z",
+      "updatedAt": "2026-03-02T09:16:00.000Z",
       "version": 1
     },
     {
@@ -1172,8 +1229,8 @@ HTTP/1.1 200 OK
         "role_manager"
       ],
       "status": "active",
-      "createdAt": "2026-03-02T09:16:00.000Z",
-      "updatedAt": "2026-03-02T09:17:00.000Z",
+      "createdAt": "2026-03-02T09:17:00.000Z",
+      "updatedAt": "2026-03-02T09:18:00.000Z",
       "version": 1
     },
     {
@@ -1187,8 +1244,8 @@ HTTP/1.1 200 OK
         "role_owner"
       ],
       "status": "active",
-      "createdAt": "2026-03-02T09:18:00.000Z",
-      "updatedAt": "2026-03-02T09:19:00.000Z",
+      "createdAt": "2026-03-02T09:19:00.000Z",
+      "updatedAt": "2026-03-02T09:20:00.000Z",
       "version": 1
     }
   ],
@@ -1265,8 +1322,8 @@ HTTP/1.1 200 OK
     "role_viewer"
   ],
   "status": "active",
-  "createdAt": "2026-03-02T09:20:00.000Z",
-  "updatedAt": "2026-03-02T09:21:00.000Z",
+  "createdAt": "2026-03-02T09:21:00.000Z",
+  "updatedAt": "2026-03-02T09:22:00.000Z",
   "version": 1
 }
 ```
@@ -1277,7 +1334,7 @@ HTTP/1.1 200 OK
 
 The actor can only give a role if they hold every permission in it, and never to themselves. Idempotent: giving a role the member already has changes nothing. Send `If-Match` with the member's version to refuse a stale edit. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it (the four anti-escalation rules apply to them).
 
-- **Scope:** `members:write` and `actor:assert`
+- **Scope:** `members:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`If-Match`:** send the version you last saw; a stale one is a `412` and nothing changes
@@ -1291,7 +1348,7 @@ The actor can only give a role if they hold every permission in it, and never to
 | `membershipId` | string (1–200 chars) | yes | (in the path) The membership (not the user id): `members.list` shows both. |
 | `roleId` | string (1–200 chars) | yes | (in the path) The role. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -1365,8 +1422,8 @@ ETag: "2"
     "role_viewer"
   ],
   "status": "active",
-  "createdAt": "2026-03-02T09:22:00.000Z",
-  "updatedAt": "2026-03-02T09:23:00.000Z",
+  "createdAt": "2026-03-02T09:23:00.000Z",
+  "updatedAt": "2026-03-02T09:24:00.000Z",
   "version": 2
 }
 ```
@@ -1439,7 +1496,7 @@ HTTP/1.1 403 Forbidden
 
 The member keeps their other roles. The Owner role does not move through here. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it (the four anti-escalation rules apply to them).
 
-- **Scope:** `members:write` and `actor:assert`
+- **Scope:** `members:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`If-Match`:** send the version you last saw; a stale one is a `412` and nothing changes
@@ -1453,7 +1510,7 @@ The member keeps their other roles. The Owner role does not move through here. A
 | `membershipId` | string (1–200 chars) | yes | (in the path) The membership (not the user id): `members.list` shows both. |
 | `roleId` | string (1–200 chars) | yes | (in the path) The role. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -1526,8 +1583,8 @@ ETag: "3"
   },
   "roleIds": [],
   "status": "active",
-  "createdAt": "2026-03-02T09:24:00.000Z",
-  "updatedAt": "2026-03-02T09:25:00.000Z",
+  "createdAt": "2026-03-02T09:25:00.000Z",
+  "updatedAt": "2026-03-02T09:26:00.000Z",
   "version": 3
 }
 ```
@@ -1538,7 +1595,7 @@ ETag: "3"
 
 A blocked member keeps their roles and history but is denied every check until unblocked. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it (the four anti-escalation rules apply to them).
 
-- **Scope:** `members:write` and `actor:assert`
+- **Scope:** `members:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`If-Match`:** send the version you last saw; a stale one is a `412` and nothing changes
@@ -1552,7 +1609,7 @@ A blocked member keeps their roles and history but is denied every check until u
 | `membershipId` | string (1–200 chars) | yes | (in the path) The membership (not the user id): `members.list` shows both. |
 | `reason` | string (1–500 chars) | no | Why. Kept in the audit log. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -1591,6 +1648,51 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 - `412` `membership_version_conflict`
 - `501` `actor_token_unsupported`
 
+**Example: The same, but proving who speaks with the user's own token**
+
+```bash
+curl -X POST "https://uniora.example.com/v1/organizations/org_acme/members/mem_bob/block" \
+  -H "Authorization: Bearer $UNIORA_API_KEY" \
+  -H 'Uniora-Actor-Token: <the user'\''s token from your identity provider>' \
+  -H "Content-Type: application/json" \
+  -d '{
+    "reason": "left the company"
+  }'
+```
+
+```ts
+const result = await uniora.members.block(
+  {
+    organizationId: "org_acme",
+    membershipId: "mem_bob",
+    reason: "left the company",
+  },
+  { actor: { token: userToken } },
+);
+```
+
+```http
+HTTP/1.1 200 OK
+ETag: "4"
+
+{
+  "id": "mem_bob",
+  "organizationId": "org_acme",
+  "identity": {
+    "provider": "main",
+    "subject": "bob"
+  },
+  "roleIds": [],
+  "status": "blocked",
+  "createdAt": "2026-03-02T09:27:00.000Z",
+  "updatedAt": "2026-03-02T09:28:00.000Z",
+  "blocked": {
+    "at": "2026-03-02T09:29:00.000Z"
+  },
+  "version": 4
+}
+```
+
 **Example: Block a member**
 
 ```bash
@@ -1616,7 +1718,7 @@ const result = await uniora.members.block(
 
 ```http
 HTTP/1.1 200 OK
-ETag: "4"
+ETag: "6"
 
 {
   "id": "mem_bob",
@@ -1627,12 +1729,12 @@ ETag: "4"
   },
   "roleIds": [],
   "status": "blocked",
-  "createdAt": "2026-03-02T09:26:00.000Z",
-  "updatedAt": "2026-03-02T09:27:00.000Z",
+  "createdAt": "2026-03-02T09:30:00.000Z",
+  "updatedAt": "2026-03-02T09:31:00.000Z",
   "blocked": {
-    "at": "2026-03-02T09:28:00.000Z"
+    "at": "2026-03-02T09:32:00.000Z"
   },
-  "version": 4
+  "version": 6
 }
 ```
 
@@ -1642,7 +1744,7 @@ ETag: "4"
 
 Like a block that ends by itself at `until`, with no job to run. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it (the four anti-escalation rules apply to them).
 
-- **Scope:** `members:write` and `actor:assert`
+- **Scope:** `members:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`If-Match`:** send the version you last saw; a stale one is a `412` and nothing changes
@@ -1657,7 +1759,7 @@ Like a block that ends by itself at `until`, with no job to run. A delegated cal
 | `until` | string (date-time) | yes | When the suspension ends. Must be in the future. |
 | `reason` | string (1–500 chars) | no | Why. Kept in the audit log. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -1724,7 +1826,7 @@ const result = await uniora.members.suspend(
 
 ```http
 HTTP/1.1 200 OK
-ETag: "6"
+ETag: "8"
 
 {
   "id": "mem_bob",
@@ -1735,13 +1837,13 @@ ETag: "6"
   },
   "roleIds": [],
   "status": "suspended",
-  "createdAt": "2026-03-02T09:29:00.000Z",
-  "updatedAt": "2026-03-02T09:30:00.000Z",
+  "createdAt": "2026-03-02T09:33:00.000Z",
+  "updatedAt": "2026-03-02T09:34:00.000Z",
   "blocked": {
-    "at": "2026-03-02T09:31:00.000Z",
+    "at": "2026-03-02T09:35:00.000Z",
     "until": "2099-01-01T00:00:00.000Z"
   },
-  "version": 6
+  "version": 8
 }
 ```
 
@@ -1751,7 +1853,7 @@ ETag: "6"
 
 The member is evaluated normally again. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it (the four anti-escalation rules apply to them).
 
-- **Scope:** `members:write` and `actor:assert`
+- **Scope:** `members:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`If-Match`:** send the version you last saw; a stale one is a `412` and nothing changes
@@ -1764,7 +1866,7 @@ The member is evaluated normally again. A delegated call: it speaks for the end 
 | `organizationId` | string (1–200 chars) | yes | (in the path) The organization. |
 | `membershipId` | string (1–200 chars) | yes | (in the path) The membership (not the user id): `members.list` shows both. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -1803,18 +1905,45 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 - `412` `membership_version_conflict`
 - `501` `actor_token_unsupported`
 
-**Example: Lift the block**
+**Example: Lift it (token of someone without the permission is refused)**
 
 ```bash
 curl -X POST "https://uniora.example.com/v1/organizations/org_acme/members/mem_bob/unblock" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
-  -H 'Uniora-Actor-Subject: mgr'
+  -H 'Uniora-Actor-Token: <the user'\''s token from your identity provider>'
+```
+
+```ts
+await uniora.members.unblock(
+  { organizationId: "org_acme", membershipId: "mem_bob" },
+  { actor: { token: userToken } },
+);
+```
+
+```http
+HTTP/1.1 403 Forbidden
+
+{
+  "type": "urn:uniora:error:forbidden",
+  "title": "Forbidden",
+  "status": 403,
+  "code": "forbidden",
+  "requestId": "req_xxxxxxxxxxxxxxx7"
+}
+```
+
+**Example: Lift it**
+
+```bash
+curl -X POST "https://uniora.example.com/v1/organizations/org_acme/members/mem_bob/unblock" \
+  -H "Authorization: Bearer $UNIORA_API_KEY" \
+  -H 'Uniora-Actor-Token: <the user'\''s token from your identity provider>'
 ```
 
 ```ts
 const result = await uniora.members.unblock(
   { organizationId: "org_acme", membershipId: "mem_bob" },
-  { actor: { subject: "mgr" } },
+  { actor: { token: userToken } },
 );
 ```
 
@@ -1831,13 +1960,13 @@ ETag: "5"
   },
   "roleIds": [],
   "status": "active",
-  "createdAt": "2026-03-02T09:32:00.000Z",
-  "updatedAt": "2026-03-02T09:33:00.000Z",
+  "createdAt": "2026-03-02T09:36:00.000Z",
+  "updatedAt": "2026-03-02T09:37:00.000Z",
   "version": 5
 }
 ```
 
-**Example: Lift the suspension early**
+**Example: Lift the block**
 
 ```bash
 curl -X POST "https://uniora.example.com/v1/organizations/org_acme/members/mem_bob/unblock" \
@@ -1865,9 +1994,43 @@ ETag: "7"
   },
   "roleIds": [],
   "status": "active",
-  "createdAt": "2026-03-02T09:34:00.000Z",
-  "updatedAt": "2026-03-02T09:35:00.000Z",
+  "createdAt": "2026-03-02T09:38:00.000Z",
+  "updatedAt": "2026-03-02T09:39:00.000Z",
   "version": 7
+}
+```
+
+**Example: Lift the suspension early**
+
+```bash
+curl -X POST "https://uniora.example.com/v1/organizations/org_acme/members/mem_bob/unblock" \
+  -H "Authorization: Bearer $UNIORA_API_KEY" \
+  -H 'Uniora-Actor-Subject: mgr'
+```
+
+```ts
+const result = await uniora.members.unblock(
+  { organizationId: "org_acme", membershipId: "mem_bob" },
+  { actor: { subject: "mgr" } },
+);
+```
+
+```http
+HTTP/1.1 200 OK
+ETag: "9"
+
+{
+  "id": "mem_bob",
+  "organizationId": "org_acme",
+  "identity": {
+    "provider": "main",
+    "subject": "bob"
+  },
+  "roleIds": [],
+  "status": "active",
+  "createdAt": "2026-03-02T09:40:00.000Z",
+  "updatedAt": "2026-03-02T09:41:00.000Z",
+  "version": 9
 }
 ```
 
@@ -1877,7 +2040,7 @@ ETag: "7"
 
 Their team memberships go with it. The last Owner cannot be removed. Leaving by one's own choice is not a delegated call. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it (the four anti-escalation rules apply to them).
 
-- **Scope:** `members:write` and `actor:assert`
+- **Scope:** `members:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 
@@ -1888,7 +2051,7 @@ Their team memberships go with it. The last Owner cannot be removed. Leaving by 
 | `organizationId` | string (1–200 chars) | yes | (in the path) The organization. |
 | `membershipId` | string (1–200 chars) | yes | (in the path) The membership (not the user id): `members.list` shows both. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -2097,7 +2260,7 @@ HTTP/1.1 200 OK
 
 The actor can only put into the role permissions they hold themselves. The key is derived from the name unless given. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it (the four anti-escalation rules apply to them).
 
-- **Scope:** `roles:write` and `actor:assert`
+- **Scope:** `roles:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`ETag`:** the answer carries the version of the resource
@@ -2107,13 +2270,12 @@ The actor can only put into the role permissions they hold themselves. The key i
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `organizationId` | string (1–200 chars) | yes | (in the path) The organization. |
-| `id` | string (1–200 chars) | no | Your own id for the role; generated when omitted. |
-| `name` | string (1–255 chars) | yes | Shown to people. |
-| `key` | string (1–100 chars) | no | Stable and URL-safe, unique in the organization. Cannot change later. |
+| `name` | string (1–100 chars) | yes | Shown to people. |
+| `key` | string (1–63 chars) | no | Stable and URL-safe, unique in the organization. Cannot change later. |
 | `description` | string (1–500 chars) | no |  |
 | `permissionKeys` | array (≤ 200) | no |  |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `201`**
 
@@ -2152,7 +2314,6 @@ curl -X POST "https://uniora.example.com/v1/organizations/org_acme/roles" \
   -H 'Uniora-Actor-Subject: mgr' \
   -H "Content-Type: application/json" \
   -d '{
-    "id": "role_support",
     "name": "Support agent",
     "permissionKeys": [
       "reports.read"
@@ -2164,7 +2325,6 @@ curl -X POST "https://uniora.example.com/v1/organizations/org_acme/roles" \
 const result = await uniora.roles.create(
   {
     organizationId: "org_acme",
-    id: "role_support",
     name: "Support agent",
     permissionKeys: ["reports.read"],
   },
@@ -2175,10 +2335,10 @@ const result = await uniora.roles.create(
 ```http
 HTTP/1.1 201 Created
 ETag: "1"
-Location: /v1/organizations/org_acme/roles/role_support/permissions
+Location: /v1/organizations/org_acme/roles/00000000-0000-4000-8000-000000000002/permissions
 
 {
-  "id": "role_support",
+  "id": "00000000-0000-4000-8000-000000000002",
   "organizationId": "org_acme",
   "key": "support-agent",
   "name": "Support agent",
@@ -2194,7 +2354,7 @@ Location: /v1/organizations/org_acme/roles/role_support/permissions
 
 Send `description: null` to clear it. The key never changes. Send `If-Match` with the role's version to refuse a stale edit. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it (the four anti-escalation rules apply to them).
 
-- **Scope:** `roles:write` and `actor:assert`
+- **Scope:** `roles:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`If-Match`:** send the version you last saw; a stale one is a `412` and nothing changes
@@ -2206,10 +2366,10 @@ Send `description: null` to clear it. The key never changes. Send `If-Match` wit
 | --- | --- | --- | --- |
 | `organizationId` | string (1–200 chars) | yes | (in the path) The organization. |
 | `roleId` | string (1–200 chars) | yes | (in the path) The role. |
-| `name` | string (1–255 chars) | no |  |
+| `name` | string (1–100 chars) | no |  |
 | `description` | string (1–500 chars) or `null` | no |  |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -2242,7 +2402,7 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Rename it**
 
 ```bash
-curl -X PATCH "https://uniora.example.com/v1/organizations/org_acme/roles/role_support" \
+curl -X PATCH "https://uniora.example.com/v1/organizations/org_acme/roles/00000000-0000-4000-8000-000000000002" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr' \
   -H "Content-Type: application/json" \
@@ -2256,7 +2416,7 @@ curl -X PATCH "https://uniora.example.com/v1/organizations/org_acme/roles/role_s
 const result = await uniora.roles.update(
   {
     organizationId: "org_acme",
-    roleId: "role_support",
+    roleId: "00000000-0000-4000-8000-000000000002",
     name: "Support",
     description: "Answers tickets",
   },
@@ -2269,7 +2429,7 @@ HTTP/1.1 200 OK
 ETag: "2"
 
 {
-  "id": "role_support",
+  "id": "00000000-0000-4000-8000-000000000002",
   "organizationId": "org_acme",
   "key": "support-agent",
   "name": "Support",
@@ -2286,7 +2446,7 @@ ETag: "2"
 
 Replaces the role's permissions. The actor must hold the role's current permissions and every new one. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it (the four anti-escalation rules apply to them).
 
-- **Scope:** `roles:write` and `actor:assert`
+- **Scope:** `roles:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`If-Match`:** send the version you last saw; a stale one is a `412` and nothing changes
@@ -2299,7 +2459,7 @@ Replaces the role's permissions. The actor must hold the role's current permissi
 | `roleId` | string (1–200 chars) | yes | (in the path) The role. |
 | `permissionKeys` | array (≤ 200) | yes |  |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -2327,7 +2487,7 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Make it hold exactly these permissions**
 
 ```bash
-curl -X PUT "https://uniora.example.com/v1/organizations/org_acme/roles/role_support/permissions" \
+curl -X PUT "https://uniora.example.com/v1/organizations/org_acme/roles/00000000-0000-4000-8000-000000000002/permissions" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr' \
   -H "Content-Type: application/json" \
@@ -2343,7 +2503,7 @@ curl -X PUT "https://uniora.example.com/v1/organizations/org_acme/roles/role_sup
 const result = await uniora.roles.setPermissions(
   {
     organizationId: "org_acme",
-    roleId: "role_support",
+    roleId: "00000000-0000-4000-8000-000000000002",
     permissionKeys: ["reports.read", "members.block"],
   },
   { actor: { subject: "mgr" } },
@@ -2367,7 +2527,7 @@ HTTP/1.1 200 OK
 
 Idempotent. The actor must hold the permission themselves. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it (the four anti-escalation rules apply to them).
 
-- **Scope:** `roles:write` and `actor:assert`
+- **Scope:** `roles:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`ETag`:** the answer carries the version of the resource
@@ -2380,7 +2540,7 @@ Idempotent. The actor must hold the permission themselves. A delegated call: it 
 | `roleId` | string (1–200 chars) | yes | (in the path) The role. |
 | `permissionKey` | string (1–200 chars) | yes | (in the path) The permission key. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -2414,7 +2574,7 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Add one permission**
 
 ```bash
-curl -X PUT "https://uniora.example.com/v1/organizations/org_acme/roles/role_support/permissions/members.remove" \
+curl -X PUT "https://uniora.example.com/v1/organizations/org_acme/roles/00000000-0000-4000-8000-000000000002/permissions/members.remove" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr'
 ```
@@ -2423,7 +2583,7 @@ curl -X PUT "https://uniora.example.com/v1/organizations/org_acme/roles/role_sup
 const result = await uniora.roles.grantPermission(
   {
     organizationId: "org_acme",
-    roleId: "role_support",
+    roleId: "00000000-0000-4000-8000-000000000002",
     permissionKey: "members.remove",
   },
   { actor: { subject: "mgr" } },
@@ -2435,7 +2595,7 @@ HTTP/1.1 200 OK
 ETag: "4"
 
 {
-  "id": "role_support",
+  "id": "00000000-0000-4000-8000-000000000002",
   "organizationId": "org_acme",
   "key": "support-agent",
   "name": "Support",
@@ -2449,7 +2609,7 @@ ETag: "4"
 **Example: You cannot give what you do not hold**
 
 ```bash
-curl -X PUT "https://uniora.example.com/v1/organizations/org_acme/roles/role_support/permissions/vehicles.delete" \
+curl -X PUT "https://uniora.example.com/v1/organizations/org_acme/roles/00000000-0000-4000-8000-000000000002/permissions/vehicles.delete" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr'
 ```
@@ -2458,7 +2618,7 @@ curl -X PUT "https://uniora.example.com/v1/organizations/org_acme/roles/role_sup
 await uniora.roles.grantPermission(
   {
     organizationId: "org_acme",
-    roleId: "role_support",
+    roleId: "00000000-0000-4000-8000-000000000002",
     permissionKey: "vehicles.delete",
   },
   { actor: { subject: "mgr" } },
@@ -2473,7 +2633,7 @@ HTTP/1.1 403 Forbidden
   "title": "Forbidden",
   "status": 403,
   "code": "access_escalation",
-  "requestId": "req_xxxxxxxxxxxxxxx7"
+  "requestId": "req_xxxxxxxxxxxxxxx8"
 }
 ```
 
@@ -2483,7 +2643,7 @@ HTTP/1.1 403 Forbidden
 
 Idempotent. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it (the four anti-escalation rules apply to them).
 
-- **Scope:** `roles:write` and `actor:assert`
+- **Scope:** `roles:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`ETag`:** the answer carries the version of the resource
@@ -2496,7 +2656,7 @@ Idempotent. A delegated call: it speaks for the end user in the `Uniora-Actor-Su
 | `roleId` | string (1–200 chars) | yes | (in the path) The role. |
 | `permissionKey` | string (1–200 chars) | yes | (in the path) The permission key. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -2529,7 +2689,7 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Take one away**
 
 ```bash
-curl -X DELETE "https://uniora.example.com/v1/organizations/org_acme/roles/role_support/permissions/members.remove" \
+curl -X DELETE "https://uniora.example.com/v1/organizations/org_acme/roles/00000000-0000-4000-8000-000000000002/permissions/members.remove" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr'
 ```
@@ -2538,7 +2698,7 @@ curl -X DELETE "https://uniora.example.com/v1/organizations/org_acme/roles/role_
 const result = await uniora.roles.revokePermission(
   {
     organizationId: "org_acme",
-    roleId: "role_support",
+    roleId: "00000000-0000-4000-8000-000000000002",
     permissionKey: "members.remove",
   },
   { actor: { subject: "mgr" } },
@@ -2550,7 +2710,7 @@ HTTP/1.1 200 OK
 ETag: "5"
 
 {
-  "id": "role_support",
+  "id": "00000000-0000-4000-8000-000000000002",
   "organizationId": "org_acme",
   "key": "support-agent",
   "name": "Support",
@@ -2567,7 +2727,7 @@ ETag: "5"
 
 The copy is never a system role and the Owner role cannot be cloned. The actor must hold every permission the role holds. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it (the four anti-escalation rules apply to them).
 
-- **Scope:** `roles:write` and `actor:assert`
+- **Scope:** `roles:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`ETag`:** the answer carries the version of the resource
@@ -2578,12 +2738,11 @@ The copy is never a system role and the Owner role cannot be cloned. The actor m
 | --- | --- | --- | --- |
 | `organizationId` | string (1–200 chars) | yes | (in the path) The organization. |
 | `roleId` | string (1–200 chars) | yes | (in the path) The role. |
-| `id` | string (1–200 chars) | no | Your own id for the copy; generated when omitted. |
-| `name` | string (1–255 chars) | yes |  |
-| `key` | string (1–100 chars) | no |  |
+| `name` | string (1–100 chars) | yes |  |
+| `key` | string (1–63 chars) | no |  |
 | `description` | string (1–500 chars) | no |  |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `201`**
 
@@ -2619,12 +2778,11 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Copy it**
 
 ```bash
-curl -X POST "https://uniora.example.com/v1/organizations/org_acme/roles/role_support/clone" \
+curl -X POST "https://uniora.example.com/v1/organizations/org_acme/roles/00000000-0000-4000-8000-000000000002/clone" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr' \
   -H "Content-Type: application/json" \
   -d '{
-    "id": "role_support_eu",
     "name": "Support EU"
   }'
 ```
@@ -2633,8 +2791,7 @@ curl -X POST "https://uniora.example.com/v1/organizations/org_acme/roles/role_su
 const result = await uniora.roles.clone(
   {
     organizationId: "org_acme",
-    roleId: "role_support",
-    id: "role_support_eu",
+    roleId: "00000000-0000-4000-8000-000000000002",
     name: "Support EU",
   },
   { actor: { subject: "mgr" } },
@@ -2646,7 +2803,7 @@ HTTP/1.1 201 Created
 ETag: "1"
 
 {
-  "id": "role_support_eu",
+  "id": "00000000-0000-4000-8000-000000000003",
   "organizationId": "org_acme",
   "key": "support-eu",
   "name": "Support EU",
@@ -2663,7 +2820,7 @@ ETag: "1"
 
 `members` says what happens to the people who still hold it: `detach` (default) takes it from them, `reject` refuses while anyone holds it, and `reassignTo` gives them another role of the same organization. The Owner role and system roles cannot be deleted. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it (the four anti-escalation rules apply to them).
 
-- **Scope:** `roles:write` and `actor:assert`
+- **Scope:** `roles:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 
@@ -2676,7 +2833,7 @@ ETag: "1"
 | `members` | `detach` \| `reject` | no | (query) What to do with the holders. |
 | `reassignTo` | string (1–200 chars) | no | (query) Give the holders this role instead. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -2705,14 +2862,17 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Delete the copy**
 
 ```bash
-curl -X DELETE "https://uniora.example.com/v1/organizations/org_acme/roles/role_support_eu" \
+curl -X DELETE "https://uniora.example.com/v1/organizations/org_acme/roles/00000000-0000-4000-8000-000000000003" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr'
 ```
 
 ```ts
 const result = await uniora.roles.delete(
-  { organizationId: "org_acme", roleId: "role_support_eu" },
+  {
+    organizationId: "org_acme",
+    roleId: "00000000-0000-4000-8000-000000000003",
+  },
   { actor: { subject: "mgr" } },
 );
 ```
@@ -2910,15 +3070,21 @@ Ordered by id. `q` matches the name or the slug; `parentId` lists the direct sub
 - `400` `invalid_cursor`
 - `404` `organization_not_found`
 
-**Example: List the teams**
+**Example: List the sub-teams of a team**
 
 ```bash
-curl -X GET "https://uniora.example.com/v1/organizations/org_acme/teams?limit=10" \
+curl -X GET "https://uniora.example.com/v1/organizations/org_acme/teams?limit=10&parentId=00000000-0000-4000-8000-000000000004" \
   -H "Authorization: Bearer $UNIORA_API_KEY"
 ```
 
 ```ts
-const result = await uniora.teams.list({ organizationId: "org_acme", limit: 10 });
+const result = await uniora.teams.list(
+  {
+    organizationId: "org_acme",
+    parentId: "00000000-0000-4000-8000-000000000004",
+    limit: 10,
+  },
+);
 ```
 
 ```http
@@ -2927,42 +3093,16 @@ HTTP/1.1 200 OK
 {
   "items": [
     {
-      "id": "team_bcn",
-      "organizationId": "org_acme",
-      "slug": "barcelona",
-      "name": "Barcelona",
-      "status": "active",
-      "metadata": {
-        "region": "ES"
-      },
-      "settings": {},
-      "createdAt": "2026-03-02T09:36:00.000Z",
-      "updatedAt": "2026-03-02T09:37:00.000Z",
-      "version": 1
-    },
-    {
-      "id": "team_mad",
-      "organizationId": "org_acme",
-      "slug": "madrid",
-      "name": "Madrid",
-      "status": "active",
-      "metadata": {},
-      "settings": {},
-      "createdAt": "2026-03-02T09:38:00.000Z",
-      "updatedAt": "2026-03-02T09:39:00.000Z",
-      "version": 1
-    },
-    {
-      "id": "team_sants",
+      "id": "00000000-0000-4000-8000-000000000005",
       "organizationId": "org_acme",
       "slug": "sants",
       "name": "Sants",
       "status": "active",
-      "parentId": "team_bcn",
+      "parentId": "00000000-0000-4000-8000-000000000004",
       "metadata": {},
       "settings": {},
-      "createdAt": "2026-03-02T09:40:00.000Z",
-      "updatedAt": "2026-03-02T09:41:00.000Z",
+      "createdAt": "2026-03-02T09:42:00.000Z",
+      "updatedAt": "2026-03-02T09:43:00.000Z",
       "version": 1
     }
   ],
@@ -3019,12 +3159,17 @@ A team of another organization answers exactly like one that does not exist.
 **Example: Read a team**
 
 ```bash
-curl -X GET "https://uniora.example.com/v1/organizations/org_acme/teams/team_bcn" \
+curl -X GET "https://uniora.example.com/v1/organizations/org_acme/teams/00000000-0000-4000-8000-000000000004" \
   -H "Authorization: Bearer $UNIORA_API_KEY"
 ```
 
 ```ts
-const result = await uniora.teams.get({ organizationId: "org_acme", teamId: "team_bcn" });
+const result = await uniora.teams.get(
+  {
+    organizationId: "org_acme",
+    teamId: "00000000-0000-4000-8000-000000000004",
+  },
+);
 ```
 
 ```http
@@ -3032,7 +3177,7 @@ HTTP/1.1 200 OK
 ETag: "1"
 
 {
-  "id": "team_bcn",
+  "id": "00000000-0000-4000-8000-000000000004",
   "organizationId": "org_acme",
   "slug": "barcelona",
   "name": "Barcelona",
@@ -3041,8 +3186,8 @@ ETag: "1"
     "region": "ES"
   },
   "settings": {},
-  "createdAt": "2026-03-02T09:42:00.000Z",
-  "updatedAt": "2026-03-02T09:43:00.000Z",
+  "createdAt": "2026-03-02T09:44:00.000Z",
+  "updatedAt": "2026-03-02T09:45:00.000Z",
   "version": 1
 }
 ```
@@ -3101,16 +3246,20 @@ Team memberships, ordered by id. Filter by `status` or `responsibility`.
 - `404` `organization_not_found`
 - `404` `team_not_found`
 
-**Example: List the members of a team**
+**Example: List the active members of a team (the invited one is still pending)**
 
 ```bash
-curl -X GET "https://uniora.example.com/v1/organizations/org_acme/teams/team_bcn/members?status=active" \
+curl -X GET "https://uniora.example.com/v1/organizations/org_acme/teams/00000000-0000-4000-8000-000000000004/members?status=active" \
   -H "Authorization: Bearer $UNIORA_API_KEY"
 ```
 
 ```ts
 const result = await uniora.teams.members(
-  { organizationId: "org_acme", teamId: "team_bcn", status: "active" },
+  {
+    organizationId: "org_acme",
+    teamId: "00000000-0000-4000-8000-000000000004",
+    status: "active",
+  },
 );
 ```
 
@@ -3120,45 +3269,21 @@ HTTP/1.1 200 OK
 {
   "items": [
     {
-      "id": "tm_ana",
+      "id": "00000000-0000-4000-8000-000000000006",
       "organizationId": "org_acme",
-      "teamId": "team_bcn",
+      "teamId": "00000000-0000-4000-8000-000000000004",
       "membershipId": "mem_ana",
       "status": "active",
       "responsibility": "member",
       "roleIds": [],
-      "createdAt": "2026-03-02T09:44:00.000Z",
-      "updatedAt": "2026-03-02T09:45:00.000Z",
-      "joinedAt": "2026-03-02T09:46:00.000Z",
+      "createdAt": "2026-03-02T09:46:00.000Z",
+      "updatedAt": "2026-03-02T09:47:00.000Z",
+      "joinedAt": "2026-03-02T09:48:00.000Z",
       "invitedBy": {
         "provider": "main",
         "subject": "mgr"
       },
       "version": 1
-    },
-    {
-      "id": "tm_bob",
-      "organizationId": "org_acme",
-      "teamId": "team_bcn",
-      "membershipId": "mem_bob",
-      "status": "active",
-      "responsibility": "member",
-      "roleIds": [],
-      "createdAt": "2026-03-02T09:47:00.000Z",
-      "updatedAt": "2026-03-02T09:48:00.000Z",
-      "joinedAt": "2026-03-02T09:49:00.000Z",
-      "invitedBy": {
-        "provider": "main",
-        "subject": "mgr"
-      },
-      "statusChange": {
-        "at": "2026-03-02T09:50:00.000Z",
-        "by": {
-          "provider": "main",
-          "subject": "bob"
-        }
-      },
-      "version": 2
     }
   ],
   "nextCursor": null
@@ -3171,7 +3296,7 @@ HTTP/1.1 200 OK
 
 A team is context, not authority: belonging to it grants nothing by itself. Teams nest up to 8 levels with no cycles. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it.
 
-- **Scope:** `teams:write` and `actor:assert`
+- **Scope:** `teams:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`ETag`:** the answer carries the version of the resource
@@ -3181,15 +3306,14 @@ A team is context, not authority: belonging to it grants nothing by itself. Team
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `organizationId` | string (1–200 chars) | yes | (in the path) The organization. |
-| `id` | string (1–200 chars) | no | Your own id for the team; generated when omitted. |
 | `name` | string (1–255 chars) | yes |  |
-| `slug` | string (1–100 chars) | no | URL-safe, unique in the organization; derived from the name when omitted. |
+| `slug` | string (1–63 chars) | no | URL-safe, unique in the organization; derived from the name when omitted. |
 | `externalId` | string (1–200 chars) | no | Your own id for the team in another system. |
 | `parentId` | string (1–200 chars) | no | The team this one sits under. |
 | `metadata` | object (free keys) | no |  |
 | `settings` | object (free keys) | no |  |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `201`**
 
@@ -3241,7 +3365,6 @@ curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams" \
   -H 'Uniora-Actor-Subject: mgr' \
   -H "Content-Type: application/json" \
   -d '{
-    "id": "team_bcn",
     "name": "Barcelona",
     "metadata": {
       "region": "ES"
@@ -3253,7 +3376,6 @@ curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams" \
 const result = await uniora.teams.create(
   {
     organizationId: "org_acme",
-    id: "team_bcn",
     name: "Barcelona",
     metadata: { region: "ES" },
   },
@@ -3264,10 +3386,10 @@ const result = await uniora.teams.create(
 ```http
 HTTP/1.1 201 Created
 ETag: "1"
-Location: /v1/organizations/org_acme/teams/team_bcn
+Location: /v1/organizations/org_acme/teams/00000000-0000-4000-8000-000000000004
 
 {
-  "id": "team_bcn",
+  "id": "00000000-0000-4000-8000-000000000004",
   "organizationId": "org_acme",
   "slug": "barcelona",
   "name": "Barcelona",
@@ -3276,8 +3398,8 @@ Location: /v1/organizations/org_acme/teams/team_bcn
     "region": "ES"
   },
   "settings": {},
-  "createdAt": "2026-03-02T09:51:00.000Z",
-  "updatedAt": "2026-03-02T09:52:00.000Z",
+  "createdAt": "2026-03-02T09:49:00.000Z",
+  "updatedAt": "2026-03-02T09:50:00.000Z",
   "version": 1
 }
 ```
@@ -3290,9 +3412,8 @@ curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams" \
   -H 'Uniora-Actor-Subject: mgr' \
   -H "Content-Type: application/json" \
   -d '{
-    "id": "team_sants",
     "name": "Sants",
-    "parentId": "team_bcn"
+    "parentId": "00000000-0000-4000-8000-000000000004"
   }'
 ```
 
@@ -3300,9 +3421,8 @@ curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams" \
 const result = await uniora.teams.create(
   {
     organizationId: "org_acme",
-    id: "team_sants",
     name: "Sants",
-    parentId: "team_bcn",
+    parentId: "00000000-0000-4000-8000-000000000004",
   },
   { actor: { subject: "mgr" } },
 );
@@ -3311,19 +3431,19 @@ const result = await uniora.teams.create(
 ```http
 HTTP/1.1 201 Created
 ETag: "1"
-Location: /v1/organizations/org_acme/teams/team_sants
+Location: /v1/organizations/org_acme/teams/00000000-0000-4000-8000-000000000005
 
 {
-  "id": "team_sants",
+  "id": "00000000-0000-4000-8000-000000000005",
   "organizationId": "org_acme",
   "slug": "sants",
   "name": "Sants",
   "status": "active",
-  "parentId": "team_bcn",
+  "parentId": "00000000-0000-4000-8000-000000000004",
   "metadata": {},
   "settings": {},
-  "createdAt": "2026-03-02T09:53:00.000Z",
-  "updatedAt": "2026-03-02T09:54:00.000Z",
+  "createdAt": "2026-03-02T09:51:00.000Z",
+  "updatedAt": "2026-03-02T09:52:00.000Z",
   "version": 1
 }
 ```
@@ -3336,14 +3456,13 @@ curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams" \
   -H 'Uniora-Actor-Subject: mgr' \
   -H "Content-Type: application/json" \
   -d '{
-    "id": "team_mad",
     "name": "Madrid"
   }'
 ```
 
 ```ts
 const result = await uniora.teams.create(
-  { organizationId: "org_acme", id: "team_mad", name: "Madrid" },
+  { organizationId: "org_acme", name: "Madrid" },
   { actor: { subject: "mgr" } },
 );
 ```
@@ -3351,18 +3470,18 @@ const result = await uniora.teams.create(
 ```http
 HTTP/1.1 201 Created
 ETag: "1"
-Location: /v1/organizations/org_acme/teams/team_mad
+Location: /v1/organizations/org_acme/teams/00000000-0000-4000-8000-000000000007
 
 {
-  "id": "team_mad",
+  "id": "00000000-0000-4000-8000-000000000007",
   "organizationId": "org_acme",
   "slug": "madrid",
   "name": "Madrid",
   "status": "active",
   "metadata": {},
   "settings": {},
-  "createdAt": "2026-03-02T09:55:00.000Z",
-  "updatedAt": "2026-03-02T09:56:00.000Z",
+  "createdAt": "2026-03-02T09:53:00.000Z",
+  "updatedAt": "2026-03-02T09:54:00.000Z",
   "version": 1
 }
 ```
@@ -3373,7 +3492,7 @@ Location: /v1/organizations/org_acme/teams/team_mad
 
 Send only what changes. `null` clears `externalId` or moves the team to the top level (`parentId`). Send `If-Match` with the team's version to refuse a stale edit. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it.
 
-- **Scope:** `teams:write` and `actor:assert`
+- **Scope:** `teams:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`If-Match`:** send the version you last saw; a stale one is a `412` and nothing changes
@@ -3386,13 +3505,13 @@ Send only what changes. `null` clears `externalId` or moves the team to the top 
 | `organizationId` | string (1–200 chars) | yes | (in the path) The organization. |
 | `teamId` | string (1–200 chars) | yes | (in the path) The team. |
 | `name` | string (1–255 chars) | no |  |
-| `slug` | string (1–100 chars) | no |  |
+| `slug` | string (1–63 chars) | no |  |
 | `externalId` | string (1–200 chars) or `null` | no |  |
 | `parentId` | string (1–200 chars) or `null` | no | The new parent team. |
 | `metadata` | object (free keys) | no |  |
 | `settings` | object (free keys) | no |  |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -3441,7 +3560,7 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Edit a team**
 
 ```bash
-curl -X PATCH "https://uniora.example.com/v1/organizations/org_acme/teams/team_bcn" \
+curl -X PATCH "https://uniora.example.com/v1/organizations/org_acme/teams/00000000-0000-4000-8000-000000000004" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr' \
   -H "Content-Type: application/json" \
@@ -3454,7 +3573,7 @@ curl -X PATCH "https://uniora.example.com/v1/organizations/org_acme/teams/team_b
 const result = await uniora.teams.update(
   {
     organizationId: "org_acme",
-    teamId: "team_bcn",
+    teamId: "00000000-0000-4000-8000-000000000004",
     externalId: "ERP-BCN-01",
   },
   { actor: { subject: "mgr" } },
@@ -3466,7 +3585,7 @@ HTTP/1.1 200 OK
 ETag: "2"
 
 {
-  "id": "team_bcn",
+  "id": "00000000-0000-4000-8000-000000000004",
   "organizationId": "org_acme",
   "slug": "barcelona",
   "name": "Barcelona",
@@ -3476,8 +3595,8 @@ ETag: "2"
     "region": "ES"
   },
   "settings": {},
-  "createdAt": "2026-03-02T09:57:00.000Z",
-  "updatedAt": "2026-03-02T09:58:00.000Z",
+  "createdAt": "2026-03-02T09:55:00.000Z",
+  "updatedAt": "2026-03-02T09:56:00.000Z",
   "version": 2
 }
 ```
@@ -3488,7 +3607,7 @@ ETag: "2"
 
 An archived team keeps its history and accepts no changes until restored. Refused while it still has active sub-teams: archive those first (`team_has_children`). A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it.
 
-- **Scope:** `teams:write` and `actor:assert`
+- **Scope:** `teams:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`If-Match`:** send the version you last saw; a stale one is a `412` and nothing changes
@@ -3502,7 +3621,7 @@ An archived team keeps its history and accepts no changes until restored. Refuse
 | `teamId` | string (1–200 chars) | yes | (in the path) The team. |
 | `reason` | string (1–500 chars) | no | Why. Kept in the audit log. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -3546,7 +3665,7 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Archive a team (sub-teams first)**
 
 ```bash
-curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams/team_bcn/archive" \
+curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams/00000000-0000-4000-8000-000000000004/archive" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr' \
   -H "Content-Type: application/json" \
@@ -3557,7 +3676,11 @@ curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams/team_bc
 
 ```ts
 await uniora.teams.archive(
-  { organizationId: "org_acme", teamId: "team_bcn", reason: "closed" },
+  {
+    organizationId: "org_acme",
+    teamId: "00000000-0000-4000-8000-000000000004",
+    reason: "closed",
+  },
   { actor: { subject: "mgr" } },
 );
 ```
@@ -3570,14 +3693,14 @@ HTTP/1.1 409 Conflict
   "title": "Conflict",
   "status": 409,
   "code": "team_has_children",
-  "requestId": "req_xxxxxxxxxxxxxxx8"
+  "requestId": "req_xxxxxxxxxxxxxxx9"
 }
 ```
 
 **Example: Archive the sub-team**
 
 ```bash
-curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams/team_sants/archive" \
+curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams/00000000-0000-4000-8000-000000000005/archive" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr' \
   -H "Content-Type: application/json" \
@@ -3588,7 +3711,11 @@ curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams/team_sa
 
 ```ts
 const result = await uniora.teams.archive(
-  { organizationId: "org_acme", teamId: "team_sants", reason: "closed" },
+  {
+    organizationId: "org_acme",
+    teamId: "00000000-0000-4000-8000-000000000005",
+    reason: "closed",
+  },
   { actor: { subject: "mgr" } },
 );
 ```
@@ -3598,18 +3725,18 @@ HTTP/1.1 200 OK
 ETag: "2"
 
 {
-  "id": "team_sants",
+  "id": "00000000-0000-4000-8000-000000000005",
   "organizationId": "org_acme",
   "slug": "sants",
   "name": "Sants",
   "status": "archived",
-  "parentId": "team_bcn",
+  "parentId": "00000000-0000-4000-8000-000000000004",
   "metadata": {},
   "settings": {},
-  "createdAt": "2026-03-02T09:59:00.000Z",
-  "updatedAt": "2026-03-02T10:00:00.000Z",
+  "createdAt": "2026-03-02T09:57:00.000Z",
+  "updatedAt": "2026-03-02T09:58:00.000Z",
   "archived": {
-    "at": "2026-03-02T10:01:00.000Z",
+    "at": "2026-03-02T09:59:00.000Z",
     "by": {
       "provider": "main",
       "subject": "mgr"
@@ -3623,7 +3750,7 @@ ETag: "2"
 **Example: Archive it again**
 
 ```bash
-curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams/team_sants/archive" \
+curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams/00000000-0000-4000-8000-000000000005/archive" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr' \
   -H "Content-Type: application/json" \
@@ -3632,7 +3759,10 @@ curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams/team_sa
 
 ```ts
 const result = await uniora.teams.archive(
-  { organizationId: "org_acme", teamId: "team_sants" },
+  {
+    organizationId: "org_acme",
+    teamId: "00000000-0000-4000-8000-000000000005",
+  },
   { actor: { subject: "mgr" } },
 );
 ```
@@ -3642,18 +3772,18 @@ HTTP/1.1 200 OK
 ETag: "4"
 
 {
-  "id": "team_sants",
+  "id": "00000000-0000-4000-8000-000000000005",
   "organizationId": "org_acme",
   "slug": "sants",
   "name": "Sants",
   "status": "archived",
-  "parentId": "team_bcn",
+  "parentId": "00000000-0000-4000-8000-000000000004",
   "metadata": {},
   "settings": {},
-  "createdAt": "2026-03-02T10:02:00.000Z",
-  "updatedAt": "2026-03-02T10:03:00.000Z",
+  "createdAt": "2026-03-02T10:00:00.000Z",
+  "updatedAt": "2026-03-02T10:01:00.000Z",
   "archived": {
-    "at": "2026-03-02T10:04:00.000Z",
+    "at": "2026-03-02T10:02:00.000Z",
     "by": {
       "provider": "main",
       "subject": "mgr"
@@ -3669,7 +3799,7 @@ ETag: "4"
 
 Brings the team back to normal operation. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it.
 
-- **Scope:** `teams:write` and `actor:assert`
+- **Scope:** `teams:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`If-Match`:** send the version you last saw; a stale one is a `412` and nothing changes
@@ -3682,7 +3812,7 @@ Brings the team back to normal operation. A delegated call: it speaks for the en
 | `organizationId` | string (1–200 chars) | yes | (in the path) The organization. |
 | `teamId` | string (1–200 chars) | yes | (in the path) The team. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -3726,14 +3856,17 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Restore it**
 
 ```bash
-curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams/team_sants/restore" \
+curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams/00000000-0000-4000-8000-000000000005/restore" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr'
 ```
 
 ```ts
 const result = await uniora.teams.restore(
-  { organizationId: "org_acme", teamId: "team_sants" },
+  {
+    organizationId: "org_acme",
+    teamId: "00000000-0000-4000-8000-000000000005",
+  },
   { actor: { subject: "mgr" } },
 );
 ```
@@ -3743,16 +3876,16 @@ HTTP/1.1 200 OK
 ETag: "3"
 
 {
-  "id": "team_sants",
+  "id": "00000000-0000-4000-8000-000000000005",
   "organizationId": "org_acme",
   "slug": "sants",
   "name": "Sants",
   "status": "active",
-  "parentId": "team_bcn",
+  "parentId": "00000000-0000-4000-8000-000000000004",
   "metadata": {},
   "settings": {},
-  "createdAt": "2026-03-02T10:05:00.000Z",
-  "updatedAt": "2026-03-02T10:06:00.000Z",
+  "createdAt": "2026-03-02T10:03:00.000Z",
+  "updatedAt": "2026-03-02T10:04:00.000Z",
   "version": 3
 }
 ```
@@ -3763,7 +3896,7 @@ ETag: "3"
 
 Only an archived team can be deleted, and only once it has no sub-teams. Archiving alone keeps the history. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it.
 
-- **Scope:** `teams:write` and `actor:assert`
+- **Scope:** `teams:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 
@@ -3774,7 +3907,7 @@ Only an archived team can be deleted, and only once it has no sub-teams. Archivi
 | `organizationId` | string (1–200 chars) | yes | (in the path) The organization. |
 | `teamId` | string (1–200 chars) | yes | (in the path) The team. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -3802,14 +3935,17 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Delete an archived team**
 
 ```bash
-curl -X DELETE "https://uniora.example.com/v1/organizations/org_acme/teams/team_sants" \
+curl -X DELETE "https://uniora.example.com/v1/organizations/org_acme/teams/00000000-0000-4000-8000-000000000005" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr'
 ```
 
 ```ts
 const result = await uniora.teams.delete(
-  { organizationId: "org_acme", teamId: "team_sants" },
+  {
+    organizationId: "org_acme",
+    teamId: "00000000-0000-4000-8000-000000000005",
+  },
   { actor: { subject: "mgr" } },
 );
 ```
@@ -3828,7 +3964,7 @@ HTTP/1.1 200 OK
 
 Needs `teams.members.add`, even for oneself. With `status: "pending"` the person must accept. The roles given apply only inside this team, and only if the actor holds every permission in them. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it.
 
-- **Scope:** `teams:write` and `actor:assert`
+- **Scope:** `teams:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`ETag`:** the answer carries the version of the resource
@@ -3839,13 +3975,12 @@ Needs `teams.members.add`, even for oneself. With `status: "pending"` the person
 | --- | --- | --- | --- |
 | `organizationId` | string (1–200 chars) | yes | (in the path) The organization. |
 | `teamId` | string (1–200 chars) | yes | (in the path) The team. |
-| `id` | string (1–200 chars) | no | Your own id for the team membership; generated when omitted. |
 | `membershipId` | string (1–200 chars) | yes | The organization membership to add. |
 | `status` | `pending` \| `active` | no |  |
 | `responsibility` | `owner` \| `manager` \| `member` | no |  |
 | `roleIds` | array (≤ 50) | no |  |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `201`**
 
@@ -3894,12 +4029,11 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Add a member**
 
 ```bash
-curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams/team_bcn/members" \
+curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams/00000000-0000-4000-8000-000000000004/members" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr' \
   -H "Content-Type: application/json" \
   -d '{
-    "id": "tm_ana",
     "membershipId": "mem_ana"
   }'
 ```
@@ -3908,8 +4042,7 @@ curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams/team_bc
 const result = await uniora.teams.addMember(
   {
     organizationId: "org_acme",
-    teamId: "team_bcn",
-    id: "tm_ana",
+    teamId: "00000000-0000-4000-8000-000000000004",
     membershipId: "mem_ana",
   },
   { actor: { subject: "mgr" } },
@@ -3921,16 +4054,16 @@ HTTP/1.1 201 Created
 ETag: "1"
 
 {
-  "id": "tm_ana",
+  "id": "00000000-0000-4000-8000-000000000006",
   "organizationId": "org_acme",
-  "teamId": "team_bcn",
+  "teamId": "00000000-0000-4000-8000-000000000004",
   "membershipId": "mem_ana",
   "status": "active",
   "responsibility": "member",
   "roleIds": [],
-  "createdAt": "2026-03-02T10:07:00.000Z",
-  "updatedAt": "2026-03-02T10:08:00.000Z",
-  "joinedAt": "2026-03-02T10:09:00.000Z",
+  "createdAt": "2026-03-02T10:05:00.000Z",
+  "updatedAt": "2026-03-02T10:06:00.000Z",
+  "joinedAt": "2026-03-02T10:07:00.000Z",
   "invitedBy": {
     "provider": "main",
     "subject": "mgr"
@@ -3942,12 +4075,11 @@ ETag: "1"
 **Example: Invite a member: they must accept**
 
 ```bash
-curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams/team_bcn/members" \
+curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams/00000000-0000-4000-8000-000000000004/members" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr' \
   -H "Content-Type: application/json" \
   -d '{
-    "id": "tm_bob",
     "membershipId": "mem_bob",
     "status": "pending"
   }'
@@ -3957,8 +4089,7 @@ curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams/team_bc
 const result = await uniora.teams.addMember(
   {
     organizationId: "org_acme",
-    teamId: "team_bcn",
-    id: "tm_bob",
+    teamId: "00000000-0000-4000-8000-000000000004",
     membershipId: "mem_bob",
     status: "pending",
   },
@@ -3971,15 +4102,15 @@ HTTP/1.1 201 Created
 ETag: "1"
 
 {
-  "id": "tm_bob",
+  "id": "00000000-0000-4000-8000-000000000008",
   "organizationId": "org_acme",
-  "teamId": "team_bcn",
+  "teamId": "00000000-0000-4000-8000-000000000004",
   "membershipId": "mem_bob",
   "status": "pending",
   "responsibility": "member",
   "roleIds": [],
-  "createdAt": "2026-03-02T10:10:00.000Z",
-  "updatedAt": "2026-03-02T10:11:00.000Z",
+  "createdAt": "2026-03-02T10:08:00.000Z",
+  "updatedAt": "2026-03-02T10:09:00.000Z",
   "invitedBy": {
     "provider": "main",
     "subject": "mgr"
@@ -3994,7 +4125,7 @@ ETag: "1"
 
 Always allowed for oneself. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it.
 
-- **Scope:** `teams:write` and `actor:assert`
+- **Scope:** `teams:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`ETag`:** the answer carries the version of the resource
@@ -4006,7 +4137,7 @@ Always allowed for oneself. A delegated call: it speaks for the end user in the 
 | `organizationId` | string (1–200 chars) | yes | (in the path) The organization. |
 | `teamId` | string (1–200 chars) | yes | (in the path) The team. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -4052,14 +4183,17 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: The actor leaves a team**
 
 ```bash
-curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams/team_mad/leave" \
+curl -X POST "https://uniora.example.com/v1/organizations/org_acme/teams/00000000-0000-4000-8000-000000000007/leave" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: ana'
 ```
 
 ```ts
 const result = await uniora.teams.leave(
-  { organizationId: "org_acme", teamId: "team_mad" },
+  {
+    organizationId: "org_acme",
+    teamId: "00000000-0000-4000-8000-000000000007",
+  },
   { actor: { subject: "ana" } },
 );
 ```
@@ -4069,22 +4203,22 @@ HTTP/1.1 200 OK
 ETag: "2"
 
 {
-  "id": "tm_ana_mad",
+  "id": "00000000-0000-4000-8000-000000000009",
   "organizationId": "org_acme",
-  "teamId": "team_mad",
+  "teamId": "00000000-0000-4000-8000-000000000007",
   "membershipId": "mem_ana",
   "status": "removed",
   "responsibility": "member",
   "roleIds": [],
-  "createdAt": "2026-03-02T10:12:00.000Z",
-  "updatedAt": "2026-03-02T10:13:00.000Z",
-  "joinedAt": "2026-03-02T10:14:00.000Z",
+  "createdAt": "2026-03-02T10:10:00.000Z",
+  "updatedAt": "2026-03-02T10:11:00.000Z",
+  "joinedAt": "2026-03-02T10:12:00.000Z",
   "invitedBy": {
     "provider": "main",
     "subject": "mgr"
   },
   "statusChange": {
-    "at": "2026-03-02T10:15:00.000Z",
+    "at": "2026-03-02T10:13:00.000Z",
     "by": {
       "provider": "main",
       "subject": "ana"
@@ -4101,7 +4235,7 @@ ETag: "2"
 
 Only the invited person can accept their own invitation. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it.
 
-- **Scope:** `teams:write` and `actor:assert`
+- **Scope:** `teams:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`ETag`:** the answer carries the version of the resource
@@ -4113,7 +4247,7 @@ Only the invited person can accept their own invitation. A delegated call: it sp
 | `organizationId` | string (1–200 chars) | yes | (in the path) The organization. |
 | `teamMembershipId` | string (1–200 chars) | yes | (in the path) The team membership (not the organization membership). |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -4158,14 +4292,17 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: The invited person accepts**
 
 ```bash
-curl -X POST "https://uniora.example.com/v1/organizations/org_acme/team-memberships/tm_bob/accept" \
+curl -X POST "https://uniora.example.com/v1/organizations/org_acme/team-memberships/00000000-0000-4000-8000-000000000008/accept" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: bob'
 ```
 
 ```ts
 const result = await uniora.teamMembers.accept(
-  { organizationId: "org_acme", teamMembershipId: "tm_bob" },
+  {
+    organizationId: "org_acme",
+    teamMembershipId: "00000000-0000-4000-8000-000000000008",
+  },
   { actor: { subject: "bob" } },
 );
 ```
@@ -4175,22 +4312,22 @@ HTTP/1.1 200 OK
 ETag: "2"
 
 {
-  "id": "tm_bob",
+  "id": "00000000-0000-4000-8000-000000000008",
   "organizationId": "org_acme",
-  "teamId": "team_bcn",
+  "teamId": "00000000-0000-4000-8000-000000000004",
   "membershipId": "mem_bob",
   "status": "active",
   "responsibility": "member",
   "roleIds": [],
-  "createdAt": "2026-03-02T10:16:00.000Z",
-  "updatedAt": "2026-03-02T10:17:00.000Z",
-  "joinedAt": "2026-03-02T10:18:00.000Z",
+  "createdAt": "2026-03-02T10:14:00.000Z",
+  "updatedAt": "2026-03-02T10:15:00.000Z",
+  "joinedAt": "2026-03-02T10:16:00.000Z",
   "invitedBy": {
     "provider": "main",
     "subject": "mgr"
   },
   "statusChange": {
-    "at": "2026-03-02T10:19:00.000Z",
+    "at": "2026-03-02T10:17:00.000Z",
     "by": {
       "provider": "main",
       "subject": "bob"
@@ -4206,7 +4343,7 @@ ETag: "2"
 
 The row stays for the record and can be added again. Needs `teams.members.remove`. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it.
 
-- **Scope:** `teams:write` and `actor:assert`
+- **Scope:** `teams:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`ETag`:** the answer carries the version of the resource
@@ -4219,7 +4356,7 @@ The row stays for the record and can be added again. Needs `teams.members.remove
 | `teamMembershipId` | string (1–200 chars) | yes | (in the path) The team membership (not the organization membership). |
 | `reason` | string (1–500 chars) | no | (query) Why. Kept in the audit log. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -4264,7 +4401,7 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Remove someone from a team**
 
 ```bash
-curl -X DELETE "https://uniora.example.com/v1/organizations/org_acme/team-memberships/tm_bob?reason=left+the+project" \
+curl -X DELETE "https://uniora.example.com/v1/organizations/org_acme/team-memberships/00000000-0000-4000-8000-000000000008?reason=left+the+project" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr'
 ```
@@ -4273,7 +4410,7 @@ curl -X DELETE "https://uniora.example.com/v1/organizations/org_acme/team-member
 const result = await uniora.teamMembers.remove(
   {
     organizationId: "org_acme",
-    teamMembershipId: "tm_bob",
+    teamMembershipId: "00000000-0000-4000-8000-000000000008",
     reason: "left the project",
   },
   { actor: { subject: "mgr" } },
@@ -4285,22 +4422,22 @@ HTTP/1.1 200 OK
 ETag: "3"
 
 {
-  "id": "tm_bob",
+  "id": "00000000-0000-4000-8000-000000000008",
   "organizationId": "org_acme",
-  "teamId": "team_bcn",
+  "teamId": "00000000-0000-4000-8000-000000000004",
   "membershipId": "mem_bob",
   "status": "removed",
   "responsibility": "member",
   "roleIds": [],
-  "createdAt": "2026-03-02T10:20:00.000Z",
-  "updatedAt": "2026-03-02T10:21:00.000Z",
-  "joinedAt": "2026-03-02T10:22:00.000Z",
+  "createdAt": "2026-03-02T10:18:00.000Z",
+  "updatedAt": "2026-03-02T10:19:00.000Z",
+  "joinedAt": "2026-03-02T10:20:00.000Z",
   "invitedBy": {
     "provider": "main",
     "subject": "mgr"
   },
   "statusChange": {
-    "at": "2026-03-02T10:23:00.000Z",
+    "at": "2026-03-02T10:21:00.000Z",
     "by": {
       "provider": "main",
       "subject": "mgr"
@@ -4317,7 +4454,7 @@ ETag: "3"
 
 The relation exists but stops counting for now. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it.
 
-- **Scope:** `teams:write` and `actor:assert`
+- **Scope:** `teams:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`ETag`:** the answer carries the version of the resource
@@ -4330,7 +4467,7 @@ The relation exists but stops counting for now. A delegated call: it speaks for 
 | `teamMembershipId` | string (1–200 chars) | yes | (in the path) The team membership (not the organization membership). |
 | `reason` | string (1–500 chars) | no | Why. Kept in the audit log. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -4375,7 +4512,7 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Suspend a team membership**
 
 ```bash
-curl -X POST "https://uniora.example.com/v1/organizations/org_acme/team-memberships/tm_ana/suspend" \
+curl -X POST "https://uniora.example.com/v1/organizations/org_acme/team-memberships/00000000-0000-4000-8000-000000000006/suspend" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr' \
   -H "Content-Type: application/json" \
@@ -4388,7 +4525,7 @@ curl -X POST "https://uniora.example.com/v1/organizations/org_acme/team-membersh
 const result = await uniora.teamMembers.suspend(
   {
     organizationId: "org_acme",
-    teamMembershipId: "tm_ana",
+    teamMembershipId: "00000000-0000-4000-8000-000000000006",
     reason: "on leave",
   },
   { actor: { subject: "mgr" } },
@@ -4400,22 +4537,22 @@ HTTP/1.1 200 OK
 ETag: "5"
 
 {
-  "id": "tm_ana",
+  "id": "00000000-0000-4000-8000-000000000006",
   "organizationId": "org_acme",
-  "teamId": "team_bcn",
+  "teamId": "00000000-0000-4000-8000-000000000004",
   "membershipId": "mem_ana",
   "status": "suspended",
   "responsibility": "manager",
   "roleIds": [],
-  "createdAt": "2026-03-02T10:24:00.000Z",
-  "updatedAt": "2026-03-02T10:25:00.000Z",
-  "joinedAt": "2026-03-02T10:26:00.000Z",
+  "createdAt": "2026-03-02T10:22:00.000Z",
+  "updatedAt": "2026-03-02T10:23:00.000Z",
+  "joinedAt": "2026-03-02T10:24:00.000Z",
   "invitedBy": {
     "provider": "main",
     "subject": "mgr"
   },
   "statusChange": {
-    "at": "2026-03-02T10:27:00.000Z",
+    "at": "2026-03-02T10:25:00.000Z",
     "by": {
       "provider": "main",
       "subject": "mgr"
@@ -4432,7 +4569,7 @@ ETag: "5"
 
 Nobody lifts their own suspension. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it.
 
-- **Scope:** `teams:write` and `actor:assert`
+- **Scope:** `teams:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`ETag`:** the answer carries the version of the resource
@@ -4444,7 +4581,7 @@ Nobody lifts their own suspension. A delegated call: it speaks for the end user 
 | `organizationId` | string (1–200 chars) | yes | (in the path) The organization. |
 | `teamMembershipId` | string (1–200 chars) | yes | (in the path) The team membership (not the organization membership). |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -4489,14 +4626,17 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Lift it**
 
 ```bash
-curl -X POST "https://uniora.example.com/v1/organizations/org_acme/team-memberships/tm_ana/reactivate" \
+curl -X POST "https://uniora.example.com/v1/organizations/org_acme/team-memberships/00000000-0000-4000-8000-000000000006/reactivate" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr'
 ```
 
 ```ts
 const result = await uniora.teamMembers.reactivate(
-  { organizationId: "org_acme", teamMembershipId: "tm_ana" },
+  {
+    organizationId: "org_acme",
+    teamMembershipId: "00000000-0000-4000-8000-000000000006",
+  },
   { actor: { subject: "mgr" } },
 );
 ```
@@ -4506,22 +4646,22 @@ HTTP/1.1 200 OK
 ETag: "6"
 
 {
-  "id": "tm_ana",
+  "id": "00000000-0000-4000-8000-000000000006",
   "organizationId": "org_acme",
-  "teamId": "team_bcn",
+  "teamId": "00000000-0000-4000-8000-000000000004",
   "membershipId": "mem_ana",
   "status": "active",
   "responsibility": "manager",
   "roleIds": [],
-  "createdAt": "2026-03-02T10:28:00.000Z",
-  "updatedAt": "2026-03-02T10:29:00.000Z",
-  "joinedAt": "2026-03-02T10:30:00.000Z",
+  "createdAt": "2026-03-02T10:26:00.000Z",
+  "updatedAt": "2026-03-02T10:27:00.000Z",
+  "joinedAt": "2026-03-02T10:28:00.000Z",
   "invitedBy": {
     "provider": "main",
     "subject": "mgr"
   },
   "statusChange": {
-    "at": "2026-03-02T10:31:00.000Z",
+    "at": "2026-03-02T10:29:00.000Z",
     "by": {
       "provider": "main",
       "subject": "mgr"
@@ -4537,7 +4677,7 @@ ETag: "6"
 
 A label (`owner`, `manager`, `member`), not a permission. Nobody changes their own. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it.
 
-- **Scope:** `teams:write` and `actor:assert`
+- **Scope:** `teams:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`ETag`:** the answer carries the version of the resource
@@ -4550,7 +4690,7 @@ A label (`owner`, `manager`, `member`), not a permission. Nobody changes their o
 | `teamMembershipId` | string (1–200 chars) | yes | (in the path) The team membership (not the organization membership). |
 | `responsibility` | `owner` \| `manager` \| `member` | yes |  |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -4595,7 +4735,7 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Set who looks after the team**
 
 ```bash
-curl -X PUT "https://uniora.example.com/v1/organizations/org_acme/team-memberships/tm_ana/responsibility" \
+curl -X PUT "https://uniora.example.com/v1/organizations/org_acme/team-memberships/00000000-0000-4000-8000-000000000006/responsibility" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr' \
   -H "Content-Type: application/json" \
@@ -4608,7 +4748,7 @@ curl -X PUT "https://uniora.example.com/v1/organizations/org_acme/team-membershi
 const result = await uniora.teamMembers.setResponsibility(
   {
     organizationId: "org_acme",
-    teamMembershipId: "tm_ana",
+    teamMembershipId: "00000000-0000-4000-8000-000000000006",
     responsibility: "manager",
   },
   { actor: { subject: "mgr" } },
@@ -4620,16 +4760,16 @@ HTTP/1.1 200 OK
 ETag: "2"
 
 {
-  "id": "tm_ana",
+  "id": "00000000-0000-4000-8000-000000000006",
   "organizationId": "org_acme",
-  "teamId": "team_bcn",
+  "teamId": "00000000-0000-4000-8000-000000000004",
   "membershipId": "mem_ana",
   "status": "active",
   "responsibility": "manager",
   "roleIds": [],
-  "createdAt": "2026-03-02T10:32:00.000Z",
-  "updatedAt": "2026-03-02T10:33:00.000Z",
-  "joinedAt": "2026-03-02T10:34:00.000Z",
+  "createdAt": "2026-03-02T10:30:00.000Z",
+  "updatedAt": "2026-03-02T10:31:00.000Z",
+  "joinedAt": "2026-03-02T10:32:00.000Z",
   "invitedBy": {
     "provider": "main",
     "subject": "mgr"
@@ -4644,7 +4784,7 @@ ETag: "2"
 
 Applies only inside this team. The actor must hold every permission of the role, and never changes their own. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it.
 
-- **Scope:** `teams:write` and `actor:assert`
+- **Scope:** `teams:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`ETag`:** the answer carries the version of the resource
@@ -4657,7 +4797,7 @@ Applies only inside this team. The actor must hold every permission of the role,
 | `teamMembershipId` | string (1–200 chars) | yes | (in the path) The team membership (not the organization membership). |
 | `roleId` | string (1–200 chars) | yes | (in the path) A role of the organization. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -4704,7 +4844,7 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: A role that applies only inside the team**
 
 ```bash
-curl -X PUT "https://uniora.example.com/v1/organizations/org_acme/team-memberships/tm_ana/roles/role_viewer" \
+curl -X PUT "https://uniora.example.com/v1/organizations/org_acme/team-memberships/00000000-0000-4000-8000-000000000006/roles/role_viewer" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr'
 ```
@@ -4713,7 +4853,7 @@ curl -X PUT "https://uniora.example.com/v1/organizations/org_acme/team-membershi
 const result = await uniora.teamMembers.assignRole(
   {
     organizationId: "org_acme",
-    teamMembershipId: "tm_ana",
+    teamMembershipId: "00000000-0000-4000-8000-000000000006",
     roleId: "role_viewer",
   },
   { actor: { subject: "mgr" } },
@@ -4725,18 +4865,18 @@ HTTP/1.1 200 OK
 ETag: "3"
 
 {
-  "id": "tm_ana",
+  "id": "00000000-0000-4000-8000-000000000006",
   "organizationId": "org_acme",
-  "teamId": "team_bcn",
+  "teamId": "00000000-0000-4000-8000-000000000004",
   "membershipId": "mem_ana",
   "status": "active",
   "responsibility": "manager",
   "roleIds": [
     "role_viewer"
   ],
-  "createdAt": "2026-03-02T10:35:00.000Z",
-  "updatedAt": "2026-03-02T10:36:00.000Z",
-  "joinedAt": "2026-03-02T10:37:00.000Z",
+  "createdAt": "2026-03-02T10:33:00.000Z",
+  "updatedAt": "2026-03-02T10:34:00.000Z",
+  "joinedAt": "2026-03-02T10:35:00.000Z",
   "invitedBy": {
     "provider": "main",
     "subject": "mgr"
@@ -4751,7 +4891,7 @@ ETag: "3"
 
 Inside the team only. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it.
 
-- **Scope:** `teams:write` and `actor:assert`
+- **Scope:** `teams:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`ETag`:** the answer carries the version of the resource
@@ -4764,7 +4904,7 @@ Inside the team only. A delegated call: it speaks for the end user in the `Unior
 | `teamMembershipId` | string (1–200 chars) | yes | (in the path) The team membership (not the organization membership). |
 | `roleId` | string (1–200 chars) | yes | (in the path) A role of the organization. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -4809,7 +4949,7 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Take it away**
 
 ```bash
-curl -X DELETE "https://uniora.example.com/v1/organizations/org_acme/team-memberships/tm_ana/roles/role_viewer" \
+curl -X DELETE "https://uniora.example.com/v1/organizations/org_acme/team-memberships/00000000-0000-4000-8000-000000000006/roles/role_viewer" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr'
 ```
@@ -4818,7 +4958,7 @@ curl -X DELETE "https://uniora.example.com/v1/organizations/org_acme/team-member
 const result = await uniora.teamMembers.unassignRole(
   {
     organizationId: "org_acme",
-    teamMembershipId: "tm_ana",
+    teamMembershipId: "00000000-0000-4000-8000-000000000006",
     roleId: "role_viewer",
   },
   { actor: { subject: "mgr" } },
@@ -4830,16 +4970,16 @@ HTTP/1.1 200 OK
 ETag: "4"
 
 {
-  "id": "tm_ana",
+  "id": "00000000-0000-4000-8000-000000000006",
   "organizationId": "org_acme",
-  "teamId": "team_bcn",
+  "teamId": "00000000-0000-4000-8000-000000000004",
   "membershipId": "mem_ana",
   "status": "active",
   "responsibility": "manager",
   "roleIds": [],
-  "createdAt": "2026-03-02T10:38:00.000Z",
-  "updatedAt": "2026-03-02T10:39:00.000Z",
-  "joinedAt": "2026-03-02T10:40:00.000Z",
+  "createdAt": "2026-03-02T10:36:00.000Z",
+  "updatedAt": "2026-03-02T10:37:00.000Z",
+  "joinedAt": "2026-03-02T10:38:00.000Z",
   "invitedBy": {
     "provider": "main",
     "subject": "mgr"
@@ -4854,7 +4994,7 @@ ETag: "4"
 
 Atomic: it needs `teams.members.remove` in the source team and `teams.members.add` in the destination. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may do it.
 
-- **Scope:** `teams:write` and `actor:assert`
+- **Scope:** `teams:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`ETag`:** the answer carries the version of the resource
@@ -4864,13 +5004,12 @@ Atomic: it needs `teams.members.remove` in the source team and `teams.members.ad
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `organizationId` | string (1–200 chars) | yes | (in the path) The organization. |
-| `id` | string (1–200 chars) | no | Your own id for the new team membership; generated when omitted. |
 | `membershipId` | string (1–200 chars) | yes | The organization membership that changes team. |
 | `fromTeamId` | string (1–200 chars) | yes | The team. |
 | `toTeamId` | string (1–200 chars) | yes | The team. |
 | `reason` | string (1–500 chars) | no | Why. Kept in the audit log. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `201`**
 
@@ -4922,10 +5061,9 @@ curl -X POST "https://uniora.example.com/v1/organizations/org_acme/team-moves" \
   -H 'Uniora-Actor-Subject: mgr' \
   -H "Content-Type: application/json" \
   -d '{
-    "id": "tm_ana_mad",
     "membershipId": "mem_ana",
-    "fromTeamId": "team_bcn",
-    "toTeamId": "team_mad",
+    "fromTeamId": "00000000-0000-4000-8000-000000000004",
+    "toTeamId": "00000000-0000-4000-8000-000000000007",
     "reason": "transfer"
   }'
 ```
@@ -4934,10 +5072,9 @@ curl -X POST "https://uniora.example.com/v1/organizations/org_acme/team-moves" \
 const result = await uniora.teamMembers.move(
   {
     organizationId: "org_acme",
-    id: "tm_ana_mad",
     membershipId: "mem_ana",
-    fromTeamId: "team_bcn",
-    toTeamId: "team_mad",
+    fromTeamId: "00000000-0000-4000-8000-000000000004",
+    toTeamId: "00000000-0000-4000-8000-000000000007",
     reason: "transfer",
   },
   { actor: { subject: "mgr" } },
@@ -4949,16 +5086,16 @@ HTTP/1.1 201 Created
 ETag: "1"
 
 {
-  "id": "tm_ana_mad",
+  "id": "00000000-0000-4000-8000-000000000009",
   "organizationId": "org_acme",
-  "teamId": "team_mad",
+  "teamId": "00000000-0000-4000-8000-000000000007",
   "membershipId": "mem_ana",
   "status": "active",
   "responsibility": "member",
   "roleIds": [],
-  "createdAt": "2026-03-02T10:41:00.000Z",
-  "updatedAt": "2026-03-02T10:42:00.000Z",
-  "joinedAt": "2026-03-02T10:43:00.000Z",
+  "createdAt": "2026-03-02T10:39:00.000Z",
+  "updatedAt": "2026-03-02T10:40:00.000Z",
+  "joinedAt": "2026-03-02T10:41:00.000Z",
   "invitedBy": {
     "provider": "main",
     "subject": "mgr"
@@ -4977,7 +5114,7 @@ Conditional rules that restrict what roles allow.
 
 Ordered by id. `q` matches the key or the name. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user holds the policy permission (`policies.read`, `policies.manage`, `policies.activate`). Policy administration is never subject to policies.
 
-- **Scope:** `organizations:read` and `actor:assert`
+- **Scope:** `organizations:read` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** no
 
@@ -4993,7 +5130,7 @@ Ordered by id. `q` matches the key or the name. A delegated call: it speaks for 
 | `kind` | `access` \| `resource` \| `scope` \| `feature` \| `contextual` \| `sensitive` | no | (query) |
 | `effect` | `deny` \| `require` | no | (query) |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -5057,7 +5194,7 @@ HTTP/1.1 200 OK
 {
   "items": [
     {
-      "id": "00000000-0000-4000-8000-000000000002",
+      "id": "00000000-0000-4000-8000-000000000010",
       "organizationId": "org_acme",
       "key": "freeze-reports",
       "name": "Freeze reports",
@@ -5084,12 +5221,12 @@ HTTP/1.1 200 OK
         "kind": "access"
       },
       "definitionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
-      "createdAt": "2026-03-02T10:44:00.000Z",
+      "createdAt": "2026-03-02T10:42:00.000Z",
       "createdBy": {
         "provider": "main",
         "subject": "mgr"
       },
-      "updatedAt": "2026-03-02T10:45:00.000Z",
+      "updatedAt": "2026-03-02T10:43:00.000Z",
       "version": 1
     }
   ],
@@ -5103,7 +5240,7 @@ HTTP/1.1 200 OK
 
 A policy of another organization answers exactly like one that does not exist. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user holds the policy permission (`policies.read`, `policies.manage`, `policies.activate`). Policy administration is never subject to policies.
 
-- **Scope:** `organizations:read` and `actor:assert`
+- **Scope:** `organizations:read` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** no
 - **`ETag`:** the answer carries the version of the resource
@@ -5115,7 +5252,7 @@ A policy of another organization answers exactly like one that does not exist. A
 | `organizationId` | string (1–200 chars) | yes | (in the path) The organization. |
 | `policyId` | string (1–200 chars) | yes | (in the path) The policy. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -5160,7 +5297,7 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Read a policy**
 
 ```bash
-curl -X GET "https://uniora.example.com/v1/organizations/org_acme/policies/00000000-0000-4000-8000-000000000002" \
+curl -X GET "https://uniora.example.com/v1/organizations/org_acme/policies/00000000-0000-4000-8000-000000000010" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr'
 ```
@@ -5169,7 +5306,7 @@ curl -X GET "https://uniora.example.com/v1/organizations/org_acme/policies/00000
 const result = await uniora.policies.get(
   {
     organizationId: "org_acme",
-    policyId: "00000000-0000-4000-8000-000000000002",
+    policyId: "00000000-0000-4000-8000-000000000010",
   },
   { actor: { subject: "mgr" } },
 );
@@ -5180,7 +5317,7 @@ HTTP/1.1 200 OK
 ETag: "1"
 
 {
-  "id": "00000000-0000-4000-8000-000000000002",
+  "id": "00000000-0000-4000-8000-000000000010",
   "organizationId": "org_acme",
   "key": "freeze-reports",
   "name": "Freeze reports",
@@ -5207,12 +5344,12 @@ ETag: "1"
     "kind": "access"
   },
   "definitionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
-  "createdAt": "2026-03-02T10:46:00.000Z",
+  "createdAt": "2026-03-02T10:44:00.000Z",
   "createdBy": {
     "provider": "main",
     "subject": "mgr"
   },
-  "updatedAt": "2026-03-02T10:47:00.000Z",
+  "updatedAt": "2026-03-02T10:45:00.000Z",
   "version": 1
 }
 ```
@@ -5223,7 +5360,7 @@ ETag: "1"
 
 Newest first. Each revision is immutable; decisions record the revision they used. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user holds the policy permission (`policies.read`, `policies.manage`, `policies.activate`). Policy administration is never subject to policies.
 
-- **Scope:** `organizations:read` and `actor:assert`
+- **Scope:** `organizations:read` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** no
 
@@ -5236,7 +5373,7 @@ Newest first. Each revision is immutable; decisions record the revision they use
 | `limit` | integer (1–1000) | no | (query) Items per page. At most the server's maximum (100 unless configured). |
 | `cursor` | string (1–600 chars) | no | (query) The `nextCursor` of the previous page. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -5270,7 +5407,7 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: The history of the definition**
 
 ```bash
-curl -X GET "https://uniora.example.com/v1/organizations/org_acme/policies/00000000-0000-4000-8000-000000000002/revisions" \
+curl -X GET "https://uniora.example.com/v1/organizations/org_acme/policies/00000000-0000-4000-8000-000000000010/revisions" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr'
 ```
@@ -5279,7 +5416,7 @@ curl -X GET "https://uniora.example.com/v1/organizations/org_acme/policies/00000
 const result = await uniora.policies.revisions(
   {
     organizationId: "org_acme",
-    policyId: "00000000-0000-4000-8000-000000000002",
+    policyId: "00000000-0000-4000-8000-000000000010",
   },
   { actor: { subject: "mgr" } },
 );
@@ -5291,7 +5428,7 @@ HTTP/1.1 200 OK
 {
   "items": [
     {
-      "policyId": "00000000-0000-4000-8000-000000000002",
+      "policyId": "00000000-0000-4000-8000-000000000010",
       "organizationId": "org_acme",
       "revision": 1,
       "definition": {
@@ -5312,7 +5449,7 @@ HTTP/1.1 200 OK
         "kind": "access"
       },
       "definitionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
-      "createdAt": "2026-03-02T10:48:00.000Z",
+      "createdAt": "2026-03-02T10:46:00.000Z",
       "createdBy": {
         "provider": "main",
         "subject": "mgr"
@@ -5329,7 +5466,7 @@ HTTP/1.1 200 OK
 
 A draft is never evaluated. Its id is generated by the server. Needs `policies.manage`. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user holds the policy permission (`policies.read`, `policies.manage`, `policies.activate`). Policy administration is never subject to policies.
 
-- **Scope:** `policies:write` and `actor:assert`
+- **Scope:** `policies:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`ETag`:** the answer carries the version of the resource
@@ -5345,7 +5482,7 @@ A draft is never evaluated. Its id is generated by the server. Needs `policies.m
 | `definition` | object (free keys) | yes | The rule, in the policy language. `POST .../policy-validations` checks one without saving it. |
 | `note` | string (1–500 chars) | no | A note kept with this revision of the definition. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `201`**
 
@@ -5445,10 +5582,10 @@ const result = await uniora.policies.create(
 ```http
 HTTP/1.1 201 Created
 ETag: "1"
-Location: /v1/organizations/org_acme/policies/00000000-0000-4000-8000-000000000002
+Location: /v1/organizations/org_acme/policies/00000000-0000-4000-8000-000000000010
 
 {
-  "id": "00000000-0000-4000-8000-000000000002",
+  "id": "00000000-0000-4000-8000-000000000010",
   "organizationId": "org_acme",
   "key": "freeze-reports",
   "name": "Freeze reports",
@@ -5475,12 +5612,12 @@ Location: /v1/organizations/org_acme/policies/00000000-0000-4000-8000-0000000000
     "kind": "access"
   },
   "definitionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
-  "createdAt": "2026-03-02T10:49:00.000Z",
+  "createdAt": "2026-03-02T10:47:00.000Z",
   "createdBy": {
     "provider": "main",
     "subject": "mgr"
   },
-  "updatedAt": "2026-03-02T10:50:00.000Z",
+  "updatedAt": "2026-03-02T10:48:00.000Z",
   "version": 1
 }
 ```
@@ -5535,10 +5672,10 @@ const result = await uniora.policies.create(
 ```http
 HTTP/1.1 201 Created
 ETag: "1"
-Location: /v1/organizations/org_acme/policies/00000000-0000-4000-8000-000000000003
+Location: /v1/organizations/org_acme/policies/00000000-0000-4000-8000-000000000011
 
 {
-  "id": "00000000-0000-4000-8000-000000000003",
+  "id": "00000000-0000-4000-8000-000000000011",
   "organizationId": "org_acme",
   "key": "scratch",
   "name": "Scratch",
@@ -5564,12 +5701,12 @@ Location: /v1/organizations/org_acme/policies/00000000-0000-4000-8000-0000000000
     "kind": "access"
   },
   "definitionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2",
-  "createdAt": "2026-03-02T10:51:00.000Z",
+  "createdAt": "2026-03-02T10:49:00.000Z",
   "createdBy": {
     "provider": "main",
     "subject": "mgr"
   },
-  "updatedAt": "2026-03-02T10:52:00.000Z",
+  "updatedAt": "2026-03-02T10:50:00.000Z",
   "version": 1
 }
 ```
@@ -5580,7 +5717,7 @@ Location: /v1/organizations/org_acme/policies/00000000-0000-4000-8000-0000000000
 
 Metadata and, for a draft or disabled policy, the definition. Changing the definition of an ACTIVE policy also needs `policies.activate`. Send `If-Match` to refuse a stale edit. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user holds the policy permission (`policies.read`, `policies.manage`, `policies.activate`). Policy administration is never subject to policies.
 
-- **Scope:** `policies:write` and `actor:assert`
+- **Scope:** `policies:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`If-Match`:** send the version you last saw; a stale one is a `412` and nothing changes
@@ -5597,7 +5734,7 @@ Metadata and, for a draft or disabled policy, the definition. Changing the defin
 | `definition` | object (free keys) | no | The new rule. It becomes a new revision. |
 | `note` | string (1–500 chars) | no | A note kept with this revision of the definition. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -5646,7 +5783,7 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Edit the draft**
 
 ```bash
-curl -X PATCH "https://uniora.example.com/v1/organizations/org_acme/policies/00000000-0000-4000-8000-000000000002" \
+curl -X PATCH "https://uniora.example.com/v1/organizations/org_acme/policies/00000000-0000-4000-8000-000000000010" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr' \
   -H "Content-Type: application/json" \
@@ -5660,7 +5797,7 @@ curl -X PATCH "https://uniora.example.com/v1/organizations/org_acme/policies/000
 const result = await uniora.policies.update(
   {
     organizationId: "org_acme",
-    policyId: "00000000-0000-4000-8000-000000000002",
+    policyId: "00000000-0000-4000-8000-000000000010",
     name: "Freeze reports during the audit",
     note: "clearer name",
   },
@@ -5673,7 +5810,7 @@ HTTP/1.1 200 OK
 ETag: "2"
 
 {
-  "id": "00000000-0000-4000-8000-000000000002",
+  "id": "00000000-0000-4000-8000-000000000010",
   "organizationId": "org_acme",
   "key": "freeze-reports",
   "name": "Freeze reports during the audit",
@@ -5700,12 +5837,12 @@ ETag: "2"
     "kind": "access"
   },
   "definitionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
-  "createdAt": "2026-03-02T10:53:00.000Z",
+  "createdAt": "2026-03-02T10:51:00.000Z",
   "createdBy": {
     "provider": "main",
     "subject": "mgr"
   },
-  "updatedAt": "2026-03-02T10:54:00.000Z",
+  "updatedAt": "2026-03-02T10:52:00.000Z",
   "version": 2
 }
 ```
@@ -5716,7 +5853,7 @@ ETag: "2"
 
 From now on it is evaluated on every matching request. Needs `policies.activate`. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user holds the policy permission (`policies.read`, `policies.manage`, `policies.activate`). Policy administration is never subject to policies.
 
-- **Scope:** `policies:write` and `actor:assert`
+- **Scope:** `policies:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`If-Match`:** send the version you last saw; a stale one is a `412` and nothing changes
@@ -5730,7 +5867,7 @@ From now on it is evaluated on every matching request. Needs `policies.activate`
 | `policyId` | string (1–200 chars) | yes | (in the path) The policy. |
 | `reason` | string (1–500 chars) | no | Why. Kept in the audit log. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -5779,7 +5916,7 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Put it live**
 
 ```bash
-curl -X POST "https://uniora.example.com/v1/organizations/org_acme/policies/00000000-0000-4000-8000-000000000002/activate" \
+curl -X POST "https://uniora.example.com/v1/organizations/org_acme/policies/00000000-0000-4000-8000-000000000010/activate" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr' \
   -H "Content-Type: application/json" \
@@ -5792,7 +5929,7 @@ curl -X POST "https://uniora.example.com/v1/organizations/org_acme/policies/0000
 const result = await uniora.policies.activate(
   {
     organizationId: "org_acme",
-    policyId: "00000000-0000-4000-8000-000000000002",
+    policyId: "00000000-0000-4000-8000-000000000010",
     reason: "audit starts",
   },
   { actor: { subject: "mgr" } },
@@ -5804,7 +5941,7 @@ HTTP/1.1 200 OK
 ETag: "3"
 
 {
-  "id": "00000000-0000-4000-8000-000000000002",
+  "id": "00000000-0000-4000-8000-000000000010",
   "organizationId": "org_acme",
   "key": "freeze-reports",
   "name": "Freeze reports during the audit",
@@ -5831,21 +5968,21 @@ ETag: "3"
     "kind": "access"
   },
   "definitionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
-  "createdAt": "2026-03-02T10:55:00.000Z",
+  "createdAt": "2026-03-02T10:53:00.000Z",
   "createdBy": {
     "provider": "main",
     "subject": "mgr"
   },
-  "updatedAt": "2026-03-02T10:56:00.000Z",
+  "updatedAt": "2026-03-02T10:54:00.000Z",
   "statusChange": {
-    "at": "2026-03-02T10:57:00.000Z",
+    "at": "2026-03-02T10:55:00.000Z",
     "by": {
       "provider": "main",
       "subject": "mgr"
     },
     "reason": "audit starts"
   },
-  "activatedAt": "2026-03-02T10:58:00.000Z",
+  "activatedAt": "2026-03-02T10:56:00.000Z",
   "version": 3
 }
 ```
@@ -5856,7 +5993,7 @@ ETag: "3"
 
 It is no longer evaluated and can be activated again. Needs `policies.activate`. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user holds the policy permission (`policies.read`, `policies.manage`, `policies.activate`). Policy administration is never subject to policies.
 
-- **Scope:** `policies:write` and `actor:assert`
+- **Scope:** `policies:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`If-Match`:** send the version you last saw; a stale one is a `412` and nothing changes
@@ -5870,7 +6007,7 @@ It is no longer evaluated and can be activated again. Needs `policies.activate`.
 | `policyId` | string (1–200 chars) | yes | (in the path) The policy. |
 | `reason` | string (1–500 chars) | no | Why. Kept in the audit log. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -5919,7 +6056,7 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Switch it off**
 
 ```bash
-curl -X POST "https://uniora.example.com/v1/organizations/org_acme/policies/00000000-0000-4000-8000-000000000002/disable" \
+curl -X POST "https://uniora.example.com/v1/organizations/org_acme/policies/00000000-0000-4000-8000-000000000010/disable" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr' \
   -H "Content-Type: application/json" \
@@ -5930,7 +6067,7 @@ curl -X POST "https://uniora.example.com/v1/organizations/org_acme/policies/0000
 const result = await uniora.policies.disable(
   {
     organizationId: "org_acme",
-    policyId: "00000000-0000-4000-8000-000000000002",
+    policyId: "00000000-0000-4000-8000-000000000010",
   },
   { actor: { subject: "mgr" } },
 );
@@ -5941,7 +6078,7 @@ HTTP/1.1 200 OK
 ETag: "4"
 
 {
-  "id": "00000000-0000-4000-8000-000000000002",
+  "id": "00000000-0000-4000-8000-000000000010",
   "organizationId": "org_acme",
   "key": "freeze-reports",
   "name": "Freeze reports during the audit",
@@ -5968,20 +6105,20 @@ ETag: "4"
     "kind": "access"
   },
   "definitionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
-  "createdAt": "2026-03-02T10:59:00.000Z",
+  "createdAt": "2026-03-02T10:57:00.000Z",
   "createdBy": {
     "provider": "main",
     "subject": "mgr"
   },
-  "updatedAt": "2026-03-02T11:00:00.000Z",
+  "updatedAt": "2026-03-02T10:58:00.000Z",
   "statusChange": {
-    "at": "2026-03-02T11:01:00.000Z",
+    "at": "2026-03-02T10:59:00.000Z",
     "by": {
       "provider": "main",
       "subject": "mgr"
     }
   },
-  "activatedAt": "2026-03-02T11:02:00.000Z",
+  "activatedAt": "2026-03-02T11:00:00.000Z",
   "version": 4
 }
 ```
@@ -5992,7 +6129,7 @@ ETag: "4"
 
 It is no longer evaluated, kept for the record, and can never be activated again. Needs `policies.activate`. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user holds the policy permission (`policies.read`, `policies.manage`, `policies.activate`). Policy administration is never subject to policies.
 
-- **Scope:** `policies:write` and `actor:assert`
+- **Scope:** `policies:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`If-Match`:** send the version you last saw; a stale one is a `412` and nothing changes
@@ -6006,7 +6143,7 @@ It is no longer evaluated, kept for the record, and can never be activated again
 | `policyId` | string (1–200 chars) | yes | (in the path) The policy. |
 | `reason` | string (1–500 chars) | no | Why. Kept in the audit log. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -6055,7 +6192,7 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Retire it for good**
 
 ```bash
-curl -X POST "https://uniora.example.com/v1/organizations/org_acme/policies/00000000-0000-4000-8000-000000000002/retire" \
+curl -X POST "https://uniora.example.com/v1/organizations/org_acme/policies/00000000-0000-4000-8000-000000000010/retire" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr' \
   -H "Content-Type: application/json" \
@@ -6068,7 +6205,7 @@ curl -X POST "https://uniora.example.com/v1/organizations/org_acme/policies/0000
 const result = await uniora.policies.retire(
   {
     organizationId: "org_acme",
-    policyId: "00000000-0000-4000-8000-000000000002",
+    policyId: "00000000-0000-4000-8000-000000000010",
     reason: "audit over",
   },
   { actor: { subject: "mgr" } },
@@ -6080,7 +6217,7 @@ HTTP/1.1 200 OK
 ETag: "5"
 
 {
-  "id": "00000000-0000-4000-8000-000000000002",
+  "id": "00000000-0000-4000-8000-000000000010",
   "organizationId": "org_acme",
   "key": "freeze-reports",
   "name": "Freeze reports during the audit",
@@ -6107,21 +6244,21 @@ ETag: "5"
     "kind": "access"
   },
   "definitionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
-  "createdAt": "2026-03-02T11:03:00.000Z",
+  "createdAt": "2026-03-02T11:01:00.000Z",
   "createdBy": {
     "provider": "main",
     "subject": "mgr"
   },
-  "updatedAt": "2026-03-02T11:04:00.000Z",
+  "updatedAt": "2026-03-02T11:02:00.000Z",
   "statusChange": {
-    "at": "2026-03-02T11:05:00.000Z",
+    "at": "2026-03-02T11:03:00.000Z",
     "by": {
       "provider": "main",
       "subject": "mgr"
     },
     "reason": "audit over"
   },
-  "activatedAt": "2026-03-02T11:06:00.000Z",
+  "activatedAt": "2026-03-02T11:04:00.000Z",
   "version": 5
 }
 ```
@@ -6132,7 +6269,7 @@ ETag: "5"
 
 Only a policy that has never been active can be deleted; retire the others. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user holds the policy permission (`policies.read`, `policies.manage`, `policies.activate`). Policy administration is never subject to policies.
 
-- **Scope:** `policies:write` and `actor:assert`
+- **Scope:** `policies:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 
@@ -6143,7 +6280,7 @@ Only a policy that has never been active can be deleted; retire the others. A de
 | `organizationId` | string (1–200 chars) | yes | (in the path) The organization. |
 | `policyId` | string (1–200 chars) | yes | (in the path) The policy. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -6166,7 +6303,7 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Delete a draft**
 
 ```bash
-curl -X DELETE "https://uniora.example.com/v1/organizations/org_acme/policies/00000000-0000-4000-8000-000000000003" \
+curl -X DELETE "https://uniora.example.com/v1/organizations/org_acme/policies/00000000-0000-4000-8000-000000000011" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr'
 ```
@@ -6175,7 +6312,7 @@ curl -X DELETE "https://uniora.example.com/v1/organizations/org_acme/policies/00
 const result = await uniora.policies.delete(
   {
     organizationId: "org_acme",
-    policyId: "00000000-0000-4000-8000-000000000003",
+    policyId: "00000000-0000-4000-8000-000000000011",
   },
   { actor: { subject: "mgr" } },
 );
@@ -6195,7 +6332,7 @@ HTTP/1.1 200 OK
 
 Answers with the normalized definition, its hash and what it reads, or `policy_definition_invalid`. Writes nothing. Needs `policies.read`. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user holds the policy permission (`policies.read`, `policies.manage`, `policies.activate`). Policy administration is never subject to policies.
 
-- **Scope:** `organizations:read` and `actor:assert`
+- **Scope:** `organizations:read` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** no
 
@@ -6206,7 +6343,7 @@ Answers with the normalized definition, its hash and what it reads, or `policy_d
 | `organizationId` | string (1–200 chars) | yes | (in the path) The organization. |
 | `definition` | object (free keys) | yes | The rule to check. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -6336,7 +6473,7 @@ HTTP/1.1 400 Bad Request
   "title": "Bad Request",
   "status": 400,
   "code": "policy_definition_invalid",
-  "requestId": "req_xxxxxxxxxxxxxxx9"
+  "requestId": "req_xxxxxxxxxxxxxx1x"
 }
 ```
 
@@ -6346,7 +6483,7 @@ HTTP/1.1 400 Bad Request
 
 Answers `authorize` for any member and any resource, optionally with a candidate definition in place of a stored one. Writes nothing. Needs `policies.read`. `identity` is the person the question is about, not the actor. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user holds the policy permission (`policies.read`, `policies.manage`, `policies.activate`). Policy administration is never subject to policies.
 
-- **Scope:** `organizations:read` and `actor:assert`
+- **Scope:** `organizations:read` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** no
 
@@ -6379,7 +6516,7 @@ Answers `authorize` for any member and any resource, optionally with a candidate
 | `candidate.policyId` | string (1–200 chars) | no | Replace this policy's definition. |
 | `candidate.definition` | object (free keys) | yes | The definition to try. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -6483,7 +6620,7 @@ HTTP/1.1 200 OK
       "reason": "policy_denied"
     }
   ],
-  "evaluatedAt": "2026-03-02T11:07:00.000Z"
+  "evaluatedAt": "2026-03-02T11:05:00.000Z"
 }
 ```
 
@@ -6497,7 +6634,7 @@ Invite people, and the accept flow your server relays.
 
 Creates the invitation and, if the server has a sender, e-mails the link. The Owner role can never be offered. Send an `Idempotency-Key` to make a retry safe: the same key with the same request creates and sends nothing and answers `replayed: true`; the same key with a different request is `invitation_idempotency_conflict`. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may invite with those roles (`members.invite` and every permission of every role offered).
 
-- **Scope:** `invitations:write` and `actor:assert`
+- **Scope:** `invitations:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 - **`Idempotency-Key`:** accepted, so a retry cannot repeat the change
@@ -6514,7 +6651,7 @@ Creates the invitation and, if the server has a sender, e-mails the link. The Ow
 | `locale` | string (2–35 chars) | no | Language hint for the e-mail. |
 | `allowExistingMember` | boolean | no |  |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `201`**
 
@@ -6603,7 +6740,7 @@ HTTP/1.1 201 Created
 
 {
   "invitation": {
-    "id": "00000000-0000-4000-8000-000000000004",
+    "id": "00000000-0000-4000-8000-000000000012",
     "organizationId": "org_acme",
     "email": "new.person@example.com",
     "roleIds": [
@@ -6615,8 +6752,8 @@ HTTP/1.1 201 Created
       "subject": "mgr"
     },
     "status": "pending",
-    "createdAt": "2026-03-02T11:08:00.000Z",
-    "expiresAt": "2026-03-02T11:09:00.000Z",
+    "createdAt": "2026-03-02T11:06:00.000Z",
+    "expiresAt": "2026-03-02T11:07:00.000Z",
     "delivery": {
       "status": "pending",
       "attempts": 0,
@@ -6662,7 +6799,7 @@ HTTP/1.1 201 Created
 
 {
   "invitation": {
-    "id": "00000000-0000-4000-8000-000000000005",
+    "id": "00000000-0000-4000-8000-000000000013",
     "organizationId": "org_acme",
     "email": "second@example.com",
     "roleIds": [
@@ -6674,8 +6811,8 @@ HTTP/1.1 201 Created
       "subject": "mgr"
     },
     "status": "pending",
-    "createdAt": "2026-03-02T11:10:00.000Z",
-    "expiresAt": "2026-03-02T11:11:00.000Z",
+    "createdAt": "2026-03-02T11:08:00.000Z",
+    "expiresAt": "2026-03-02T11:09:00.000Z",
     "delivery": {
       "status": "pending",
       "attempts": 0,
@@ -6696,7 +6833,7 @@ HTTP/1.1 201 Created
 
 Issues a NEW link (the old one stops working), extends the expiry and sends again. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may invite with those roles (`members.invite` and every permission of every role offered).
 
-- **Scope:** `invitations:write` and `actor:assert`
+- **Scope:** `invitations:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 
@@ -6709,7 +6846,7 @@ Issues a NEW link (the old one stops working), extends the expiry and sends agai
 | `locale` | string (2–35 chars) | no |  |
 | `ttlMs` | integer (1–2592000000) | no |  |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -6766,7 +6903,7 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Send it again with a new link**
 
 ```bash
-curl -X POST "https://uniora.example.com/v1/organizations/org_acme/invitations/00000000-0000-4000-8000-000000000005/resend" \
+curl -X POST "https://uniora.example.com/v1/organizations/org_acme/invitations/00000000-0000-4000-8000-000000000013/resend" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr' \
   -H "Content-Type: application/json" \
@@ -6777,7 +6914,7 @@ curl -X POST "https://uniora.example.com/v1/organizations/org_acme/invitations/0
 const result = await uniora.invitations.resend(
   {
     organizationId: "org_acme",
-    invitationId: "00000000-0000-4000-8000-000000000005",
+    invitationId: "00000000-0000-4000-8000-000000000013",
   },
   { actor: { subject: "mgr" } },
 );
@@ -6788,7 +6925,7 @@ HTTP/1.1 200 OK
 
 {
   "invitation": {
-    "id": "00000000-0000-4000-8000-000000000005",
+    "id": "00000000-0000-4000-8000-000000000013",
     "organizationId": "org_acme",
     "email": "second@example.com",
     "roleIds": [
@@ -6800,8 +6937,8 @@ HTTP/1.1 200 OK
       "subject": "mgr"
     },
     "status": "pending",
-    "createdAt": "2026-03-02T11:12:00.000Z",
-    "expiresAt": "2026-03-02T11:13:00.000Z",
+    "createdAt": "2026-03-02T11:10:00.000Z",
+    "expiresAt": "2026-03-02T11:11:00.000Z",
     "delivery": {
       "status": "pending",
       "attempts": 0,
@@ -6822,7 +6959,7 @@ HTTP/1.1 200 OK
 
 The link stops working. An invitation of another organization answers exactly like one that does not exist. A delegated call: it speaks for the end user in the `Uniora-Actor-Subject` header, needs the `actor:assert` scope as well, and succeeds only if that user may invite with those roles (`members.invite` and every permission of every role offered).
 
-- **Scope:** `invitations:write` and `actor:assert`
+- **Scope:** `invitations:write` and `actor:verified` (with a token) or `actor:assert` (asserted)
 - **Kind:** delegated (speaks for an end user)
 - **Changes data:** yes (refused with `503 read_only` while the server is read-only)
 
@@ -6833,7 +6970,7 @@ The link stops working. An invitation of another organization answers exactly li
 | `organizationId` | string (1–200 chars) | yes | (in the path) The organization. |
 | `invitationId` | string (1–200 chars) | yes | (in the path) The invitation. |
 
-Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded) and, when your server has no default label, `Uniora-Actor-Provider`.
+Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-Token` (the user's own token from your identity provider, verified by the server) or `Uniora-Actor-Subject` (asserted, percent-encoded; with `Uniora-Actor-Provider` when your server has no default label).
 
 **Response `200`**
 
@@ -6881,7 +7018,7 @@ Delegated calls also send `Uniora-Actor-Subject` (the end user, percent-encoded)
 **Example: Revoke it**
 
 ```bash
-curl -X DELETE "https://uniora.example.com/v1/organizations/org_acme/invitations/00000000-0000-4000-8000-000000000005" \
+curl -X DELETE "https://uniora.example.com/v1/organizations/org_acme/invitations/00000000-0000-4000-8000-000000000013" \
   -H "Authorization: Bearer $UNIORA_API_KEY" \
   -H 'Uniora-Actor-Subject: mgr'
 ```
@@ -6890,7 +7027,7 @@ curl -X DELETE "https://uniora.example.com/v1/organizations/org_acme/invitations
 const result = await uniora.invitations.revoke(
   {
     organizationId: "org_acme",
-    invitationId: "00000000-0000-4000-8000-000000000005",
+    invitationId: "00000000-0000-4000-8000-000000000013",
   },
   { actor: { subject: "mgr" } },
 );
@@ -6900,7 +7037,7 @@ const result = await uniora.invitations.revoke(
 HTTP/1.1 200 OK
 
 {
-  "id": "00000000-0000-4000-8000-000000000005",
+  "id": "00000000-0000-4000-8000-000000000013",
   "organizationId": "org_acme",
   "email": "second@example.com",
   "roleIds": [
@@ -6912,9 +7049,9 @@ HTTP/1.1 200 OK
     "subject": "mgr"
   },
   "status": "revoked",
-  "createdAt": "2026-03-02T11:14:00.000Z",
-  "expiresAt": "2026-03-02T11:15:00.000Z",
-  "revokedAt": "2026-03-02T11:16:00.000Z",
+  "createdAt": "2026-03-02T11:12:00.000Z",
+  "expiresAt": "2026-03-02T11:13:00.000Z",
+  "revokedAt": "2026-03-02T11:14:00.000Z",
   "delivery": {
     "status": "pending",
     "attempts": 0,
@@ -6982,7 +7119,7 @@ HTTP/1.1 200 OK
     "Viewer"
   ],
   "teamNames": [],
-  "expiresAt": "2026-03-02T11:17:00.000Z"
+  "expiresAt": "2026-03-02T11:15:00.000Z"
 }
 ```
 
@@ -7080,7 +7217,7 @@ HTTP/1.1 200 OK
 
 {
   "invitation": {
-    "id": "00000000-0000-4000-8000-000000000004",
+    "id": "00000000-0000-4000-8000-000000000012",
     "organizationId": "org_acme",
     "email": "new.person@example.com",
     "roleIds": [
@@ -7092,9 +7229,9 @@ HTTP/1.1 200 OK
       "subject": "mgr"
     },
     "status": "accepted",
-    "createdAt": "2026-03-02T11:18:00.000Z",
-    "expiresAt": "2026-03-02T11:19:00.000Z",
-    "acceptedAt": "2026-03-02T11:20:00.000Z",
+    "createdAt": "2026-03-02T11:16:00.000Z",
+    "expiresAt": "2026-03-02T11:17:00.000Z",
+    "acceptedAt": "2026-03-02T11:18:00.000Z",
     "acceptedBy": {
       "provider": "main",
       "subject": "newbie-1"
@@ -7194,13 +7331,14 @@ HTTP/1.1 200 OK
         "via": {
           "apiClientId": "apc_EXAMPLE00001",
           "keyId": "EXAMPLEKEYID0001",
-          "requestId": "req_xxxxxxxxxxxxxx1x"
+          "requestId": "req_xxxxxxxxxxxxxx11",
+          "actorMode": "asserted"
         }
       },
-      "createdAt": "2026-03-02T11:21:00.000Z"
+      "createdAt": "2026-03-02T11:19:00.000Z"
     },
     {
-      "id": "00000000-0000-4000-8000-000000000007",
+      "id": "00000000-0000-4000-8000-000000000015",
       "organizationId": "org_acme",
       "actor": {
         "provider": "main",
@@ -7209,20 +7347,21 @@ HTTP/1.1 200 OK
       "action": "invitation.revoked",
       "target": {
         "type": "invitation",
-        "id": "00000000-0000-4000-8000-000000000005"
+        "id": "00000000-0000-4000-8000-000000000013"
       },
       "metadata": {
         "emailFingerprint": "e9138a31d3cd584893b7c3b17bf0f376",
         "via": {
           "apiClientId": "apc_EXAMPLE00001",
           "keyId": "EXAMPLEKEYID0001",
-          "requestId": "req_xxxxxxxxxxxxxx11"
+          "requestId": "req_xxxxxxxxxxxxxx12",
+          "actorMode": "asserted"
         }
       },
-      "createdAt": "2026-03-02T11:22:00.000Z"
+      "createdAt": "2026-03-02T11:20:00.000Z"
     },
     {
-      "id": "00000000-0000-4000-8000-000000000008",
+      "id": "00000000-0000-4000-8000-000000000016",
       "organizationId": "org_acme",
       "actor": {
         "provider": "main",
@@ -7231,20 +7370,21 @@ HTTP/1.1 200 OK
       "action": "invitation.resent",
       "target": {
         "type": "invitation",
-        "id": "00000000-0000-4000-8000-000000000005"
+        "id": "00000000-0000-4000-8000-000000000013"
       },
       "metadata": {
         "emailFingerprint": "e9138a31d3cd584893b7c3b17bf0f376",
         "via": {
           "apiClientId": "apc_EXAMPLE00001",
           "keyId": "EXAMPLEKEYID0001",
-          "requestId": "req_xxxxxxxxxxxxxx12"
+          "requestId": "req_xxxxxxxxxxxxxx13",
+          "actorMode": "asserted"
         }
       },
-      "createdAt": "2026-03-02T11:23:00.000Z"
+      "createdAt": "2026-03-02T11:21:00.000Z"
     },
     {
-      "id": "00000000-0000-4000-8000-000000000009",
+      "id": "00000000-0000-4000-8000-000000000017",
       "organizationId": "org_acme",
       "actor": {
         "provider": "main",
@@ -7253,7 +7393,7 @@ HTTP/1.1 200 OK
       "action": "invitation.created",
       "target": {
         "type": "invitation",
-        "id": "00000000-0000-4000-8000-000000000005"
+        "id": "00000000-0000-4000-8000-000000000013"
       },
       "metadata": {
         "emailFingerprint": "e9138a31d3cd584893b7c3b17bf0f376",
@@ -7263,10 +7403,11 @@ HTTP/1.1 200 OK
         "via": {
           "apiClientId": "apc_EXAMPLE00001",
           "keyId": "EXAMPLEKEYID0001",
-          "requestId": "req_xxxxxxxxxxxxxx13"
+          "requestId": "req_xxxxxxxxxxxxxx14",
+          "actorMode": "asserted"
         }
       },
-      "createdAt": "2026-03-02T11:24:00.000Z"
+      "createdAt": "2026-03-02T11:22:00.000Z"
     }
   ],
   "nextCursor": "EXAMPLE_OPAQUE_CURSOR"

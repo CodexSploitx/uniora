@@ -1,5 +1,7 @@
 import { createMemoryStorage } from "../storage/memory.js";
 import type { AuditLogRepository } from "../audit-log/repository.js";
+import { assertRateLease, leaseFromBucket } from "./rate-limit.js";
+import type { RateLimitRepository } from "./rate-limit.js";
 import { ApiCredentialError } from "./errors.js";
 import {
   MAX_ACTIVE_API_KEYS_PER_CLIENT,
@@ -39,6 +41,7 @@ export function createMemoryApiCredentialStorage(options: MemoryApiCredentialSto
   const auditLogs = options.auditLogs ?? createMemoryStorage().auditLogs;
   const clients = new Map<string, StoredClient>();
   const keys = new Map<string, ApiKeyRecord>();
+  const buckets = new Map<string, { tokens: number; updatedMs: number }>();
 
   const apiClients: ApiClientRepository = {
     async create(input) {
@@ -192,8 +195,20 @@ export function createMemoryApiCredentialStorage(options: MemoryApiCredentialSto
   let queue: Promise<unknown> = Promise.resolve();
   const scope: ApiCredentialTransaction = { apiClients, apiKeys, auditLogs };
 
+  const rateLimits: RateLimitRepository = {
+    async lease(input) {
+      assertRateLease(input);
+      const nowMs = (input.at ?? new Date()).getTime();
+      const current = buckets.get(input.key);
+      const { granted, tokens } = leaseFromBucket(current, input, nowMs);
+      buckets.set(input.key, { tokens, updatedMs: Math.max(nowMs, current?.updatedMs ?? 0) });
+      return granted;
+    },
+  };
+
   return {
     ...scope,
+    rateLimits,
     transaction<T>(callback: (tx: ApiCredentialTransaction) => Promise<T>): Promise<T> {
       const run = queue.then(async () => {
         const before = { clients: structuredClone([...clients.entries()]), keys: structuredClone([...keys.entries()]) };

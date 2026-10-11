@@ -1,10 +1,23 @@
 import { computeAuthorizationSnapshot } from "@uniora/core";
 import type { AuthorizationReason } from "@uniora/core";
-import { errors } from "../errors.js";
+import { ApiError, errors } from "../errors.js";
+import type { RouteContext } from "../route.js";
 import { defineRoute } from "../route.js";
 import { s } from "../schema.js";
 import { IdentityInput, id, mapPool } from "./common.js";
 import { ContextInput, ResourceInput, SessionInput } from "./schemas.js";
+
+/** With a verified `Uniora-Actor-Token`, the question must be about the person the token proves: a mismatch is the caller's bug, not an answer. */
+function resolveAsked(ctx: RouteContext, input: { provider?: string | undefined; subject: string }) {
+  const identity = ctx.resolveIdentity(input, "identity");
+  const proven = ctx.verifiedActor?.identity;
+  if (proven && (proven.provider !== identity.provider || proven.subject !== identity.subject)) {
+    throw new ApiError(400, "actor_mismatch", { issues: [{ path: "identity", code: "pattern" }] });
+  }
+  return identity;
+}
+
+const TOKEN_NOTE = " Send the end user's token in `Uniora-Actor-Token` and the server verifies it: the question must then be about that person.";
 
 const permissionKey = (description: string) => s.string({ min: 1, max: 200, description, example: "vehicles.delete" });
 const featureKey = (description: string) => s.string({ min: 1, max: 200, description, example: "advanced_reports" });
@@ -42,9 +55,10 @@ export const decisionRoutes = [
     path: "/v1/check",
     summary: "May this identity do this?",
     description:
-      "Answers with the role-based decision of the engine: whether the identity holds the permission in the organization (and, if asked, whether the organization has the feature enabled). Anything the engine cannot justify is `false`; an unknown organization, a non-member and a malformed key all answer `false` the same way. Policies are not applied here: use `authorize` for that.",
+      "Answers with the role-based decision of the engine: whether the identity holds the permission in the organization (and, if asked, whether the organization has the feature enabled). Anything the engine cannot justify is `false`; an unknown organization, a non-member and a malformed key all answer `false` the same way. Policies are not applied here: use `authorize` for that." + TOKEN_NOTE,
     scope: "check",
     write: false,
+    actorToken: true,
     body: s.object({
       identity: IdentityInput,
       organizationId: id("The organization the question is about.", "org_acme"),
@@ -57,7 +71,7 @@ export const decisionRoutes = [
     refine: ({ body }) => needsPermissionOrFeature(body),
     errors: ["identity_provider_required", "identity_provider_reserved", "organization_not_found"],
     async handler(ctx, { body }) {
-      const identity = ctx.resolveIdentity(body.identity, "identity");
+      const identity = resolveAsked(ctx, body.identity);
       const allowed =
         body.feature !== undefined
           ? await ctx.engine.access.check({
@@ -83,9 +97,10 @@ export const decisionRoutes = [
     path: "/v1/check:batch",
     summary: "Several questions about one identity in one round trip",
     description:
-      "Each check is evaluated independently, in the order given, and the answers come back in the same order. Use it to render a whole screen in one call. A malformed check answers `false` for that entry only.",
+      "Each check is evaluated independently, in the order given, and the answers come back in the same order. Use it to render a whole screen in one call. A malformed check answers `false` for that entry only." + TOKEN_NOTE,
     scope: "check",
     write: false,
+    actorToken: true,
     body: s.object({
       identity: IdentityInput,
       organizationId: id("The organization the questions are about.", "org_acme"),
@@ -97,7 +112,7 @@ export const decisionRoutes = [
     errors: ["identity_provider_required", "identity_provider_reserved", "organization_not_found"],
     async handler(ctx, { body }) {
       if (body.checks.length > ctx.config.limits.maxBatchChecks) throw errors.invalidRequest([{ path: "checks", code: "too_many" }]);
-      const identity = ctx.resolveIdentity(body.identity, "identity");
+      const identity = resolveAsked(ctx, body.identity);
       const results = await mapPool(body.checks, 8, async (check) => ({
         allowed:
           check.feature !== undefined
@@ -125,9 +140,10 @@ export const decisionRoutes = [
     path: "/v1/authorize",
     summary: "The full decision, with the organization's policies",
     description:
-      "Like `check`, and then the organization's policies are applied on top of the roles (they can only restrict). Pass what YOUR server knows: the resource, the signals about the request (`context`) and how the person authenticated (`session`). UNIORA cannot verify those, so never copy them from what the end user sent. The answer never throws: a failure while deciding is `allowed: false`. When the refusal comes only from policies that stronger or fresher authentication could satisfy, `stepUp` says so: send the person to your own sign-in flow and ask again.",
+      "Like `check`, and then the organization's policies are applied on top of the roles (they can only restrict). Pass what YOUR server knows: the resource, the signals about the request (`context`) and how the person authenticated (`session`). UNIORA cannot verify those, so never copy them from what the end user sent. The answer never throws: a failure while deciding is `allowed: false`. When the refusal comes only from policies that stronger or fresher authentication could satisfy, `stepUp` says so: send the person to your own sign-in flow and ask again. With a verified `Uniora-Actor-Token` the server takes the `session` from the token (`auth_time`, `amr`, `acr`) and refuses a `session` in the body: facts the user's own provider signed, instead of what your server says.",
     scope: "check",
     write: false,
+    actorToken: true,
     body: s.object({
       identity: IdentityInput,
       organizationId: id("The organization the question is about.", "org_acme"),
@@ -152,7 +168,10 @@ export const decisionRoutes = [
     organization: ({ body }) => body.organizationId,
     errors: ["identity_provider_required", "identity_provider_reserved", "organization_not_found"],
     async handler(ctx, { body }) {
-      const identity = ctx.resolveIdentity(body.identity, "identity");
+      const identity = resolveAsked(ctx, body.identity);
+      if (ctx.verifiedActor && body.session !== undefined) throw errors.invalidRequest([{ path: "session", code: "too_many" }]);
+      const verified = ctx.verifiedActor?.session;
+      const session = body.session ?? (verified && Object.keys(verified).length > 0 ? verified : undefined);
       const result = await ctx.engine.authorize({
         identity,
         organizationId: body.organizationId,
@@ -170,7 +189,7 @@ export const decisionRoutes = [
             }
           : {}),
         ...(body.context !== undefined ? { context: body.context } : {}),
-        ...(body.session !== undefined ? { session: body.session } : {}),
+        ...(session !== undefined ? { session } : {}),
         ...(body.requireApplicablePolicy !== undefined ? { requireApplicablePolicy: body.requireApplicablePolicy } : {}),
       });
       return {
@@ -191,9 +210,10 @@ export const decisionRoutes = [
     path: "/v1/snapshots",
     summary: "A bounded set of decisions for a UI, in one call",
     description:
-      "Resolves exactly the permissions and features listed, for one identity in one organization. It is bounded on purpose: this is not \"everything this person can do\" (which is not even defined for an Owner). A key you did not list is absent, and a consumer must treat an absent key as denied. Safe to hand to client-side UI after your own server authorizes the request.",
+      "Resolves exactly the permissions and features listed, for one identity in one organization. It is bounded on purpose: this is not \"everything this person can do\" (which is not even defined for an Owner). A key you did not list is absent, and a consumer must treat an absent key as denied. Safe to hand to client-side UI after your own server authorizes the request." + TOKEN_NOTE,
     scope: "check",
     write: false,
+    actorToken: true,
     body: s.object({
       identity: IdentityInput,
       organizationId: id("The organization the snapshot is about.", "org_acme"),
@@ -208,7 +228,7 @@ export const decisionRoutes = [
     organization: ({ body }) => body.organizationId,
     errors: ["identity_provider_required", "identity_provider_reserved", "organization_not_found"],
     async handler(ctx, { body }) {
-      const identity = ctx.resolveIdentity(body.identity, "identity");
+      const identity = resolveAsked(ctx, body.identity);
       return computeAuthorizationSnapshot(ctx.engine, ctx.config.storage.features, {
         identity,
         organizationId: body.organizationId,

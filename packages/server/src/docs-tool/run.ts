@@ -1,6 +1,7 @@
 import { allRoutes } from "../routes/index.js";
 import type { Route } from "../route.js";
 import { startFixture } from "../test-support/harness.js";
+import { nowSeconds, signJwt, testKey } from "../test-support/jwt.js";
 import type { Context, Step } from "./scenario.js";
 import { STEPS } from "./scenario.js";
 
@@ -32,11 +33,19 @@ export function toRequest(route: Route, input: Record<string, unknown>): { path:
 
 /** Runs the whole scenario against a real server (SQLite) and records what it answered. */
 export async function runScenario(): Promise<Recorded[]> {
-  const fixture = await startFixture("sqlite");
+  const idp = testKey("rsa", "idp-key-1");
+  const fixture = await startFixture("sqlite", {
+    actorTokens: [{ provider: "main", issuer: "https://idp.example.com/", audience: "uniora", algorithms: ["RS256"], jwks: { keys: [idp.publicJwk as never] } }],
+  });
   try {
     const { token } = await fixture.issue({ name: "backend" });
     const results = new Map<string, unknown>();
+    const saved = new Map<string, unknown>();
     const context: Context = {
+      saved: (name) => {
+        if (!saved.has(name)) throw new Error(`The scenario asks for "${name}" before a step saved it.`);
+        return saved.get(name);
+      },
       last: (operation) => {
         if (!results.has(operation)) throw new Error(`The scenario asks for the answer of ${operation} before it ran.`);
         return results.get(operation);
@@ -54,11 +63,21 @@ export async function runScenario(): Promise<Recorded[]> {
       if (step.ifMatch) headers["If-Match"] = `"${step.ifMatch(context)}"`;
       if (step.idempotencyKey) headers["Idempotency-Key"] = step.idempotencyKey;
       const lower = Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]));
+      if (step.verifiedAs !== undefined) {
+        lower["uniora-actor-token"] = signJwt(
+          { iss: "https://idp.example.com/", aud: "uniora", sub: step.verifiedAs, iat: nowSeconds() - 5, exp: nowSeconds() + 300, ...step.tokenClaims },
+          idp.privateKey,
+          { alg: "RS256", kid: "idp-key-1" },
+        );
+        // What the reference shows is the placeholder: the real one is a signed JWT that changes at every run.
+        headers["Uniora-Actor-Token"] = "<the user's token from your identity provider>";
+      }
       const response = await fixture.call(route.method, path, { token: step.as === "anonymous" ? null : token, headers: lower, ...(body !== undefined ? { body } : {}) });
       if (response.status !== step.expect) {
         throw new Error(`${step.operation} "${step.title}": expected ${step.expect}, got ${response.status} ${response.text.slice(0, 300)}`);
       }
       if (response.status < 300) results.set(step.operation, response.body);
+      if (step.save !== undefined && response.status < 300) saved.set(step.save, response.body);
       recorded.push({
         step,
         route,

@@ -125,9 +125,8 @@ export const teamRoutes = [
     status: 201,
     params: orgParams,
     body: s.object({
-      id: s.optional(id("Your own id for the team; generated when omitted.")),
       name: s.string({ min: 1, max: 255, example: "Barcelona" }),
-      slug: s.optional(s.string({ min: 1, max: 100, description: "URL-safe, unique in the organization; derived from the name when omitted." })),
+      slug: s.optional(s.string({ min: 1, max: 63, description: "URL-safe, unique in the organization; derived from the name when omitted." })),
       externalId: s.optional(s.string({ min: 1, max: 200, description: "Your own id for the team in another system." })),
       parentId: s.optional(id("The team this one sits under.")),
       metadata: s.optional(FreeData),
@@ -156,7 +155,7 @@ export const teamRoutes = [
     params: teamParams,
     body: s.object({
       name: s.optional(s.string({ min: 1, max: 255 })),
-      slug: s.optional(s.string({ min: 1, max: 100 })),
+      slug: s.optional(s.string({ min: 1, max: 63 })),
       externalId: s.optional(s.nullable(s.string({ min: 1, max: 200 }))),
       parentId: s.optional(s.nullable(id("The new parent team."))),
       metadata: s.optional(FreeData),
@@ -230,7 +229,6 @@ export const teamRoutes = [
     status: 201,
     params: teamParams,
     body: s.object({
-      id: s.optional(id("Your own id for the team membership; generated when omitted.")),
       membershipId: id("The organization membership to add.", "mem_ana"),
       status: s.optional(s.enum(["pending", "active"] as const)),
       responsibility: s.optional(s.enum(TEAM_RESPONSIBILITIES)),
@@ -385,7 +383,6 @@ export const teamRoutes = [
     status: 201,
     params: orgParams,
     body: s.object({
-      id: s.optional(id("Your own id for the new team membership; generated when omitted.")),
       membershipId: id("The organization membership that changes team.", "mem_ana"),
       fromTeamId: team,
       toTeamId: team,

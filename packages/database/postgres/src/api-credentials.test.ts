@@ -16,7 +16,7 @@ const harness: ApiHarness = {
     await pool?.end();
   },
   async reset() {
-    await pool.query("truncate table uniora_api.keys, uniora_api.clients cascade");
+    await pool.query("truncate table uniora_api.keys, uniora_api.clients, uniora_api.rate_limits cascade");
     await pool.query("truncate table uniora.audit_logs, uniora.audit_log_checkpoints cascade");
   },
   storage: () => createPostgresApiCredentialStorage(pool),

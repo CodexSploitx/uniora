@@ -89,6 +89,8 @@ grant usage, select on all sequences in schema uniora to uniora_app;
 -- -- The server: read-only, plus the one column it keeps current.
 -- grant select on uniora_api.clients, uniora_api.keys to uniora_api_server;
 -- grant update (last_used_at) on uniora_api.keys to uniora_api_server;
+-- With `sharedRateLimit` (migration 0044) the server also keeps one token bucket per API key, and only that:
+-- grant select, insert, update on uniora_api.rate_limits to uniora_api_server;
 --
 -- -- Studio / CLI: manage credentials, and write the audit entries that go with each change.
 -- grant select, insert, update on uniora_api.clients, uniora_api.keys to uniora_api_admin;

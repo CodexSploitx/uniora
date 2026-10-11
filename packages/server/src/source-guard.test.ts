@@ -14,4 +14,8 @@ describe("route sources", () => {
   it.each(files)("%s never writes through the plain storage", (file) => {
     expect(readFileSync(join(dir, file), "utf8")).not.toMatch(WRITE);
   });
+
+  it.each(files)("%s never touches the credential storage", (file) => {
+    expect(readFileSync(join(dir, file), "utf8")).not.toMatch(/\b(credentials|apiClients|apiKeys|rateLimits)\b/);
+  });
 });

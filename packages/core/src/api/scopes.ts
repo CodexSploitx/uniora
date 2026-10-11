@@ -13,6 +13,7 @@ export const API_SCOPES = {
   "policies:write": { description: "Manage an organization's policies, on behalf of a user.", sensitive: true },
   "invitations:write": { description: "Invite, resend and revoke invitations, on behalf of a user.", sensitive: true },
   "audit:read": { description: "Read an organization's audit log.", sensitive: false },
+  "actor:verified": { description: "Act on behalf of an end user who presents a valid token from your identity provider. A leaked key alone cannot impersonate anyone.", sensitive: false },
   "actor:assert": { description: "Act on behalf of an end user. A key with this scope can speak for ANY user of its organizations.", sensitive: true },
 } as const;
 
@@ -27,5 +28,6 @@ export function isApiScope(value: unknown): value is ApiScope {
 export const RESERVED_IDENTITY_PROVIDERS = ["uniora-api", "uniora-studio", "uniora-cli", "uniora-platform"] as const;
 
 export function isReservedIdentityProvider(provider: string): boolean {
-  return (RESERVED_IDENTITY_PROVIDERS as readonly string[]).includes(provider);
+  // Case-insensitive: "UNIORA-API" must not look like an internal principal in the audit log.
+  return (RESERVED_IDENTITY_PROVIDERS as readonly string[]).includes(provider.toLowerCase());
 }

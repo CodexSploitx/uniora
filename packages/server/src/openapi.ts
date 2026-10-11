@@ -36,6 +36,10 @@ const STATUS: Readonly<Record<string, number>> = {
   organization_not_found: 404,
   invitation_not_found: 404,
   actor_token_unsupported: 501,
+  actor_token_invalid: 401,
+  actor_token_required: 403,
+  actor_token_unavailable: 503,
+  actor_mismatch: 400,
   invitations_not_configured: 501,
   idempotency_key_reused: 422,
   idempotency_in_progress: 409,
@@ -101,8 +105,14 @@ function errorResponses(route: Route): Record<string, Json> {
   }
   if (route.delegated) {
     add(400, "actor_required");
-    add(501, "actor_token_unsupported");
+    add(403, "actor_token_required");
   }
+  if (route.delegated || route.actorToken) {
+    add(401, "actor_token_invalid");
+    add(501, "actor_token_unsupported");
+    add(503, "actor_token_unavailable");
+  }
+  if (route.actorToken) add(400, "actor_mismatch");
   if (route.ifMatch) add(412, "precondition_failed");
   for (const code of route.errors) add(statusOf(route, code), code);
   if (route.ifMatch) {
@@ -128,7 +138,9 @@ function operation(route: Route): Json {
   const tag = TAGS[route.id.split(".")[0]!]!;
   const headers: Json[] = [];
   if (route.delegated) {
-    headers.push({ $ref: "#/components/parameters/ActorSubject" }, { $ref: "#/components/parameters/ActorProvider" });
+    headers.push({ $ref: "#/components/parameters/ActorToken" }, { $ref: "#/components/parameters/ActorSubject" }, { $ref: "#/components/parameters/ActorProvider" });
+  } else if (route.actorToken) {
+    headers.push({ $ref: "#/components/parameters/ActorToken" });
   }
   if (route.ifMatch) headers.push({ $ref: "#/components/parameters/IfMatch" });
   if (route.idempotent) headers.push({ $ref: "#/components/parameters/IdempotencyKey" });
@@ -234,12 +246,19 @@ export function buildOpenApiDocument(options: OpenApiOptions = {}): Json {
       },
       headers: { RequestId: { schema: { type: "string" }, description: "Identifies this request in the server's log." } },
       parameters: {
+        ActorToken: {
+          name: "Uniora-Actor-Token",
+          in: "header",
+          required: false,
+          schema: { type: "string", maxLength: 8192 },
+          description: "The end user's own token from your identity provider, verified by the server (issuer, audience, algorithm and signature against the provider you configured). On a delegated call it says who the call speaks for and needs the `actor:verified` (or `actor:assert`) scope; on a decision it must be about the person asked. Instead of `Uniora-Actor-Subject`, never together with it. A bad token is always `401 actor_token_invalid`.",
+        },
         ActorSubject: {
           name: "Uniora-Actor-Subject",
           in: "header",
-          required: true,
+          required: false,
           schema: { type: "string", maxLength: 1500 },
-          description: "Delegated calls only: the end user the call speaks for, as your auth provider knows them, percent-encoded (`encodeURIComponent`). The client needs the `actor:assert` scope. Never copy it from what the end user sent.",
+          description: "Delegated calls, when you assert the user instead of presenting a token: the end user the call speaks for, as your auth provider knows them, percent-encoded (`encodeURIComponent`). The client needs the `actor:assert` scope, and the server may refuse asserted actors altogether (`actor_token_required`). Never copy it from what the end user sent. Exactly one of this and `Uniora-Actor-Token` is required on a delegated call.",
         },
         ActorProvider: {
           name: "Uniora-Actor-Provider",

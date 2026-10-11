@@ -8,7 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useI18n } from "@/i18n/client";
 import type { MessageKey } from "@/i18n/translate";
-import { API_SCOPE_GROUPS, API_SCOPE_META, API_SCOPE_NAMES, API_SCOPE_PRESETS, needsActorAssert, scopesOfGroup, type ApiScopeGroup, type ApiScopeName } from "@/lib/api-scopes";
+import { API_SCOPE_GROUPS, API_SCOPE_META, API_SCOPE_NAMES, API_SCOPE_PRESETS, needsActorScope, scopesOfGroup, type ApiScopeGroup, type ApiScopeName } from "@/lib/api-scopes";
 
 /**
  * Scopes by category, collapsed unless something in them is selected, with presets for the usual backends and a summary of what
@@ -41,7 +41,7 @@ export function ScopePicker({ value, onChange, idPrefix }: { value: ApiScopeName
           <span className="px-1 text-xs text-muted-foreground">{t("apiClients.noScopesSelected")}</span>
         ) : (
           value.map((scope) => (
-            <Badge key={scope} variant={API_SCOPE_META[scope].sensitive ? "warning-light" : "outline"} className="gap-1 font-mono">
+            <Badge key={scope} variant={API_SCOPE_META[scope]?.sensitive ? "warning-light" : "outline"} className="gap-1 font-mono">
               {scope}
               <button type="button" className="-mr-0.5 rounded-sm opacity-70 hover:opacity-100" aria-label={t("apiClients.removeScope", { scope })} onClick={() => toggle(scope, false)}>
                 <IconX className="size-3" />
@@ -51,12 +51,12 @@ export function ScopePicker({ value, onChange, idPrefix }: { value: ApiScopeName
         )}
       </div>
 
-      {needsActorAssert(value) && (
+      {needsActorScope(value) && (
         <p className="flex flex-wrap items-start gap-1.5 text-xs text-warning" role="status">
           <IconAlertTriangle className="mt-0.5 size-3.5 shrink-0" />
           <span>{t("apiClients.needsActorAssert")}</span>
-          <Button type="button" size="xs" variant="outline" onClick={() => set([...value, "actor:assert"])}>
-            {t("apiClients.addActorAssert")}
+          <Button type="button" size="xs" variant="outline" onClick={() => set([...value, "actor:verified"])}>
+            {t("apiClients.addActorVerified")}
           </Button>
         </p>
       )}
@@ -97,7 +97,7 @@ export function ScopePicker({ value, onChange, idPrefix }: { value: ApiScopeName
                         <label htmlFor={id} className="grid cursor-pointer gap-0.5">
                           <span className="flex items-center gap-1.5 font-mono text-xs">
                             {scope}
-                            {API_SCOPE_META[scope].sensitive && <IconAlertTriangle className="size-3 text-warning" aria-label={t("apiClients.sensitive")} />}
+                            {API_SCOPE_META[scope]?.sensitive && <IconAlertTriangle className="size-3 text-warning" aria-label={t("apiClients.sensitive")} />}
                           </span>
                           <span className="text-xs text-muted-foreground">{t(`apiScope.${scope}` as MessageKey)}</span>
                           {scope === "actor:assert" && value.includes(scope) && <span className="text-xs text-warning">{t("apiClients.actorAssertWarning")}</span>}

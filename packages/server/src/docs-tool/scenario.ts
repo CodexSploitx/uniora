@@ -7,6 +7,8 @@
 export interface Context {
   /** The body of the last answer of an operation. */
   last(operation: string): any;
+  /** The body of the answer to a step that was marked `save: name` (for ids the server made up). */
+  saved(name: string): any;
 }
 
 export interface Step {
@@ -14,13 +16,19 @@ export interface Step {
   /** What the example shows, in a few words. */
   readonly title: string;
   readonly input?: Record<string, unknown> | ((context: Context) => Record<string, unknown>);
-  /** The end user a delegated call speaks for. */
+  /** The end user a delegated call speaks for, asserted. */
   readonly actor?: string;
+  /** The end user a call speaks for, proven by a token from the identity provider (the runner signs one). */
+  readonly verifiedAs?: string;
+  /** Claims added to that token (`auth_time`, `amr`...). */
+  readonly tokenClaims?: Record<string, unknown>;
   readonly ifMatch?: (context: Context) => number;
   readonly idempotencyKey?: string;
   /** Which key makes the call. Default: the one with every scope. */
   readonly as?: "anonymous";
   readonly expect: number;
+  /** Keep this answer under a name, for later steps (`context.saved(name)`). */
+  readonly save?: string;
   /** Shown in the reference. */
   readonly primary?: boolean;
 }
@@ -30,6 +38,7 @@ const ana = { subject: "ana" };
 
 const step = (operation: string, title: string, input: Step["input"], expect = 200, extra: Partial<Step> = {}): Step => ({ operation, title, input, expect, ...extra });
 const as = (actor: string) => ({ actor });
+const verified = (verifiedAs: string, tokenClaims?: Record<string, unknown>) => ({ verifiedAs, ...(tokenClaims ? { tokenClaims } : {}) });
 
 export const STEPS: readonly Step[] = [
   // Decisions
@@ -79,43 +88,46 @@ export const STEPS: readonly Step[] = [
     ...as("mgr"),
     ifMatch: (c) => c.last("members.assignRole").version,
   }),
+  step("members.block", "The same, but proving who speaks with the user's own token", { organizationId: ORG, membershipId: "mem_bob", reason: "left the company" }, 200, verified("mgr")),
+  step("members.unblock", "Lift it (token of someone without the permission is refused)", { organizationId: ORG, membershipId: "mem_bob" }, 403, verified("ana")),
+  step("members.unblock", "Lift it", { organizationId: ORG, membershipId: "mem_bob" }, 200, verified("mgr")),
   step("members.block", "Block a member", { organizationId: ORG, membershipId: "mem_bob", reason: "left the company" }, 200, as("mgr")),
   step("members.unblock", "Lift the block", { organizationId: ORG, membershipId: "mem_bob" }, 200, as("mgr")),
   step("members.suspend", "Suspend a member until a date", { organizationId: ORG, membershipId: "mem_bob", until: "2099-01-01T00:00:00.000Z", reason: "on leave" }, 200, as("mgr")),
   step("members.unblock", "Lift the suspension early", { organizationId: ORG, membershipId: "mem_bob" }, 200, as("mgr")),
-  step("roles.create", "A new role", { organizationId: ORG, id: "role_support", name: "Support agent", permissionKeys: ["reports.read"] }, 201, as("mgr")),
-  step("roles.update", "Rename it", { organizationId: ORG, roleId: "role_support", name: "Support", description: "Answers tickets" }, 200, as("mgr")),
-  step("roles.setPermissions", "Make it hold exactly these permissions", { organizationId: ORG, roleId: "role_support", permissionKeys: ["reports.read", "members.block"] }, 200, as("mgr")),
-  step("roles.grantPermission", "Add one permission", { organizationId: ORG, roleId: "role_support", permissionKey: "members.remove" }, 200, as("mgr")),
-  step("roles.grantPermission", "You cannot give what you do not hold", { organizationId: ORG, roleId: "role_support", permissionKey: "vehicles.delete" }, 403, as("mgr")),
-  step("roles.revokePermission", "Take one away", { organizationId: ORG, roleId: "role_support", permissionKey: "members.remove" }, 200, as("mgr")),
-  step("roles.clone", "Copy it", { organizationId: ORG, roleId: "role_support", id: "role_support_eu", name: "Support EU" }, 201, as("mgr")),
-  step("roles.delete", "Delete the copy", { organizationId: ORG, roleId: "role_support_eu" }, 200, as("mgr")),
+  step("roles.create", "A new role", { organizationId: ORG, name: "Support agent", permissionKeys: ["reports.read"] }, 201, { ...as("mgr"), save: "support" }),
+  step("roles.update", "Rename it", (c) => ({ organizationId: ORG, roleId: c.saved("support").id, name: "Support", description: "Answers tickets" }), 200, as("mgr")),
+  step("roles.setPermissions", "Make it hold exactly these permissions", (c) => ({ organizationId: ORG, roleId: c.saved("support").id, permissionKeys: ["reports.read", "members.block"] }), 200, as("mgr")),
+  step("roles.grantPermission", "Add one permission", (c) => ({ organizationId: ORG, roleId: c.saved("support").id, permissionKey: "members.remove" }), 200, as("mgr")),
+  step("roles.grantPermission", "You cannot give what you do not hold", (c) => ({ organizationId: ORG, roleId: c.saved("support").id, permissionKey: "vehicles.delete" }), 403, as("mgr")),
+  step("roles.revokePermission", "Take one away", (c) => ({ organizationId: ORG, roleId: c.saved("support").id, permissionKey: "members.remove" }), 200, as("mgr")),
+  step("roles.clone", "Copy it", (c) => ({ organizationId: ORG, roleId: c.saved("support").id, name: "Support EU" }), 201, { ...as("mgr"), save: "supportEu" }),
+  step("roles.delete", "Delete the copy", (c) => ({ organizationId: ORG, roleId: c.saved("supportEu").id }), 200, as("mgr")),
 
   // Teams
-  step("teams.create", "A team", { organizationId: ORG, id: "team_bcn", name: "Barcelona", metadata: { region: "ES" } }, 201, as("mgr")),
-  step("teams.create", "A team under it", { organizationId: ORG, id: "team_sants", name: "Sants", parentId: "team_bcn" }, 201, as("mgr")),
-  step("teams.create", "Another top-level team", { organizationId: ORG, id: "team_mad", name: "Madrid" }, 201, as("mgr")),
-  step("teams.get", "Read a team", { organizationId: ORG, teamId: "team_bcn" }),
-  step("teams.list", "List the teams", { organizationId: ORG, limit: 10 }),
-  step("teams.update", "Edit a team", { organizationId: ORG, teamId: "team_bcn", externalId: "ERP-BCN-01" }, 200, as("mgr")),
-  step("teams.addMember", "Add a member", { organizationId: ORG, teamId: "team_bcn", id: "tm_ana", membershipId: "mem_ana" }, 201, as("mgr")),
-  step("teams.addMember", "Invite a member: they must accept", { organizationId: ORG, teamId: "team_bcn", id: "tm_bob", membershipId: "mem_bob", status: "pending" }, 201, as("mgr")),
-  step("teamMembers.accept", "The invited person accepts", { organizationId: ORG, teamMembershipId: "tm_bob" }, 200, as("bob")),
-  step("teams.members", "List the members of a team", { organizationId: ORG, teamId: "team_bcn", status: "active" }),
-  step("teamMembers.setResponsibility", "Set who looks after the team", { organizationId: ORG, teamMembershipId: "tm_ana", responsibility: "manager" }, 200, as("mgr")),
-  step("teamMembers.assignRole", "A role that applies only inside the team", { organizationId: ORG, teamMembershipId: "tm_ana", roleId: "role_viewer" }, 200, as("mgr")),
-  step("teamMembers.unassignRole", "Take it away", { organizationId: ORG, teamMembershipId: "tm_ana", roleId: "role_viewer" }, 200, as("mgr")),
-  step("teamMembers.suspend", "Suspend a team membership", { organizationId: ORG, teamMembershipId: "tm_ana", reason: "on leave" }, 200, as("mgr")),
-  step("teamMembers.reactivate", "Lift it", { organizationId: ORG, teamMembershipId: "tm_ana" }, 200, as("mgr")),
-  step("teamMembers.move", "Move a member to another team", { organizationId: ORG, id: "tm_ana_mad", membershipId: "mem_ana", fromTeamId: "team_bcn", toTeamId: "team_mad", reason: "transfer" }, 201, as("mgr")),
-  step("teamMembers.remove", "Remove someone from a team", { organizationId: ORG, teamMembershipId: "tm_bob", reason: "left the project" }, 200, as("mgr")),
-  step("teams.leave", "The actor leaves a team", { organizationId: ORG, teamId: "team_mad" }, 200, as("ana")),
-  step("teams.archive", "Archive a team (sub-teams first)", { organizationId: ORG, teamId: "team_bcn", reason: "closed" }, 409, as("mgr")),
-  step("teams.archive", "Archive the sub-team", { organizationId: ORG, teamId: "team_sants", reason: "closed" }, 200, as("mgr")),
-  step("teams.restore", "Restore it", { organizationId: ORG, teamId: "team_sants" }, 200, as("mgr")),
-  step("teams.archive", "Archive it again", { organizationId: ORG, teamId: "team_sants" }, 200, as("mgr")),
-  step("teams.delete", "Delete an archived team", { organizationId: ORG, teamId: "team_sants" }, 200, as("mgr")),
+  step("teams.create", "A team", { organizationId: ORG, name: "Barcelona", metadata: { region: "ES" } }, 201, { ...as("mgr"), save: "bcn" }),
+  step("teams.create", "A team under it", (c) => ({ organizationId: ORG, name: "Sants", parentId: c.saved("bcn").id }), 201, { ...as("mgr"), save: "sants" }),
+  step("teams.create", "Another top-level team", { organizationId: ORG, name: "Madrid" }, 201, { ...as("mgr"), save: "mad" }),
+  step("teams.get", "Read a team", (c) => ({ organizationId: ORG, teamId: c.saved("bcn").id })),
+  step("teams.list", "List the sub-teams of a team", (c) => ({ organizationId: ORG, parentId: c.saved("bcn").id, limit: 10 })),
+  step("teams.update", "Edit a team", (c) => ({ organizationId: ORG, teamId: c.saved("bcn").id, externalId: "ERP-BCN-01" }), 200, as("mgr")),
+  step("teams.addMember", "Add a member", (c) => ({ organizationId: ORG, teamId: c.saved("bcn").id, membershipId: "mem_ana" }), 201, { ...as("mgr"), save: "tmAna" }),
+  step("teams.addMember", "Invite a member: they must accept", (c) => ({ organizationId: ORG, teamId: c.saved("bcn").id, membershipId: "mem_bob", status: "pending" }), 201, { ...as("mgr"), save: "tmBob" }),
+  step("teams.members", "List the active members of a team (the invited one is still pending)", (c) => ({ organizationId: ORG, teamId: c.saved("bcn").id, status: "active" })),
+  step("teamMembers.accept", "The invited person accepts", (c) => ({ organizationId: ORG, teamMembershipId: c.saved("tmBob").id }), 200, as("bob")),
+  step("teamMembers.setResponsibility", "Set who looks after the team", (c) => ({ organizationId: ORG, teamMembershipId: c.saved("tmAna").id, responsibility: "manager" }), 200, as("mgr")),
+  step("teamMembers.assignRole", "A role that applies only inside the team", (c) => ({ organizationId: ORG, teamMembershipId: c.saved("tmAna").id, roleId: "role_viewer" }), 200, as("mgr")),
+  step("teamMembers.unassignRole", "Take it away", (c) => ({ organizationId: ORG, teamMembershipId: c.saved("tmAna").id, roleId: "role_viewer" }), 200, as("mgr")),
+  step("teamMembers.suspend", "Suspend a team membership", (c) => ({ organizationId: ORG, teamMembershipId: c.saved("tmAna").id, reason: "on leave" }), 200, as("mgr")),
+  step("teamMembers.reactivate", "Lift it", (c) => ({ organizationId: ORG, teamMembershipId: c.saved("tmAna").id }), 200, as("mgr")),
+  step("teamMembers.move", "Move a member to another team", (c) => ({ organizationId: ORG, membershipId: "mem_ana", fromTeamId: c.saved("bcn").id, toTeamId: c.saved("mad").id, reason: "transfer" }), 201, as("mgr")),
+  step("teamMembers.remove", "Remove someone from a team", (c) => ({ organizationId: ORG, teamMembershipId: c.saved("tmBob").id, reason: "left the project" }), 200, as("mgr")),
+  step("teams.leave", "The actor leaves a team", (c) => ({ organizationId: ORG, teamId: c.saved("mad").id }), 200, as("ana")),
+  step("teams.archive", "Archive a team (sub-teams first)", (c) => ({ organizationId: ORG, teamId: c.saved("bcn").id, reason: "closed" }), 409, as("mgr")),
+  step("teams.archive", "Archive the sub-team", (c) => ({ organizationId: ORG, teamId: c.saved("sants").id, reason: "closed" }), 200, as("mgr")),
+  step("teams.restore", "Restore it", (c) => ({ organizationId: ORG, teamId: c.saved("sants").id }), 200, as("mgr")),
+  step("teams.archive", "Archive it again", (c) => ({ organizationId: ORG, teamId: c.saved("sants").id }), 200, as("mgr")),
+  step("teams.delete", "Delete an archived team", (c) => ({ organizationId: ORG, teamId: c.saved("sants").id }), 200, as("mgr")),
 
   // Policies
   step(
@@ -138,6 +150,7 @@ export const STEPS: readonly Step[] = [
   step("policies.list", "List policies", { organizationId: ORG, limit: 10 }, 200, as("mgr")),
   step("policies.update", "Edit the draft", (c) => ({ organizationId: ORG, policyId: c.last("policies.create").id, name: "Freeze reports during the audit", note: "clearer name" }), 200, as("mgr")),
   step("policies.activate", "Put it live", (c) => ({ organizationId: ORG, policyId: c.last("policies.create").id, reason: "audit starts" }), 200, as("mgr")),
+  step("decisions.authorize", "With the user's token the session comes from the token: recently signed in with a second factor", { identity: ana, organizationId: ORG, permission: "reports.read", resource: { type: "report", id: "rep_42", organizationId: ORG } }, 200, verified("ana", { auth_time: 1_700_000_000, amr: ["pwd", "mfa"] })),
   step("decisions.authorize", "From now on the policy decides", { identity: ana, organizationId: ORG, permission: "reports.read" }),
   step("policies.revisions", "The history of the definition", (c) => ({ organizationId: ORG, policyId: c.last("policies.create").id }), 200, as("mgr")),
   step("policies.disable", "Switch it off", (c) => ({ organizationId: ORG, policyId: c.last("policies.create").id }), 200, as("mgr")),

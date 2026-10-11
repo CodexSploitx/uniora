@@ -227,6 +227,25 @@ describe("delivery engine", () => {
     expect(result.delivery.error).not.toContain("\n");
     expect(sanitizeDeliveryError(new Error("x".repeat(900)), [])).toHaveLength(500);
   });
+
+  it("scrubs the token however the sender echoes it: encoded, or only a piece of it", () => {
+    const token = "uinv_Zk3Qp9xLm2Rv8TnWb5Yd7HcJa4Se6UgF1oIi0KtNqXA";
+    const link = `https://app.test/invite/${token}`;
+    const echoes = [
+      Buffer.from(link).toString("base64"),
+      Buffer.from(link).toString("base64url"),
+      Buffer.from(token).toString("hex"),
+      encodeURIComponent(link),
+      `fragment ${token.slice(10, 34)} only`,
+      `tail ${token.slice(-14)}`,
+    ];
+    for (const echo of echoes) {
+      const text = sanitizeDeliveryError(new Error(`bounce: ${echo}`), [token, link]);
+      expect(text, echo).toContain("[redacted]");
+      expect(text, echo).not.toContain(token.slice(-14));
+      expect(text, echo).not.toContain(Buffer.from(link).toString("base64"));
+    }
+  });
 });
 
 describe("resend and revoke", () => {

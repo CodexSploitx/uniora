@@ -16,6 +16,7 @@ const harness: ApiHarness = {
   },
   async reset() {
     db.exec(`
+      delete from uniora_api_rate_limits;
       delete from uniora_api_keys;
       delete from uniora_api_clients;
       drop trigger if exists uniora_audit_logs_no_delete;

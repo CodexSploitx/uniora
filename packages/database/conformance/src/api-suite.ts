@@ -372,6 +372,72 @@ export function defineApiCredentialConformance(harness: ApiHarness): void {
       });
     });
 
+    describe("shared rate limit", () => {
+      const T0 = new Date("2026-03-02T09:00:00.000Z");
+      const at = (ms: number) => new Date(T0.getTime() + ms);
+      const lease = (key: string, amount: number, ms: number, options: { perSecond?: number; burst?: number } = {}) =>
+        harness.storage().rateLimits.lease({ key, perSecond: options.perSecond ?? 10, burst: options.burst ?? 100, amount, at: at(ms) });
+
+      it("starts full, hands out what is asked up to what is left, and never more", async () => {
+        expect(await lease("k1", 30, 0)).toBe(30);
+        expect(await lease("k1", 30, 0)).toBe(30);
+        expect(await lease("k1", 30, 0)).toBe(30);
+        expect(await lease("k1", 30, 0)).toBe(10);
+        expect(await lease("k1", 30, 0)).toBe(0);
+      });
+
+      it("refills at the steady rate and never past the burst", async () => {
+        await lease("k2", 100, 0);
+        expect(await lease("k2", 100, 500)).toBe(5); // 0.5 s at 10 per second
+        expect(await lease("k2", 100, 500)).toBe(0);
+        expect(await lease("k2", 100, 1_000_000)).toBe(100); // a long quiet time is a full bucket, not more
+        expect(await lease("k2", 1, 1_000_000)).toBe(0);
+      });
+
+      it("keeps buckets apart", async () => {
+        expect(await lease("a", 100, 0)).toBe(100);
+        expect(await lease("b", 100, 0)).toBe(100);
+        expect(await lease("a", 1, 0)).toBe(0);
+      });
+
+      it("gives out whole tokens and remembers the fractions", async () => {
+        await lease("k3", 100, 0);
+        expect(await lease("k3", 100, 50)).toBe(0); // half a token is not a token
+        expect(await lease("k3", 100, 100)).toBe(1); // together they are
+      });
+
+      it("a clock that goes backwards does not give tokens back or take them away", async () => {
+        await lease("k4", 100, 10_000);
+        expect(await lease("k4", 100, 0)).toBe(0);
+        expect(await lease("k4", 100, 10_100)).toBe(1);
+      });
+
+      it("never hands out more than the bucket holds when many instances ask at once", async () => {
+        const grants = await Promise.all(Array.from({ length: 40 }, () => lease("burst", 10, 0, { burst: 100, perSecond: 0.001 })));
+        expect(grants.reduce((sum, value) => sum + value, 0)).toBe(100);
+      });
+
+      it("refuses what makes no sense", async () => {
+        const storage = harness.storage();
+        for (const bad of [
+          { key: "", perSecond: 1, burst: 1, amount: 1 },
+          { key: "x".repeat(65), perSecond: 1, burst: 1, amount: 1 },
+          { key: "k", perSecond: 0, burst: 1, amount: 1 },
+          { key: "k", perSecond: 1, burst: 1.5, amount: 1 },
+          { key: "k", perSecond: 1, burst: 1, amount: 0 },
+          { key: "k", perSecond: Number.NaN, burst: 1, amount: 1 },
+        ]) {
+          await expect(storage.rateLimits.lease(bad), JSON.stringify(bad)).rejects.toMatchObject({ code: "api_invalid" });
+        }
+      });
+
+      it("works on the real clock too", async () => {
+        const storage = harness.storage();
+        expect(await storage.rateLimits.lease({ key: "now", perSecond: 1000, burst: 5, amount: 5 })).toBe(5);
+        expect(await storage.rateLimits.lease({ key: "now", perSecond: 1000, burst: 5, amount: 5 })).toBeLessThanOrEqual(5);
+      });
+    });
+
     it("lists every scope the API knows, each with a description", () => {
       expect(API_SCOPE_LIST.length).toBeGreaterThan(5);
     });

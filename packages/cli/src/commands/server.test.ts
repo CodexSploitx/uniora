@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -135,5 +135,40 @@ describe("uniora server (SQLite)", () => {
     const report = JSON.parse(lines.join("\n"));
     expect(report.ok).toBe(false);
     expect(JSON.stringify(report)).toMatch(/TLS/);
+  });
+
+  it("looking and refusing never create the database: a path typo leaves nothing behind", async () => {
+    const fresh = mkdtempSync(join(tmpdir(), "uniora-cli-server-fresh-"));
+    try {
+      writeFileSync(join(fresh, "uniora.config.mjs"), 'export default { database: { provider: "sqlite", url: "sqlite:./typo/uniora.db" } };\n');
+      for (const argv of [["server", "clients", "create", "--name", "x", "--scopes", "check", "--orgs", "*", "--json"], ["server", "keys", "revoke", "k", "--json"], ["server", "start", "--port", "0", "--json"]]) {
+        lines.length = 0;
+        process.exitCode = undefined;
+        await runCli(argv, fresh);
+        expect(JSON.parse(lines.join("\n")).ok).toBe(false);
+      }
+      expect(existsSync(join(fresh, "typo"))).toBe(false);
+    } finally {
+      rmSync(fresh, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a port that is not plain digits", async () => {
+    for (const port of [" ", "0x50", "1e3", "-1", "８０"]) {
+      process.exitCode = undefined;
+      await runCli(["server", "start", "--port", port], dir);
+      expect(process.exitCode, port).toBe(2);
+    }
+  });
+
+  it("finds a client by its name whatever the spacing and case, and counts only keys that work", async () => {
+    await run("clients", "create", "--name", "Web  App", "--scopes", "check", "--orgs", "*");
+    const found = await run("clients", "show", "  web app  ");
+    expect(found.ok).toBe(true);
+    const key = await run("keys", "create", "--client", "WEB APP");
+    expect(key.ok).toBe(true);
+    await run("keys", "revoke", key.keyId);
+    const listed = await run("clients", "list");
+    expect(listed.checks[0].message).toContain("0 clave(s) activa(s)");
   });
 });

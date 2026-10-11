@@ -544,5 +544,7 @@ export { createMemoryApiCredentialStorage } from "./api/memory.js";
 export type { MemoryApiCredentialStorageOptions } from "./api/memory.js";
 export { createApiCredentialService } from "./api/service.js";
 export type { ApiClientWithKeys, ApiCredentialService, ApiCredentialServiceOptions, CreatedApiKey } from "./api/service.js";
+export { MAX_RATE_KEY_LENGTH, assertRateLease, leaseFromBucket } from "./api/rate-limit.js";
+export type { RateLeaseInput, RateLimitRepository } from "./api/rate-limit.js";
 export { API_KEY_TOUCH_INTERVAL_MS, authenticateApiKey, clientMayAccessOrganization } from "./api/authenticate.js";
 export type { AuthenticateApiKeyOptions } from "./api/authenticate.js";

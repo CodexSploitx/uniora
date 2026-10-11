@@ -11,17 +11,17 @@ import type { ResolvedConfig } from "./config.js";
 import type { ApplicationContext, DelegatedContext } from "./route.js";
 
 /** The operator's storage under the access guard and the audit context, for ONE request. */
-function requestStorage(config: ResolvedConfig, principal: ApiPrincipal, requestId: string) {
+function requestStorage(config: ResolvedConfig, principal: ApiPrincipal, requestId: string, actorMode?: "asserted" | "verified") {
   // Two layers that no route can take off:
   // - the access guard (`createGuardedStorage`): every write that decides who holds which power needs the proof only the services can
   //   issue, so a handler that tried to write power directly would get `access_authorization_required`;
   // - the audit context: every audit entry carries `metadata.via = { apiClientId, keyId, requestId }`, set here, inside the hash chain,
   //   where the person the call speaks for cannot forge it.
-  return createGuardedStorage(createAuditContextStorage(config.storage, { apiClientId: principal.client.id, keyId: principal.key.id, requestId }));
+  return createGuardedStorage(createAuditContextStorage(config.storage, { apiClientId: principal.client.id, keyId: principal.key.id, requestId, ...(actorMode ? { actorMode } : {}) }));
 }
 
-export function createApplicationContext(config: ResolvedConfig, principal: ApiPrincipal, requestId: string): ApplicationContext {
-  const storage = requestStorage(config, principal, requestId);
+export function createApplicationContext(config: ResolvedConfig, principal: ApiPrincipal, requestId: string, actorMode?: "asserted" | "verified"): ApplicationContext {
+  const storage = requestStorage(config, principal, requestId, actorMode);
   const engine = config.engine;
   return {
     principal: { provider: "uniora-api", subject: principal.client.id },
@@ -31,8 +31,8 @@ export function createApplicationContext(config: ResolvedConfig, principal: ApiP
 }
 
 /** The services a delegated call uses, built for ONE request, acting as `actor`. */
-export function createDelegatedContext(config: ResolvedConfig, principal: ApiPrincipal, requestId: string, actor: Identity): DelegatedContext {
-  const application = createApplicationContext(config, principal, requestId);
+export function createDelegatedContext(config: ResolvedConfig, principal: ApiPrincipal, requestId: string, actor: Identity, actorMode: "asserted" | "verified"): DelegatedContext {
+  const application = createApplicationContext(config, principal, requestId, actorMode);
   const { storage } = application;
   const engine = config.engine;
   return {

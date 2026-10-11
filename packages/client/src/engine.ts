@@ -31,18 +31,27 @@ export function createRemoteEngine(client: UnioraClient, options: RemoteEngineOp
       // a failing logger never changes the decision
     }
   };
-  const malformed = (error: unknown): boolean => error instanceof UnioraApiError && error.status === 400;
+  // The server refused the question itself (malformed, or an organization this key may not reach, which answers like a missing one):
+  // the answer is no, as the local engine's is.
+  const malformed = (error: unknown): boolean => error instanceof UnioraApiError && (error.status === 400 || (error.status === 404 && error.code === "organization_not_found"));
+  /** Only the two fields of an identity go out, and both must be there: a missing provider must not be completed by the server's default. */
+  const who = (identity: unknown): { provider: string; subject: string } | undefined => {
+    const value = identity as { provider?: unknown; subject?: unknown } | null | undefined;
+    return typeof value?.provider === "string" && value.provider !== "" && typeof value.subject === "string" && value.subject !== "" ? { provider: value.provider, subject: value.subject } : undefined;
+  };
 
   return {
     async can(input) {
+      const identity = who(input?.identity);
+      if (!identity) return false;
       try {
         const { allowed } = await client.decisions.check({
-          identity: input.identity,
+          identity,
           organizationId: input.organizationId,
           permission: input.permission,
           ...(input.teamId !== undefined ? { teamId: input.teamId } : {}),
         });
-        return allowed;
+        return allowed === true;
       } catch (error) {
         report(error);
         if (malformed(error)) return false;
@@ -52,15 +61,17 @@ export function createRemoteEngine(client: UnioraClient, options: RemoteEngineOp
 
     access: {
       async check(input) {
+        const identity = who(input?.identity);
+        if (!identity) return false;
         try {
           const { allowed } = await client.decisions.check({
-            identity: input.identity,
+            identity,
             organizationId: input.organizationId,
             ...(input.permission !== undefined ? { permission: input.permission } : {}),
             ...(input.feature !== undefined ? { feature: input.feature } : {}),
             ...(input.teamId !== undefined ? { teamId: input.teamId } : {}),
           });
-          return allowed;
+          return allowed === true;
         } catch (error) {
           report(error);
           if (malformed(error)) return false;
@@ -74,15 +85,17 @@ export function createRemoteEngine(client: UnioraClient, options: RemoteEngineOp
         decision: reason === "malformed_input" ? "deny" : "indeterminate",
         allowed: false,
         reason,
-        organizationId: input.organizationId,
-        permission: input.permission,
+        organizationId: String(input?.organizationId),
+        permission: String(input?.permission),
         policyRevision: null,
         policies: [],
         evaluatedAt: new Date(),
       });
+      const identity = who(input?.identity);
+      if (!identity) return refused("malformed_input");
       try {
         const result = await client.decisions.authorize({
-          identity: input.identity,
+          identity,
           organizationId: input.organizationId,
           permission: input.permission,
           ...(input.teamId !== undefined ? { teamId: input.teamId } : {}),
@@ -91,9 +104,11 @@ export function createRemoteEngine(client: UnioraClient, options: RemoteEngineOp
           ...(input.session !== undefined ? { session: input.session as never } : {}),
           ...(input.requireApplicablePolicy !== undefined ? { requireApplicablePolicy: input.requireApplicablePolicy } : {}),
         });
+        // The decision and the flag must agree, and only a plain `true` with `allow` lets anything through.
+        if (result.allowed !== (result.decision === "allow") || !["allow", "deny", "indeterminate"].includes(result.decision)) return refused("evaluation_error");
         return {
           decision: result.decision,
-          allowed: result.allowed,
+          allowed: result.allowed === true,
           reason: result.reason,
           organizationId: input.organizationId,
           permission: input.permission,
@@ -101,7 +116,7 @@ export function createRemoteEngine(client: UnioraClient, options: RemoteEngineOp
           policyRevision: result.policyRevision,
           ...(result.stepUp !== undefined ? { stepUp: { policyKeys: [...result.stepUp.policyKeys] } } : {}),
           policies: [],
-          evaluatedAt: new Date(result.evaluatedAt),
+          evaluatedAt: Number.isFinite(Date.parse(result.evaluatedAt)) ? new Date(result.evaluatedAt) : new Date(),
         };
       } catch (error) {
         report(error);

@@ -23,6 +23,7 @@ export const ALL_SCOPES: ApiScope[] = [
   "policies:write",
   "invitations:write",
   "audit:read",
+  "actor:verified",
   "actor:assert",
 ];
 

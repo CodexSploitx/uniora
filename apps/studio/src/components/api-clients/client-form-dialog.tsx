@@ -28,8 +28,25 @@ export function ClientFormDialog({ client, trigger }: { client?: ApiClientRow; t
   const [organizations, setOrganizations] = useState(client && client.organizations !== "*" ? client.organizations.join("\n") : "");
   const editing = client !== undefined;
 
+  /**
+   * The form always starts from what the server says NOW. A form that kept its first values would, after another administrator
+   * (or the CLI) changed the client, send stale fields together with the fresh version, and the version check would let them through.
+   */
+  const reset = () => {
+    setName(client?.name ?? "");
+    setScopes((client?.scopes as ApiScopeName[] | undefined) ?? ["check"]);
+    setAll(client ? client.organizations === "*" : false);
+    setOrganizations(client && client.organizations !== "*" ? client.organizations.join("\n") : "");
+  };
+
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (next) reset();
+        setOpen(next);
+      }}
+    >
       <DialogTrigger
         render={
           trigger ?? (

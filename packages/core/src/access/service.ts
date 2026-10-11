@@ -6,6 +6,7 @@ import { createAuthorizationEngine } from "../authorization/engine.js";
 import type { AuthorizationEngine, AuthorizationEngineOptions } from "../authorization/engine.js";
 import { createAuditedStorage } from "../storage/audited.js";
 import { MembershipError } from "../membership/repository.js";
+import { PermissionError } from "../permission/repository.js";
 import { RoleError } from "../role/repository.js";
 import type { DeleteRoleMembers, SetRolePermissionsResult } from "../role/repository.js";
 import { randomId } from "../invitation/token.js";
@@ -188,6 +189,14 @@ export function createAccessAdminService(options: AccessAdminServiceOptions): Ac
     return found;
   }
 
+  /** Every key must be in the catalog: a role holding a key nobody registered would silently grant nothing today and something tomorrow. */
+  async function assertRegistered(ctx: Context, keys: readonly string[]): Promise<void> {
+    for (const key of new Set(keys)) {
+      if (typeof key !== "string" || key === "") continue; // the repository names an empty or non-text key itself
+      if (!(await ctx.tx.permissions.findByKey(key))) throw new PermissionError(`Permission not found: ${key.slice(0, 100)}`, "permission_not_found");
+    }
+  }
+
   /** Rules 2 and 3 for a member: not yourself, and not someone holding more than you. */
   async function assertCanTouchMember(ctx: Context, target: Membership, what: string): Promise<void> {
     if (await isSameMember(ctx.tx, ctx.actor, target)) throw selfChange(what);
@@ -297,6 +306,7 @@ export function createAccessAdminService(options: AccessAdminServiceOptions): Ac
       const id = input.id ?? randomId();
       return write(input, keys.rolesManage, "create roles", "createRole", roleTarget(id), async (ctx) => {
         // A role is never created with permissions its author does not hold: it would be a role nobody below the Owner can give.
+        await assertRegistered(ctx, input.permissionKeys ?? []);
         await assertHolds(ctx, { owner: false, keys: input.permissionKeys ?? [] }, "create a role");
         return ctx.tx.roles.create({
           id,
@@ -334,6 +344,7 @@ export function createAccessAdminService(options: AccessAdminServiceOptions): Ac
         assertRegular(role);
         // The role as it is (touching it) and as it will be (writing into it) must both be within reach.
         await assertCanTouchRole(ctx, role);
+        await assertRegistered(ctx, input.permissionKeys);
         await assertHolds(ctx, joinNeeds(needsOfRole(role), { owner: false, keys: input.permissionKeys }), "put permissions into a role");
         return ctx.tx.roles.setPermissions(role.id, input.permissionKeys, {
           ...(input.expectedVersion !== undefined ? { expectedVersion: input.expectedVersion } : {}),
@@ -346,6 +357,7 @@ export function createAccessAdminService(options: AccessAdminServiceOptions): Ac
         const role = await roleOf(ctx, input.roleId);
         assertRegular(role);
         await assertCanTouchRole(ctx, role);
+        await assertRegistered(ctx, [input.permissionKey]);
         await assertHolds(ctx, { owner: false, keys: [input.permissionKey] }, "put a permission into a role");
         await ctx.tx.roles.grantPermission(role.id, input.permissionKey, {
           authorization: grant(ctx, { operation: "role.permissions", target: role.id, detail: `grant:${input.permissionKey}` }),

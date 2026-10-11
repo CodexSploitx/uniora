@@ -71,7 +71,7 @@ describe.each(BACKENDS)("every route over %s", (backend) => {
     }
   });
 
-  it("says who it speaks for: a delegated call without an actor, or with a token we cannot verify yet, is refused", async () => {
+  it("says who it speaks for: a delegated call without an actor, or with a token no provider is configured for, is refused", async () => {
     const f = await startFixture(backend);
     open.push(f);
     const { token } = await f.issue({ scopes: [...API_SCOPE_LIST] });
@@ -79,7 +79,7 @@ describe.each(BACKENDS)("every route over %s", (backend) => {
       const missing = await f.call(route.method, concrete(route.path), { token, body: withBody(route.method) });
       expect(missing.status, route.id).toBe(400);
       expect(missing.body.code, route.id).toBe("actor_required");
-      const unsupported = await f.call(route.method, concrete(route.path), { token, actor: "mgr", body: withBody(route.method), headers: { "uniora-actor-token": "eyJ" } });
+      const unsupported = await f.call(route.method, concrete(route.path), { token, body: withBody(route.method), headers: { "uniora-actor-token": "eyJ" } });
       expect(unsupported.status, route.id).toBe(501);
       expect(unsupported.body.code, route.id).toBe("actor_token_unsupported");
     }

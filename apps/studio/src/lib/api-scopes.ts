@@ -13,6 +13,7 @@ export const API_SCOPE_META = {
   "teams:write": { sensitive: true, group: "administer" },
   "policies:write": { sensitive: true, group: "administer" },
   "invitations:write": { sensitive: true, group: "administer" },
+  "actor:verified": { sensitive: false, group: "delegate" },
   "actor:assert": { sensitive: true, group: "delegate" },
 } as const;
 
@@ -30,9 +31,9 @@ export const API_SCOPE_PRESETS: readonly { id: "checks" | "readonly" | "signup" 
   { id: "checks", scopes: ["check"] },
   { id: "readonly", scopes: ["check", "organizations:read", "audit:read"] },
   { id: "signup", scopes: ["organizations:create"] },
-  { id: "admin", scopes: ["check", "organizations:read", "members:write", "roles:write", "teams:write", "policies:write", "invitations:write", "actor:assert"] },
+  { id: "admin", scopes: ["check", "organizations:read", "members:write", "roles:write", "teams:write", "policies:write", "invitations:write", "actor:verified"] },
 ];
 
-/** The scopes that act on behalf of a user and so do nothing without `actor:assert`. */
-export const needsActorAssert = (scopes: readonly ApiScopeName[]): boolean =>
-  !scopes.includes("actor:assert") && scopes.some((scope) => API_SCOPE_META[scope].group === "administer");
+/** The scopes that act on behalf of a user and so do nothing without an actor scope (`actor:verified`, or `actor:assert`). */
+export const needsActorScope = (scopes: readonly ApiScopeName[]): boolean =>
+  !scopes.includes("actor:assert") && !scopes.includes("actor:verified") && scopes.some((scope) => API_SCOPE_META[scope].group === "administer");

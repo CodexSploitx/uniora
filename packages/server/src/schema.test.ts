@@ -68,6 +68,10 @@ describe("parseInput", () => {
       [{ ...valid, kind: "c" }, "kind", "enum"],
       [{ ...valid, at: "yesterday" }, "at", "invalid_date"],
       [{ ...valid, at: "2026-13-45T99:99:99Z" }, "at", "invalid_date"],
+      [{ ...valid, at: "2020-02-30T00:00:00Z" }, "at", "invalid_date"],
+      [{ ...valid, at: "2021-02-29T00:00:00Z" }, "at", "invalid_date"],
+      [{ ...valid, at: "2020-01-01T24:00:00Z" }, "at", "invalid_date"],
+      [{ ...valid, at: "2020-04-31T10:00:00+25:00" }, "at", "invalid_date"],
       [{ ...valid, at: 1760000000 }, "at", "type"],
       [{ ...valid, organizationId: "a\u0000b" }, "organizationId", "pattern"],
     ];

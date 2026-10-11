@@ -3,6 +3,7 @@ import type { ApiCredentialStorage, ApiCredentialTransaction } from "@uniora/cor
 import type { Queryable } from "./queryable.js";
 import { createAuditLogRepository } from "./repositories/audit-log.js";
 import { createApiClientRepository, createApiKeyRepository } from "./repositories/api-credentials.js";
+import { createRateLimitRepository } from "./repositories/rate-limits.js";
 
 function scopeOf(db: Queryable, pool?: Pool): ApiCredentialTransaction {
   return {
@@ -21,6 +22,7 @@ export function createPostgresApiCredentialStorage(pool: Pool): ApiCredentialSto
   const bound = scopeOf(pool, pool);
   return {
     ...bound,
+    rateLimits: createRateLimitRepository(pool),
     async transaction<T>(callback: (tx: ApiCredentialTransaction) => Promise<T>): Promise<T> {
       const client = await pool.connect();
       try {

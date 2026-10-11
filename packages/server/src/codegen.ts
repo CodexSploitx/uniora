@@ -5,6 +5,9 @@ import type { ObjectSchema, Schema } from "./schema.js";
 
 type Side = "input" | "output";
 
+/** Text that goes inside a `/** ... *\/` comment: it cannot close it, and it stays on one line. */
+const comment = (text: string): string => text.replace(/\*\//g, "* /").replace(/[\r\n\u2028\u2029]+/g, " ");
+
 const ident = (name: string): string => (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) ? name : JSON.stringify(name));
 
 /** The TypeScript type of a schema, as a request carries it (`input`: a date may be a `Date`) or as a response has it (`output`: text). */
@@ -36,7 +39,7 @@ function render(schema: Schema, side: Side, refs: ReadonlyMap<Schema, string> | 
       if (entries.length === 0) return "Record<string, never>";
       const lines = entries.map(([key, inner]) => {
         const description = (inner.kind === "optional" ? inner.inner : inner) as { description?: string };
-        const doc = description.description ? `${next}/** ${description.description.replace(/\*\//g, "* /")} */\n` : "";
+        const doc = description.description ? `${next}/** ${comment(description.description)} */\n` : "";
         return `${doc}${next}${ident(key)}${inner.kind === "optional" ? "?" : ""}: ${render(inner, side, refs, next)};`;
       });
       return `{\n${lines.join("\n")}\n${indent}}`;
@@ -61,7 +64,7 @@ function inputOf(route: Route): { type: string; pathParams: string[]; query: str
   if (new Set(names).size !== names.length) throw new Error(`Route ${route.id}: a name is used in more than one of path, query and body, so the client could not flatten them.`);
   const lines = Object.entries(all).map(([key, schema]) => {
     const inner = (schema.kind === "optional" ? schema.inner : schema) as { description?: string };
-    const doc = inner.description ? `    /** ${inner.description.replace(/\*\//g, "* /")} */\n` : "";
+    const doc = inner.description ? `    /** ${comment(inner.description)} */\n` : "";
     return `${doc}    ${ident(key)}${isOptional(schema) ? "?" : ""}: ${render(schema, "input", undefined, "    ")};`;
   });
   return {
@@ -88,6 +91,7 @@ export function generateClientSource(routes: readonly Route[] = allRoutes()): st
   out.push("");
   for (const [schema, name] of [...COMPONENT_SCHEMAS].sort((a, b) => a[1].localeCompare(b[1]))) {
     const others = new Map([...COMPONENT_SCHEMAS].filter(([, other]) => other !== name));
+    if (!/^[A-Za-z_]\w*$/.test(name)) throw new Error(`The component name "${name}" is not an identifier.`);
     out.push(`export interface ${name} ${render(schema, "output", others, "")}`);
     out.push("");
   }
@@ -95,7 +99,7 @@ export function generateClientSource(routes: readonly Route[] = allRoutes()): st
   out.push("export interface Operations {");
   for (const route of sorted) {
     const input = inputOf(route);
-    out.push(`  /** ${route.summary} */`);
+    out.push(`  /** ${comment(route.summary)} */`);
     out.push(`  ${JSON.stringify(route.id)}: {`);
     out.push(`    input: ${input.type};`);
     out.push(`    output: ${route.status === 204 ? "void" : render(route.response, "output", COMPONENT_SCHEMAS, "    ")};`);
@@ -116,6 +120,7 @@ export function generateClientSource(routes: readonly Route[] = allRoutes()): st
     out.push(`    hasBody: ${route.body !== undefined},`);
     out.push(`    scope: ${JSON.stringify(route.scope)},`);
     out.push(`    delegated: ${route.delegated},`);
+    out.push(`    actorToken: ${route.actorToken},`);
     out.push(`    safe: ${!route.write},`);
     out.push(`    ifMatch: ${route.ifMatch},`);
     out.push(`    idempotent: ${route.idempotent},`);

@@ -1,4 +1,5 @@
 import type { UnioraStorage, AccessAdminService, ApiPrincipal, ApiScope, AuthorizationEngine, Identity, InvitationService, PolicyService, TeamService } from "@uniora/core";
+import type { VerifiedActor } from "./actor-token.js";
 import type { ResolvedConfig } from "./config.js";
 import type { Infer, Issue, ObjectSchema, Schema } from "./schema.js";
 
@@ -28,11 +29,14 @@ export interface DelegatedContext extends ApplicationContext {
 export interface RouteContext {
   readonly requestId: string;
   readonly principal: ApiPrincipal;
-  readonly config: ResolvedConfig;
+  /** The configuration WITHOUT the credential storage: a route can never mint, change or read an API key. */
+  readonly config: Omit<ResolvedConfig, "credentials">;
   readonly engine: AuthorizationEngine;
   readonly now: () => Date;
   /** `{ provider?, subject }` as a caller sent it, completed with the configured default provider. Throws 400 when it cannot. */
   resolveIdentity(input: { provider?: string | undefined; subject: string }, path: string): Identity;
+  /** The end user proven by a verified `Uniora-Actor-Token`, with the facts it states about how they signed in. `undefined` when the call carried none. */
+  readonly verifiedActor: VerifiedActor | undefined;
   /** Services for an application call (no end user): the API client acts as itself. */
   application(): ApplicationContext;
   /** Only on a `delegated` route: the end user the call speaks for and the services that act as them. Anywhere else it is a bug (500). */
@@ -83,6 +87,12 @@ export interface RouteSpec<Pa extends ObjectSchema | undefined = undefined, Q ex
    * speaks for.
    */
   readonly delegated?: boolean;
+  /**
+   * Accepts `Uniora-Actor-Token`: the end user's own token from your identity provider, verified by the server. The identity the call
+   * asks about must then be the one in the token. (Delegated routes always accept it; this is for the application routes that can
+   * profit from knowing the person is who they say, like `authorize`, which also takes the session facts from it.)
+   */
+  readonly actorToken?: boolean;
   /** Accepts `If-Match` (the version the caller last saw) and refuses a stale one with 412. Any other route refuses the header. */
   readonly ifMatch?: boolean;
   /** Answers with the `ETag` of the resource it returns (its version). */
@@ -114,6 +124,7 @@ export interface Route {
   readonly status: 200 | 201 | 204;
   readonly write: boolean;
   readonly delegated: boolean;
+  readonly actorToken: boolean;
   readonly ifMatch: boolean;
   readonly etag: boolean;
   readonly idempotent: boolean;
@@ -164,6 +175,7 @@ export function defineRoute<Pa extends ObjectSchema | undefined = undefined, Q e
     status: spec.status ?? 200,
     write: spec.write ?? spec.method !== "GET",
     delegated: spec.delegated ?? false,
+    actorToken: spec.actorToken ?? false,
     ifMatch: spec.ifMatch ?? false,
     etag: spec.etag ?? false,
     idempotent: spec.idempotent ?? false,

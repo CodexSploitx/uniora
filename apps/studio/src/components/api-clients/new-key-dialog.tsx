@@ -1,7 +1,7 @@
 "use client";
 
 import { IconKey } from "@tabler/icons-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { createApiKey } from "@/actions/api-clients";
 import { CopyButton } from "@/components/shared/copy-button";
 import { useAction } from "@/components/shared/use-action";
@@ -22,12 +22,17 @@ export function NewKeyDialog({ clientId, clientName, disabled }: { clientId: str
   const [open, setOpen] = useState(false);
   const [days, setDays] = useState("");
   const [token, setToken] = useState<string | null>(null);
+  // Each opening of the dialog is a generation. An answer that arrives after the dialog was closed (Esc before the server replied)
+  // belongs to a generation that is over, and its key must not appear in the next one.
+  const generation = useRef(0);
 
   return (
     <Dialog
       open={open}
       onOpenChange={(next) => {
+        generation.current += 1;
         setOpen(next);
+        if (next) setToken(null);
         if (!next) {
           setToken(null);
           setDays("");
@@ -63,9 +68,12 @@ export function NewKeyDialog({ clientId, clientName, disabled }: { clientId: str
             className="grid gap-4"
             onSubmit={(event) => {
               event.preventDefault();
+              const mine = generation.current;
               run(() => createApiKey({ clientId, ...(days !== "" ? { expiresInDays: Number(days) } : {}) }), {
                 success: t("apiClients.keyCreatedToast"),
-                onSuccess: (result) => setToken((result as { data: { token: string } }).data.token),
+                onSuccess: (result) => {
+                  if (generation.current === mine) setToken((result as { data: { token: string } }).data.token);
+                },
               });
             }}
           >

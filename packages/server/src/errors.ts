@@ -80,7 +80,8 @@ export function statusForCode(code: string): number {
 export function toApiError(error: unknown): ApiError {
   if (error instanceof ApiError) return error;
   // Compared by name as well: a bundler can load @uniora/core twice, and `instanceof` would then miss (see guides/errors.md).
-  if (error instanceof UnioraError || (error instanceof Error && typeof (error as { code?: unknown }).code === "string" && /Error$/.test(error.name) && error.name !== "Error")) {
+  // Only our own shape of code (`role_exists`): a driver's `SQLITE_BUSY` or Node's `ERR_INVALID_URL` is a server fault, never the caller's 400.
+  if (error instanceof UnioraError || (error instanceof Error && /^[a-z][a-z0-9_]*$/.test(String((error as { code?: unknown }).code)) && /Error$/.test(error.name) && error.name !== "Error")) {
     const code = (error as UnioraError).code;
     if (SERVER_FAULT.test(code)) return errors.internal(error);
     // The plain "no" never says whether it was the permission, the role or the target: one code for all of them. The four

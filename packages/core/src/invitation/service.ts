@@ -487,6 +487,10 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
     invite: (async (input: InviteInput): Promise<InviteResult | InviteReplayResult> => {
       const email = normalizeInvitationEmail(input.email);
       const lifetime = lifetimeOf(input.ttlMs);
+      // Who may invite is answered before anything about roles or teams, or the refusal would tell a stranger which role and team ids exist.
+      if (accessEnabled && !(await createAuthorizationEngine(storage, options.engine).can({ identity: input.invitedBy, organizationId: input.organizationId, permission: accessKeys.membersInvite }))) {
+        throw new AccessError("You are not allowed to manage invitations.", "access_forbidden");
+      }
       const roles = await assertInvitableRoles(input.organizationId, input.roleIds);
       if (!(await storage.organizations.findById(input.organizationId))) {
         throw new InvitationError("The organization does not exist.", "bad_request");
@@ -788,7 +792,7 @@ export function createInvitationService(options: InvitationServiceOptions): Invi
                 actor: input.identity,
                 action: "team_member.added",
                 target: { type: "team_member", id: row.id },
-                metadata: { teamId, membershipId: membership.id, via: "invitation", invitationId: invitation.id },
+                metadata: { teamId, membershipId: membership.id, viaInvitation: true, invitationId: invitation.id },
               });
             }
           }

@@ -3,6 +3,7 @@ import type { ApiCredentialStorage, ApiCredentialTransaction } from "@uniora/cor
 import { createExecutor } from "./executor.js";
 import { createAuditLogRepository } from "./repositories/audit-log.js";
 import { createApiClientRepository, createApiKeyRepository } from "./repositories/api-credentials.js";
+import { createRateLimitRepository } from "./repositories/rate-limits.js";
 
 /**
  * SQLite implementation of `ApiCredentialStorage` over a `better-sqlite3` connection you own: the API clients and keys of
@@ -19,6 +20,7 @@ export function createSqliteApiCredentialStorage(db: Database): ApiCredentialSto
   };
   return {
     ...scope,
+    rateLimits: createRateLimitRepository(executor),
     transaction<T>(callback: (tx: ApiCredentialTransaction) => Promise<T>): Promise<T> {
       return executor.atomic(() => callback(scope));
     },

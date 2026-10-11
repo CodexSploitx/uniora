@@ -755,6 +755,8 @@ export function createMemoryStorage(): UnioraStorage {
 
   const roleRepository: RoleRepository = {
     async create(input: CreateRoleInput) {
+      // The id is the primary key: reusing it would replace somebody's role, the Owner role or another organization's.
+      if (roles.has(input.id)) throw new RoleError(`A role with id "${input.id}" already exists.`, "role_exists");
       const name = sanitizeRoleName(input.name);
       if (roleNameTaken(input.organizationId, name)) {
         throw new RoleError(`A role named "${name}" already exists in this organization.`);
@@ -783,6 +785,7 @@ export function createMemoryStorage(): UnioraStorage {
       return copy(role);
     },
     async createOwnerRole(input: CreateOwnerRoleInput) {
+      if (roles.has(input.id)) throw new RoleError(`A role with id "${input.id}" already exists.`, "role_exists");
       const alreadyHasOwner = [...roles.values()].some(
         (r) => r.organizationId === input.organizationId && r.isOwnerRole,
       );

@@ -227,25 +227,85 @@ sent: build them from your verified session. See [policies](policies.md) for wha
 
 ### Changes on behalf of an end user
 
-Changing who holds which power is a **delegated** call: the end user travels in `Uniora-Actor-Subject` (and `Uniora-Actor-Provider` if
-you have no default), the client needs `actor:assert` as well as the scope of the call, and the services then apply the
-[anti-escalation rules](access-admin.md) **to that user**: they can only give what they hold, never to themselves, never touch someone
-who holds more power than they do. A key cannot do more than the user it speaks for.
+Changing who holds which power is a **delegated** call: the services apply the [anti-escalation rules](access-admin.md) **to the end user**
+the call speaks for: they can only give what they hold, never to themselves, never touch someone who holds more power than they do. A key
+cannot do more than the user it speaks for. There are two ways to say who that is:
+
+| | Verified (recommended) | Asserted |
+| --- | --- | --- |
+| What travels | the user's own token from your identity provider, in `Uniora-Actor-Token` | the user's id, in `Uniora-Actor-Subject` |
+| Who vouches | the server verifies the token against the provider you configured | whoever holds the API key |
+| Client scope | `actor:verified` | `actor:assert` (sensitive) |
+| A leaked API key can | speak only for users who hold a token right now | speak for **any** user of its organizations |
 
 ```ts
-await uniora.members.assignRole(
-  { organizationId, membershipId, roleId },
-  { actor: { subject: session.userId } },   // the verified signed-in user of YOUR app
-);
+// Verified: the signed-in user's own token, as your auth provider issued it.
+await uniora.members.assignRole({ organizationId, membershipId, roleId }, { actor: { token: session.accessToken } });
+// Asserted: your server says who it is.
+await uniora.members.assignRole({ organizationId, membershipId, roleId }, { actor: { subject: session.userId } });
 ```
 
-Every audit entry keeps the end user as its `actor` and adds `metadata.via = { apiClientId, keyId, requestId }`, set by the server
-inside the hash chain: you can always tell which backend relayed a change and which request it was.
+Every audit entry keeps the end user as its `actor` and adds `metadata.via = { apiClientId, keyId, requestId, actorMode }`, set by the server
+inside the hash chain (`actorMode` is `verified` or `asserted`): you can always tell which backend relayed a change, which request it was and
+how the user was identified.
 
-**The risk delegated mode accepts, plainly:** a key with `actor:assert` can speak for **any user of its organizations**. That is why
-the scope is separate and sensitive, why organization lists exist, and why a key that only checks permissions should never have it.
-The server cannot verify an end user's identity by itself; verified end-user tokens are on the [roadmap](roadmap.md). Keep such keys
-on servers you control and rotate them.
+### Verified end users: the list of providers
+
+Tell the server which identity providers it may believe. Each entry says exactly how that provider's tokens are checked; nothing in a token
+chooses how it is verified.
+
+```ts
+createUnioraServer({
+  …,
+  defaultProvider: "main",
+  actorTokens: [
+    {
+      provider: "main",                                   // the label stored in these users' identities
+      issuer: "https://idp.example.com/",                 // the exact `iss` of the tokens
+      audience: "uniora",                                 // what the token's `aud` must name: required, there is no way to switch it off
+      algorithms: ["RS256"],                              // pinned: the algorithms this provider signs with
+      jwksUri: "https://idp.example.com/.well-known/jwks.json",   // or `jwks: { keys: [...] }`, or `secret` for HS*
+      // Optional: subjectClaim ("sub"), maxLifetimeSeconds (86400), clockToleranceSeconds (30), jwksCacheSeconds (600),
+      // acrLevels: { "urn:mace:incommon:iap:silver": 2 }
+    },
+  ],
+  requireVerifiedActors: true, // optional: refuse asserted actors altogether, so a leaked key cannot impersonate anybody
+});
+```
+
+What the server does with `Uniora-Actor-Token`:
+
+- Finds the provider by the token's exact `iss`; the algorithm must be one that provider **pinned** (`none`, a `HS*` token for an `RS*` provider,
+  an algorithm you did not list: refused). A symmetric algorithm is only ever checked against a configured `secret` (at least 32 bytes), never
+  against a public key, which closes the classic algorithm-confusion attack.
+- Takes the key **only** from the provider's configuration: `jwksUri` (HTTPS only, no redirects, 3 s timeout, at most 256 KB and 50 keys, cached, refreshed
+  when a `kid` is unknown but never more than once every 30 s, so a stream of made-up key ids cannot make the server hammer your provider; the keys
+  it holds are used for up to an hour while the provider is down) or the keys you wrote down. `jku`, `jwk`, `x5u` and `crit` in the token are never used
+  (`crit` is refused). RSA keys under 2048 bits and private keys in a key set are refused at start-up. ECDSA must use the raw `r||s` form of JWS.
+- Requires `exp`, and checks `nbf`, `iat` (not in the future), the audience, and that the token does not live longer than `maxLifetimeSeconds`.
+- Takes the subject from `sub` (or your `subjectClaim`), 1 to 500 characters without control characters. The identity is `{ provider, subject }`
+  with the provider's label: make sure it is the label your users are stored under (normally your `defaultProvider`).
+- Answers every refusal the same way, `401 actor_token_invalid` (the reason, never the token, is in the server's log), and `503 actor_token_unavailable`
+  when the provider's keys cannot be fetched and no recent copy exists.
+
+A few starting points (check your provider's own documentation for the exact issuer, audience and algorithm):
+
+| Provider | Typical shape |
+| --- | --- |
+| Auth0 | `issuer` is `https://<tenant>/`, `audience` your API identifier, `RS256`, `jwksUri` `https://<tenant>/.well-known/jwks.json` |
+| Clerk | `issuer` is the Frontend API URL of the instance, `RS256`, `jwksUri` `<issuer>/.well-known/jwks.json`; add an `aud` through a JWT template |
+| Supabase | `issuer` `https://<project>.supabase.co/auth/v1`, `audience` `authenticated`; asymmetric keys through `jwksUri`, or `HS256` with `secret` |
+| Better Auth | the JWT plugin's JWKS (`jwksUri`), with the algorithm it signs with (for example `EdDSA`) |
+
+**The same token on decisions.** `check`, `check:batch`, `authorize` and `snapshots` accept `Uniora-Actor-Token` too (`actorToken` option in the client): the
+question must then be about the user in the token (`400 actor_mismatch` otherwise). With `authorize` the server takes the **session facts from the
+token**, so a policy such as "recent sign-in with a second factor" reads what the provider signed instead of what your backend says (and a `session`
+in the body is refused next to a token): `auth_time` becomes `session.authAgeSeconds`, `amr` becomes `session.methods`, `session.mfa` is `true` only
+when `amr` has the `mfa` value of RFC 8176, and `acr` becomes `session.assuranceLevel` through your `acrLevels` map. A fact the token does not state is
+unknown, and a policy that needs it refuses with a `stepUp`.
+
+**What it does not give you.** A token is a bearer credential: the server does not remember used tokens (it relies on `exp`, so keep tokens short-lived), and it
+verifies the user, not your backend's intentions. Hold tokens only as long as your auth provider's session does.
 
 ### Optimistic concurrency
 
@@ -328,7 +388,7 @@ decision, the reason and `stepUp`, not the per-policy detail. Its key needs the 
 | Security misconfiguration | The server refuses to start without TLS off loopback, refuses unknown options, sets `no-store`, `nosniff` and a locked-down CSP on every answer, and returns no internal message. |
 | Improper inventory management | The route table is the one source of the server, the OpenAPI document and the client; a test fails when the committed copies differ. |
 
-**What it does not do (yet)**: verify end users (delegated calls trust the actor header of a key that holds `actor:assert`); share its rate
+**What it does not do (yet)**: share its rate
 limits between instances; sign or push events (webhooks); cover platform administration (it needs a step-up design). See the
 [roadmap](roadmap.md).
 
@@ -337,7 +397,7 @@ limits between instances; sign or push events (webhooks); cover platform adminis
 - [ ] TLS terminates at the server or at a proxy you declared (`--behind-tls-proxy` with the right `--trusted-proxy-hops`).
 - [ ] The server's database user cannot change keys; Studio and the CLI use another one ([database users](#database-users)).
 - [ ] One client per backend; each with the fewest scopes and the shortest organization list that works.
-- [ ] `actor:assert` only on servers you control, never on a client that merely checks permissions.
+- [ ] Delegated calls use verified tokens (`actor:verified`), and `requireVerifiedActors` is on; `actor:assert` only on servers you control, never on a client that merely checks permissions.
 - [ ] Keys in a secret manager, never in a repository, an image or a log; rotate them (they can expire: `--expires-in-days`).
 - [ ] The default provider label is set and written down; it is never changed.
 - [ ] Health checks point at `/healthz` and `/readyz`; logs go somewhere you read them and the `requestId` of a 5xx is findable.
@@ -346,6 +406,5 @@ limits between instances; sign or push events (webhooks); cover platform adminis
 
 ## What is not here yet
 
-Tracked in the [roadmap](roadmap.md): OAuth 2.0 client credentials with short-lived JWTs (opaque keys come first), verified end-user
-tokens, platform administration over the API (it needs a step-up design), webhooks from the outbox, a shared rate limiter,
+Tracked in the [roadmap](roadmap.md): OAuth 2.0 client credentials with short-lived JWTs (opaque keys come first), platform administration over the API (it needs a step-up design), webhooks from the outbox, a shared rate limiter,
 and delegated reads of members, roles and teams (today they are application calls; only policies can be read as an end user). A container image is not published yet.

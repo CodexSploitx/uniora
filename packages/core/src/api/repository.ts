@@ -1,6 +1,7 @@
 import type { Identity } from "../identity/types.js";
 import type { AuditLogRepository } from "../audit-log/repository.js";
 import { ApiCredentialError } from "./errors.js";
+import type { RateLimitRepository } from "./rate-limit.js";
 import { isApiScope, type ApiScope } from "./scopes.js";
 import type { ApiClient, ApiClientStatus, ApiKey, ApiKeyRecord } from "./types.js";
 import { API_CLIENT_STATUSES } from "./types.js";
@@ -93,6 +94,8 @@ export interface ApiCredentialTransaction {
 }
 
 export interface ApiCredentialStorage extends ApiCredentialTransaction {
+  /** The shared rate limit of the API server (optional to use: the server limits per process without it). */
+  rateLimits: RateLimitRepository;
   transaction<T>(callback: (tx: ApiCredentialTransaction) => Promise<T>): Promise<T>;
 }
 
@@ -123,19 +126,22 @@ export function assertApiId(id: unknown, what: string): asserts id is string {
 export function sanitizeApiClientName(name: unknown): string {
   if (typeof name !== "string") throw new ApiCredentialError("The client name must be a string.", "api_client_invalid");
   const trimmed = name.trim().replace(/\s+/g, " ");
-  // eslint-disable-next-line no-control-regex
-  if (trimmed === "" || trimmed.length > MAX_API_CLIENT_NAME_LENGTH || /[\u0000-\u001f\u007f]/.test(trimmed)) {
+  // Checked on the text as given (trimmed), before the whitespace is folded: a line separator or a byte-order mark must be refused, not turned into a space.
+  const given = name.trim();
+  // Controls (C0 and C1), and the invisible format characters (zero-width, bidirectional marks and overrides) that let two names
+  // look the same, or a name read backwards, while being different.
+  if (trimmed === "" || trimmed.length > MAX_API_CLIENT_NAME_LENGTH || /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(given)) {
     throw new ApiCredentialError(
-      `The client name must be 1 to ${MAX_API_CLIENT_NAME_LENGTH} characters, without control characters.`,
+      `The client name must be 1 to ${MAX_API_CLIENT_NAME_LENGTH} characters, without control or invisible formatting characters.`,
       "api_client_invalid",
     );
   }
   return trimmed;
 }
 
-/** What two names are compared by: case-insensitive and ignoring surrounding and repeated whitespace. */
+/** What two names are compared by: case-insensitive, compatibility-folded (full-width letters, ligatures) and ignoring surrounding and repeated whitespace. */
 export function normalizeApiClientName(name: string): string {
-  return name.trim().replace(/\s+/g, " ").toLowerCase();
+  return name.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 export function sanitizeApiScopes(scopes: unknown): ApiScope[] {

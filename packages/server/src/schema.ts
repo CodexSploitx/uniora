@@ -183,7 +183,17 @@ export type ParseResult<T> = { readonly ok: true; readonly value: T } | { readon
 
 const MAX_ISSUES = 20;
 const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
-const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+const RFC3339 = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-](\d{2}):(\d{2}))$/;
+
+/** Date.parse rolls `02-30` over to March 1st and accepts `T24:00`: a moment that does not exist is refused instead. */
+function isRealMoment(value: string): boolean {
+  const m = RFC3339.exec(value);
+  if (!m) return false;
+  const [year, month, day, hour, minute, second] = [m[1], m[2], m[3], m[4], m[5], m[6]].map(Number) as [number, number, number, number, number, number];
+  if (month < 1 || month > 12 || day < 1 || hour > 23 || minute > 59 || second > 59) return false;
+  if (m[7] !== undefined && (Number(m[7]) > 23 || Number(m[8]) > 59)) return false;
+  return day <= new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
@@ -234,7 +244,7 @@ function parse(schema: Schema, value: unknown, path: string, out: Collector): un
       return value;
     case "date": {
       if (typeof value !== "string") return void out.add(path, value === undefined ? "required" : "type");
-      if (value.length > 40 || !RFC3339.test(value)) return void out.add(path, "invalid_date");
+      if (value.length > 40 || !isRealMoment(value)) return void out.add(path, "invalid_date");
       const time = Date.parse(value);
       if (!Number.isFinite(time)) return void out.add(path, "invalid_date");
       return new Date(time);

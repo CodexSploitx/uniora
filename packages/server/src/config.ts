@@ -1,5 +1,8 @@
+import { isIP } from "node:net";
 import type { ApiCredentialStorage, AuthorizationEngineOptions, InvitationServiceOptions, PolicyServiceOptions, UnioraStorage } from "@uniora/core";
 import { isReservedIdentityProvider } from "@uniora/core";
+import { resolveActorTokenProviders } from "./actor-token.js";
+import type { ActorTokenProvider, ResolvedProvider } from "./actor-token.js";
 import { createJsonLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
 
@@ -68,7 +71,7 @@ export interface UnioraServerOptions {
    * The API credentials, ideally over a database user that can only READ clients and keys (and refresh `last_used_at`):
    * the server never creates or changes a credential, and no route can.
    */
-  credentials: Pick<ApiCredentialStorage, "apiClients" | "apiKeys">;
+  credentials: Pick<ApiCredentialStorage, "apiClients" | "apiKeys"> & Partial<Pick<ApiCredentialStorage, "rateLimits">>;
   /**
    * The identity provider label used when a request sends only a `subject`. An opaque label chosen by you (`"main"`); it need
    * not name your auth vendor. Set it once and never change it once data exists. Without it, a request must always send the
@@ -77,6 +80,17 @@ export interface UnioraServerOptions {
   defaultProvider?: string;
   limits?: Partial<ServerLimits>;
   /**
+   * The identity providers whose end-user tokens the server accepts in `Uniora-Actor-Token`, each with its issuer, audience, pinned
+   * algorithms and keys (`jwksUri`, `jwks` or an `HS*` `secret`). With one, a delegated call can prove who it speaks for instead of
+   * asserting it, so a leaked API key can no longer speak for an arbitrary user. See `guides/server.md`.
+   */
+  actorTokens?: readonly ActorTokenProvider[];
+  /**
+   * Refuse asserted actors (`Uniora-Actor-Subject`) on delegated calls: only a verified token is accepted. Needs `actorTokens`. This
+   * is what makes a leaked key unable to impersonate anybody; turn it on once your backends send tokens.
+   */
+  requireVerifiedActors?: boolean;
+  /**
    * Turns on the invitation routes. The accept link and the way an e-mail is sent are YOURS: UNIORA only builds the link from the
    * secret token (`acceptUrl`) and hands it to `sender`. Without it the invitation routes answer 501 `invitations_not_configured`.
    */
@@ -84,6 +98,12 @@ export interface UnioraServerOptions {
   /** Passed to the policy service the delegated policy routes use (`requireSeparateActivator`). */
   policies?: Omit<PolicyServiceOptions, "storage" | "engine">;
   engine?: AuthorizationEngineOptions;
+  /**
+   * Share the rate limit between instances: one budget per API key kept in the credential storage (`credentials.rateLimits`), so N
+   * instances allow the configured rate together instead of N times that. Needs the credential storage to be writable for it.
+   * If the storage fails, each instance limits on its own meanwhile.
+   */
+  sharedRateLimit?: boolean;
   /** Refuse every write with 503 `read_only` (during a migration or an incident). */
   readOnly?: boolean;
   /**
@@ -98,12 +118,15 @@ export interface UnioraServerOptions {
 
 export interface ResolvedConfig {
   readonly storage: UnioraStorage;
-  readonly credentials: Pick<ApiCredentialStorage, "apiClients" | "apiKeys">;
+  readonly credentials: Pick<ApiCredentialStorage, "apiClients" | "apiKeys"> & Partial<Pick<ApiCredentialStorage, "rateLimits">>;
   readonly defaultProvider: string | undefined;
   readonly limits: Readonly<ServerLimits>;
   readonly engine: AuthorizationEngineOptions | undefined;
+  readonly actorProviders: readonly ResolvedProvider[];
+  readonly requireVerifiedActors: boolean;
   readonly invitations: InvitationConfig | undefined;
   readonly policies: Omit<PolicyServiceOptions, "storage" | "engine"> | undefined;
+  readonly sharedRateLimit: boolean;
   readonly readOnly: boolean;
   readonly trustedProxyHops: number;
   readonly logger: Logger;
@@ -129,7 +152,8 @@ export function resolveConfig(options: UnioraServerOptions): ResolvedConfig {
   }
   positiveInt("maxBodyBytes", limits.maxBodyBytes, 8 * 1024 * 1024);
   positiveInt("defaultPageSize", limits.defaultPageSize, 1000);
-  positiveInt("maxPageSize", limits.maxPageSize, 1000);
+  // 199, not 1000: the repositories serve at most 200 rows a page and the routes ask for one more to know whether a next page exists.
+  positiveInt("maxPageSize", limits.maxPageSize, 199);
   positiveInt("maxBatchChecks", limits.maxBatchChecks, 1000);
   positiveInt("requestTimeoutMs", limits.requestTimeoutMs, 120_000);
   positiveInt("ratePerSecond", limits.ratePerSecond, 100_000);
@@ -152,14 +176,30 @@ export function resolveConfig(options: UnioraServerOptions): ResolvedConfig {
   const hops = options.trustedProxyHops ?? 0;
   if (!Number.isInteger(hops) || hops < 0 || hops > 10) throw new ServerConfigError("`trustedProxyHops` must be an integer from 0 to 10.");
 
+  if (options.sharedRateLimit === true && !options.credentials.rateLimits) {
+    throw new ServerConfigError("`sharedRateLimit` needs `credentials.rateLimits`: use a credential storage that keeps the shared bucket (memory, SQLite or PostgreSQL).");
+  }
+  if (options.engine?.onDecision !== undefined) {
+    throw new ServerConfigError(
+      "`engine.onDecision` is not supported by the server: the identity and target of a decision come from the caller, so a key that only holds `check` could write audit rows under any name. Audit decisions in your own backend.",
+    );
+  }
+  const actorProviders = resolveActorTokenProviders(options.actorTokens);
+  if (options.requireVerifiedActors === true && actorProviders.length === 0) {
+    throw new ServerConfigError("`requireVerifiedActors` needs `actorTokens`: with no provider configured no delegated call could ever be made.");
+  }
+
   return Object.freeze({
     storage: options.storage,
     credentials: options.credentials,
     defaultProvider: provider,
     limits: Object.freeze(limits),
     engine: options.engine,
+    actorProviders,
+    requireVerifiedActors: options.requireVerifiedActors === true,
     invitations: options.invitations,
     policies: options.policies,
+    sharedRateLimit: options.sharedRateLimit === true,
     readOnly: options.readOnly === true,
     trustedProxyHops: hops,
     logger: options.logger ?? createJsonLogger(),
@@ -169,5 +209,8 @@ export function resolveConfig(options: UnioraServerOptions): ResolvedConfig {
 
 /** Whether `host` only listens on this machine. */
 export function isLoopbackHost(host: string): boolean {
-  return host === "localhost" || host === "::1" || host === "[::1]" || /^127\.\d+\.\d+\.\d+$/.test(host);
+  const bare = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  if (bare.toLowerCase() === "localhost" || bare === "::1") return true;
+  // A real IPv4 address (isIP rejects `127.999.0.1` and short forms such as `127.1`) in 127.0.0.0/8.
+  return isIP(bare) === 4 && bare.startsWith("127.");
 }

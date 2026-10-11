@@ -118,7 +118,12 @@ export function queryToObject(schema: ObjectSchema | undefined, params: URLSearc
       continue;
     }
     seen.add(key);
-    let field = schema?.shape[key];
+    // `__proto__` would hit the setter and vanish without ever being reported as an unknown field.
+    if (key === "__proto__" || key === "constructor" || key === "prototype") {
+      issues.push({ path: key, code: "unknown_field" });
+      continue;
+    }
+    let field = schema && Object.hasOwn(schema.shape, key) ? schema.shape[key] : undefined;
     while (field && (field.kind === "optional" || field.kind === "nullable")) field = field.inner;
     if (field?.kind === "int") {
       value[key] = /^-?\d{1,15}$/.test(raw) ? Number(raw) : raw; // a non-number stays text and fails validation as a type error
