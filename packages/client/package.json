@@ -51,7 +51,7 @@
     "@uniora/sqlite": "workspace:^",
     "@types/better-sqlite3": "^9.6.0",
     "better-sqlite3": "^13.0.3",
-    "typescript": "^5.6.3",
+    "typescript": "^7.0.2",
     "vitest": "^2.1.4"
   }
 }
