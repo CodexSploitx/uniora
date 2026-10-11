@@ -1,5 +1,7 @@
 <div align="center">
 
+<a href="https://codexsploitx.github.io/uniora/"><img src="site/assets/og.png" alt="UNIORA" width="760"></a>
+
 # UNIORA
 
 **Universal Organization & Authorization**
@@ -8,10 +10,12 @@ Organizaciones, equipos, roles, permisos y feature flags — para cualquier prov
 
 [![GitHub stars](https://img.shields.io/github/stars/CodexSploitx/uniora?style=social)](https://github.com/CodexSploitx/uniora)
 ![status](https://img.shields.io/badge/status-desarrollo%20temprano-orange)
+[![npm](https://img.shields.io/npm/v/@uniora/core?label=%40uniora%2Fcore&color=efb100)](https://www.npmjs.com/org/uniora)
+![license](https://img.shields.io/badge/license-PolyForm%20Shield%201.0.0-blue)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)
 ![pnpm](https://img.shields.io/badge/monorepo-pnpm%20workspaces-yellow)
 
-[English](README.md) · [Sitio web](https://codexsploitx.github.io/uniora/)
+[English](README.md) · [Sitio web](https://codexsploitx.github.io/uniora/) · [Documentación](guides/README.md)
 
 </div>
 
@@ -40,6 +44,80 @@ Auth Provider                        UNIORA
 - **Las organizaciones no pueden quedar huérfanas.** Toda organización nace con un Owner protegido, y `MembershipRepository` rechaza quitarle el role Owner o borrar una membership si es la última que lo tiene — reforzado con una constraint real de base de datos, no solo con código de aplicación.
 - **Organizaciones *y* entitlements.** Los permisos responden "qué puede hacer este usuario"; las features responden "qué tiene desbloqueado esta organización". Son dos preguntas distintas, modeladas por separado, para que no tengas que simular una con la otra.
 - **Core framework-independent.** `@uniora/core` no depende de Next.js, Express, ni de ningún driver de base de datos específico — los adapters se conectan alrededor.
+
+## Dos formas de ejecutar UNIORA
+
+El mismo motor, las mismas reglas y el mismo modelo de datos. Elige cómo llega a tu código:
+
+| | Biblioteca embebida | Servidor independiente |
+| --- | --- | --- |
+| **Se ejecuta** | Dentro del proceso de tu backend | Como un servicio aparte que tú operas |
+| **Se invoca con** | `uniora.can()` | HTTPS y una API key (`POST /v1/check`), o el `@uniora/client` tipado |
+| **Salto de red** | Ninguno | Una solicitud por decisión |
+| **Lenguajes** | TypeScript y Node.js | Cualquier lenguaje por REST ([OpenAPI](guides/openapi.json)) |
+| **Datos** | Tu base de datos, en un esquema `uniora.*` dedicado | Su propia base de datos dedicada |
+| **Control de acceso** | El código de tu aplicación | API clients con scopes y listas de organizaciones |
+| **Empezar** | `npm install @uniora/core` | `npx uniora server start` |
+| **Guía** | [Primeros pasos](guides/getting-started.md) | [El servidor](guides/server.md) |
+
+No existe una nube de UNIORA. En ambos modos lo ejecutas tú y los datos son tuyos.
+
+## Qué incluye
+
+- **Organizaciones, miembros, roles y permisos.** Roles personalizados por organización, un catálogo de permisos con grupos e implicaciones, un Owner protegido, miembros bloqueados y suspendidos.
+- **Equipos.** Una jerarquía con responsabilidades. Un equipo da contexto, nunca acceso ([guía](guides/teams.md)).
+- **Políticas.** Reglas condicionales sobre los permisos: atributos del recurso, alcance y jerarquía de equipos, tiempo y contexto de la solicitud, y step-up (MFA reciente). Simula antes de publicar ([guía](guides/policies.md)).
+- **Features y cuotas.** Qué ha desbloqueado cada organización y cuántos asientos o reportes puede usar ([guía](guides/entitlements.md)).
+- **Invitaciones.** Enlaces de un solo uso, envío por correo con reintentos, reenvío y revocación ([guía](guides/invitations.md)).
+- **Administración delegada.** Permite que los líderes inviten y asignen roles sin escalada de privilegios ([guía](guides/access-admin.md)).
+- **Log de auditoría.** Solo-añadir y encadenado por hash, con verificación de integridad ([guía](guides/audit-log.md)).
+- **Webhooks y outbox.** Eventos escritos en la misma transacción que el cambio y entregados después, firmados y con reintentos ([outbox](guides/outbox.md)).
+- **Administradores de plataforma y support grants.** El poder del personal propio queda fuera de cualquier organización, y el acceso temporal y auditado a los datos de un cliente es explícito ([plataforma](guides/platform.md), [support grants](guides/support-grants.md)).
+- **Row-level security en PostgreSQL.** Funciones SQL que dan a tus propias tablas las mismas respuestas que el motor ([guía](guides/rls.md)).
+- **Herramientas.** Un CLI con ledger de migraciones, un cliente tipado y Studio, una interfaz de administración local. Medido con 5.000.000 de membresías ([rendimiento](guides/performance.md)).
+
+## UNIORA Studio
+
+Una interfaz de administración local-first sobre tu propia base de datos. Se ejecuta con `npx uniora studio`. Solo escucha en `127.0.0.1`, se desbloquea con un token aleatorio por lanzamiento y no envía datos a ningún lado. Cada cambio que hace queda auditado, y `--read-only` lo convierte en un visor seguro. Las capturas muestran una base de datos de demostración.
+
+<p align="center"><a href="assets/readme/es/overview.webp"><img src="assets/readme/es/overview.webp" alt="Resumen de UNIORA Studio" width="900"></a></p>
+
+<table>
+<tr>
+<td width="50%"><a href="assets/readme/es/members.webp"><img src="assets/readme/es/members.webp" alt="Miembros"></a><br><sub><b>Miembros</b>. Identidades de cualquier proveedor con sus roles. El Owner protegido no puede eliminarse.</sub></td>
+<td width="50%"><a href="assets/readme/es/roles.webp"><img src="assets/readme/es/roles.webp" alt="Roles y permisos"></a><br><sub><b>Roles y permisos</b>. Una lista de permisos por rol, por organización.</sub></td>
+</tr>
+<tr>
+<td width="50%"><a href="assets/readme/es/teams.webp"><img src="assets/readme/es/teams.webp" alt="Equipos"></a><br><sub><b>Equipos</b>. Una jerarquía con responsabilidades. Un equipo es contexto, no autoridad.</sub></td>
+<td width="50%"><a href="assets/readme/es/policies.webp"><img src="assets/readme/es/policies.webp" alt="Políticas"></a><br><sub><b>Políticas</b>. Reglas condicionales con historial de revisiones. Solo lectura en Studio.</sub></td>
+</tr>
+<tr>
+<td width="50%"><a href="assets/readme/es/invitations.webp"><img src="assets/readme/es/invitations.webp" alt="Invitaciones"></a><br><sub><b>Invitaciones</b>. Invita, reenvía y revoca. Los enlaces son de un solo uso.</sub></td>
+<td width="50%"><a href="assets/readme/es/features.webp"><img src="assets/readme/es/features.webp" alt="Features"></a><br><sub><b>Features</b>. Qué organizaciones tienen desbloqueada cada feature.</sub></td>
+</tr>
+<tr>
+<td width="50%"><a href="assets/readme/es/api-clients.webp"><img src="assets/readme/es/api-clients.webp" alt="Clientes de API"></a><br><sub><b>Clientes de API</b>. Clientes y claves con scopes para el servidor independiente. La clave se muestra una vez.</sub></td>
+<td width="50%"><a href="assets/readme/es/webhooks.webp"><img src="assets/readme/es/webhooks.webp" alt="Webhooks"></a><br><sub><b>Webhooks</b>. Eventos firmados con reintentos y rotación del secreto.</sub></td>
+</tr>
+<tr>
+<td width="50%"><a href="assets/readme/es/platform.webp"><img src="assets/readme/es/platform.webp" alt="Plataforma"></a><br><sub><b>Plataforma</b>. Quién administra la plataforma, aparte de cualquier organización. Solo lectura en Studio.</sub></td>
+<td width="50%"><a href="assets/readme/es/activity.webp"><img src="assets/readme/es/activity.webp" alt="Log de auditoría"></a><br><sub><b>Log de auditoría</b>. Cada cambio de todas las organizaciones, el más reciente primero.</sub></td>
+</tr>
+</table>
+
+<details>
+<summary>Más pantallas</summary>
+
+<p><b>Organizaciones</b></p>
+<img src="assets/readme/es/organizations.webp" alt="Lista de organizaciones en Studio" width="700">
+
+<p><b>Catálogo de permisos</b>. La lista global de acciones que tu app puede verificar, y cuántos roles tiene cada una.</p>
+<img src="assets/readme/es/permissions.webp" alt="Catálogo de permisos en Studio" width="700">
+
+<p><b>Features por organización</b>. Activa y desactiva features para una organización.</p>
+<img src="assets/readme/es/org-features.webp" alt="Features de una organización en Studio" width="700">
+
+</details>
 
 ## Vistazo rápido
 
