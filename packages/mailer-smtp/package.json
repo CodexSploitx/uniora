@@ -45,7 +45,7 @@
   },
   "dependencies": {
     "@uniora/core": "workspace:^",
-    "nodemailer": "^10.0.6"
+    "nodemailer": "^10.0.15"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
