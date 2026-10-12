@@ -278,6 +278,20 @@ const toMemberRow = (listing: {
 });
 
 /**
+ * The people whose stored name or e-mail contains `query`, so the members search finds "Carla" and not only the provider's id.
+ * Best effort like `withProfiles`: no migration yet or a failing read means the search is by id only, as before.
+ */
+async function profileMatches(storage: ReturnType<typeof getStorage>, query: string | undefined) {
+  if (!query) return undefined;
+  try {
+    const found = await storage.profiles.search({ query });
+    return found.length > 0 ? found.map((entry) => entry.identity) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * The stored profile of each listed person, in ONE query for the page. Best effort: a database that has not run the profiles
  * migration yet, or a failing read, leaves the rows as they were (identity only) instead of breaking the members screen.
  */
@@ -321,16 +335,18 @@ export async function getOrgMembersPage(
   const storage = getStorage();
   const query = cleanQuery(options?.query);
   const status = options?.status;
+  const orIdentities = await profileMatches(storage, query);
   const [rows, total] = await Promise.all([
     storage.memberships.searchListing({
       organizationId,
       limit: MEMBERS_PAGE_SIZE + 1,
       after: cleanCursor(options?.cursor),
       query,
+      ...(orIdentities ? { orIdentities } : {}),
       status,
       rolesPerMember: ROLES_PREVIEW,
     }),
-    storage.memberships.count({ organizationId, query, status, limit: countLimit(Boolean(query || status)) }),
+    storage.memberships.count({ organizationId, query, ...(orIdentities ? { orIdentities } : {}), status, limit: countLimit(Boolean(query || status)) }),
   ]);
   const { page, hasMore } = splitPage(rows, MEMBERS_PAGE_SIZE);
   // The Owner role always sorts first in a member's preview, so it is visible whenever they hold it.
@@ -358,15 +374,17 @@ export async function getMembersPage(options?: { query?: string; cursor?: string
   const storage = getStorage();
   const query = cleanQuery(options?.query);
   const status = options?.status;
+  const orIdentities = await profileMatches(storage, query);
   const [rows, total] = await Promise.all([
     storage.memberships.searchListing({
       limit: MEMBERS_PAGE_SIZE + 1,
       after: cleanCursor(options?.cursor),
       query,
+      ...(orIdentities ? { orIdentities } : {}),
       status,
       rolesPerMember: ROLES_PREVIEW,
     }),
-    query || status ? storage.memberships.count({ query, status, limit: countLimit(true) }) : totalMembers(),
+    query || status ? storage.memberships.count({ query, ...(orIdentities ? { orIdentities } : {}), status, limit: countLimit(true) }) : totalMembers(),
   ]);
   const { page, hasMore } = splitPage(rows, MEMBERS_PAGE_SIZE);
   const organizations = await storage.organizations.findByIds([...new Set(page.map((membership) => membership.organizationId))]);

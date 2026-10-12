@@ -100,4 +100,58 @@ export function defineProfileConformance(harness: StorageHarness): void {
     expect(members).toHaveLength(1);
     expect(members[0]?.profile).toEqual({ displayName: "Ana Pérez", email: "ana@example.com", avatarUrl: "https://cdn.example.com/ana.png" });
   });
+
+  it("searches profiles by name or e-mail, ignoring case and matching % and _ literally", async () => {
+    const { profiles } = harness.storage();
+    await profiles.upsert(ana, { displayName: "Ana Pérez", email: "ana@example.com" });
+    await profiles.upsert(ben, { displayName: "Ben Ruiz", email: "ben.ruiz@acme.io" });
+    await profiles.upsert({ provider: "supabase", subject: "cy" }, { displayName: "100% Cyan_Blue" });
+
+    expect((await profiles.search({ query: "PÉREZ" })).map((entry) => entry.identity.subject)).toEqual(["ana"]);
+    expect((await profiles.search({ query: "acme" })).map((entry) => entry.identity.subject)).toEqual(["ben"]);
+    expect((await profiles.search({ query: "a" })).map((entry) => entry.identity.subject)).toEqual(["ana", "ben", "cy"]);
+    expect((await profiles.search({ query: "a", limit: 2 })).map((entry) => entry.identity.subject)).toEqual(["ana", "ben"]);
+    expect((await profiles.search({ query: "100%" })).map((entry) => entry.identity.subject)).toEqual(["cy"]);
+    expect(await profiles.search({ query: "%" })).toHaveLength(1);
+    expect(await profiles.search({ query: "n_b" })).toHaveLength(1);
+    expect(await profiles.search({ query: "zzz" })).toEqual([]);
+    expect(await profiles.search({ query: "   " })).toEqual([]);
+  });
+
+  it("finds a member by the name or e-mail of their profile, next to the id match, in listings, searches and counts", async () => {
+    const storage = harness.storage();
+    const carla = { provider: "supabase", subject: "2eb65215-291a-4ced-a624-abdaff8d0723" };
+    const dani = { provider: "supabase", subject: "dani-id" };
+    await createOrganizationWithOwner(storage, { organizationId: "org-s", organizationName: "Search", ownerRoleId: "role-s", membershipId: "mem-carla", ownerIdentity: carla });
+    await storage.memberships.create({ id: "mem-dani", organizationId: "org-s", identity: dani });
+    await storage.organizations.create({ id: "org-t", name: "Other" });
+    await storage.memberships.create({ id: "mem-carla-t", organizationId: "org-t", identity: carla });
+    await storage.profiles.upsert(carla, { displayName: "Carla Gómez", email: "carla@example.com" });
+
+    // Without the profile, "carla" finds nobody: the id is a UUID.
+    expect(await storage.memberships.count({ query: "carla" })).toBe(0);
+
+    const found = await storage.profiles.search({ query: "carla" });
+    const orIdentities = found.map((entry) => entry.identity);
+    expect(orIdentities).toEqual([carla]);
+
+    const listing = await storage.memberships.searchListing({ query: "carla", orIdentities, rolesPerMember: 1 });
+    expect(listing.map((member) => member.id).sort()).toEqual(["mem-carla", "mem-carla-t"]);
+    expect((await storage.memberships.searchListing({ organizationId: "org-s", query: "carla", orIdentities, rolesPerMember: 1 })).map((member) => member.id)).toEqual(["mem-carla"]);
+    expect((await storage.memberships.search({ organizationId: "org-t", query: "carla", orIdentities })).map((member) => member.id)).toEqual(["mem-carla-t"]);
+    expect(await storage.memberships.count({ query: "carla", orIdentities })).toBe(2);
+    expect(await storage.memberships.count({ organizationId: "org-s", query: "carla", orIdentities })).toBe(1);
+
+    // The id match still works on its own and next to it (the identities are ADDED to what the term matches), and `orIdentities` means nothing without a query.
+    const daniMatches = (await storage.profiles.search({ query: "dani" })).map((entry) => entry.identity);
+    expect((await storage.memberships.searchListing({ organizationId: "org-s", query: "dani", orIdentities: daniMatches, rolesPerMember: 1 })).map((member) => member.id)).toEqual(["mem-dani"]);
+    expect((await storage.memberships.searchListing({ organizationId: "org-s", query: "dani", orIdentities, rolesPerMember: 1 })).map((member) => member.id).sort()).toEqual(["mem-carla", "mem-dani"]);
+    expect((await storage.memberships.searchListing({ organizationId: "org-s", orIdentities, rolesPerMember: 1 })).map((member) => member.id).sort()).toEqual(["mem-carla", "mem-dani"]);
+    expect(await storage.memberships.count({ organizationId: "org-s", status: "active", query: "carla", orIdentities })).toBe(1);
+
+    // And the same through the helper a host uses.
+    const { listMembersWithProfiles } = await import("@uniora/core");
+    const members = await listMembersWithProfiles(storage, undefined, { organizationId: "org-s", query: "gómez", rolesPerMember: 1 });
+    expect(members.map((member) => [member.id, member.profile?.displayName])).toEqual([["mem-carla", "Carla Gómez"]]);
+  });
 }

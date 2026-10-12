@@ -1,6 +1,7 @@
 import type { Identity, IdentityProfileRepository, StoredIdentityProfile } from "@uniora/core";
 import { MAX_PROFILE_BATCH, normalizeProfileInput } from "@uniora/core";
 import type { SqliteExecutor } from "../executor.js";
+import { toLikePattern } from "../like.js";
 
 interface ProfileRow {
   provider: string;
@@ -65,6 +66,19 @@ export function createProfileRepository(db: SqliteExecutor): IdentityProfileRepo
         return `(provider = ?${params.length - 1} and subject = ?${params.length})`;
       });
       const result = await db.query<ProfileRow>(`select ${COLUMNS} from uniora_identity_profiles where ${clauses.join(" or ")}`, params);
+      return result.rows.map(toProfile);
+    },
+    async search({ query, limit }) {
+      const text = query.trim();
+      if (!text) return [];
+      const cap = Math.min(Math.max(Math.trunc(limit ?? MAX_PROFILE_BATCH), 0), MAX_PROFILE_BATCH);
+      const result = await db.query<ProfileRow>(
+        `select ${COLUMNS} from uniora_identity_profiles
+         where uniora_ilike(display_name, ?1) or uniora_ilike(email, ?1)
+         order by provider, subject
+         limit ?2`,
+        [toLikePattern(text), cap],
+      );
       return result.rows.map(toProfile);
     },
     async delete(identity) {

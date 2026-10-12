@@ -85,7 +85,22 @@ export async function listMembersWithProfiles(
   options: ListMembersWithProfilesOptions,
 ): Promise<MemberListing[]> {
   const { onResolveError, ...search } = options;
-  const rows = await storage.memberships.searchListing(search);
+  let orIdentities: Identity[] | undefined;
+  const text = search.query?.trim();
+  if (text && storage.profiles) {
+    try {
+      // The person may be typed by name or e-mail, which only the stored profile knows.
+      const matches = await storage.profiles.search({ query: text });
+      if (matches.length > 0) orIdentities = matches.map((match) => match.identity);
+    } catch (error) {
+      try {
+        onResolveError?.(error);
+      } catch {
+        /* a failing logger never breaks the listing */
+      }
+    }
+  }
+  const rows = await storage.memberships.searchListing(orIdentities ? { ...search, orIdentities } : search);
   if ((!resolver && !storage.profiles) || rows.length === 0) return rows;
 
   const identities: Identity[] = [];

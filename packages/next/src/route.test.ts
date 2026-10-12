@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createMemoryStorage, createProfileSync } from "@uniora/core";
 import type { AuthorizationEngine, Identity } from "@uniora/core";
 import { authorizeRoute } from "./route.js";
 
@@ -34,5 +35,20 @@ describe("authorizeRoute", () => {
 
     expect(response?.status).toBe(401);
     await expect(response?.json()).resolves.toEqual({ error: "unauthenticated" });
+  });
+});
+
+describe("authorizeRoute profile sync", () => {
+  it("stores the profile of the caller whether the route allows or denies them", async () => {
+    const storage = createMemoryStorage();
+    const syncProfile = createProfileSync(storage, { minIntervalMs: 0 });
+    const profile = { displayName: "Ana Pérez", avatarUrl: "https://cdn.example.com/ana.png" };
+
+    expect((await authorizeRoute(createFakeEngine(false), input, { syncProfile, profile }))?.status).toBe(403);
+    expect((await storage.profiles.findMany([identity]))[0]).toMatchObject({ displayName: "Ana Pérez", avatarUrl: "https://cdn.example.com/ana.png" });
+
+    await storage.profiles.delete(identity);
+    await expect(authorizeRoute(createFakeEngine(true), input, { syncProfile, profile })).resolves.toBeNull();
+    expect(await storage.profiles.findMany([identity])).toHaveLength(1);
   });
 });

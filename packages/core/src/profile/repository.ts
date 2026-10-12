@@ -36,6 +36,12 @@ export interface IdentityProfileRepository {
   upsert(identity: Identity, profile: IdentityProfileInput): Promise<StoredIdentityProfile | null>;
   /** The stored profiles of these identities (at most `MAX_PROFILE_BATCH`); identities with none are simply absent. */
   findMany(identities: readonly Identity[]): Promise<StoredIdentityProfile[]>;
+  /**
+   * The profiles whose name or e-mail contains `query` (case-insensitive, matched literally), at most `limit` (default and maximum
+   * `MAX_PROFILE_BATCH`), in a stable order. A query shorter than one character matches nothing. Feed the identities to
+   * `memberships.searchListing({ query, orIdentities })` to find a person by name or e-mail.
+   */
+  search(options: { query: string; limit?: number }): Promise<StoredIdentityProfile[]>;
   /** Removes the stored profile; `false` when there was none. */
   delete(identity: Identity): Promise<boolean>;
 }

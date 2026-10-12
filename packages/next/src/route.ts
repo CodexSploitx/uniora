@@ -1,6 +1,7 @@
 import type { AccessCheckInput, AuthorizationEngine } from "@uniora/core";
+import type { ProfileSyncHook } from "./guard.js";
 
-export interface AuthorizeRouteOptions {
+export interface AuthorizeRouteOptions extends ProfileSyncHook {
   /** HTTP status for the denial response. Defaults to 403. */
   status?: number;
   /** JSON body for the denial response. Defaults to `{ error: "forbidden" }`. */
@@ -32,6 +33,7 @@ export async function authorizeRoute(
   input: AccessCheckInput,
   options: AuthorizeRouteOptions = {},
 ): Promise<Response | null> {
+  if (options.syncProfile && options.profile) await options.syncProfile(input.identity, options.profile);
   const allowed = await engine.access.check(input);
   if (allowed) return null;
 

@@ -123,6 +123,19 @@ const session = await resolveIdentityWithProfile(supabase, accessToken); // veri
 if (session) await syncProfile(session.identity, session.profile);        // never throws; skips an unchanged profile for 15 min
 ```
 
+**Find a person by name or e-mail.** `storage.profiles.search({ query, limit? })` returns the profiles whose name or e-mail contains the
+text (case-insensitive, literal), and `memberships.searchListing` / `search` / `count` accept `orIdentities` (used only with `query`) to
+ADD those identities to what the term matches by id. `listMembersWithProfiles` does both for you when you pass a `query`.
+
+```ts
+const found = await storage.profiles.search({ query: "gómez" });
+const members = await storage.memberships.searchListing({ organizationId, query: "gómez", orIdentities: found.map((p) => p.identity), rolesPerMember: 3 });
+```
+
+**In Express and Next it is one option.** `requirePermission(engine, "x.y", { resolve, syncProfile })` (Express: `resolve` returns
+`{ identity, organizationId, profile }`) and `assertCan(engine, input, { syncProfile, profile })` / `authorizeRoute(engine, input, { syncProfile, profile })`
+(Next) store the caller's profile on every request, new or long-standing, with no other code.
+
 `listMembersWithProfiles(storage, resolver, { organizationId, rolesPerMember, ... })` adds `profile { displayName, email, avatarUrl }` to
 each listed member: the stored profile (one `findMany` per page) and, if you pass a `resolver`, what `resolver.resolveProfiles(identities)`
 returns (one call per page, at most `MAX_PROFILE_BATCH` = 200 identities), which wins field by field. You implement the resolver against

@@ -1,6 +1,7 @@
 import type { Identity, IdentityProfileRepository, StoredIdentityProfile } from "@uniora/core";
 import { MAX_PROFILE_BATCH, normalizeProfileInput } from "@uniora/core";
 import type { Queryable } from "../queryable.js";
+import { toLikePattern } from "../pg-like.js";
 
 interface ProfileRow {
   provider: string;
@@ -65,6 +66,19 @@ export function createProfileRepository(db: Queryable): IdentityProfileRepositor
         `select ${COLUMNS} from uniora.identity_profiles
          where (provider, subject) in (select * from unnest($1::text[], $2::text[]))`,
         [unique.map((identity) => identity.provider), unique.map((identity) => identity.subject)],
+      );
+      return result.rows.map(toProfile);
+    },
+    async search({ query, limit }) {
+      const text = query.trim();
+      if (!text) return [];
+      const cap = Math.min(Math.max(Math.trunc(limit ?? MAX_PROFILE_BATCH), 0), MAX_PROFILE_BATCH);
+      const result = await db.query<ProfileRow>(
+        `select ${COLUMNS} from uniora.identity_profiles
+         where display_name ilike $1 or email ilike $1
+         order by provider, subject
+         limit $2`,
+        [toLikePattern(text), cap],
       );
       return result.rows.map(toProfile);
     },

@@ -40,6 +40,16 @@ export function createMemoryProfileRepository(): IdentityProfileRepository {
       }
       return found;
     },
+    async search({ query, limit }) {
+      const text = query.trim().toLowerCase();
+      if (!text) return [];
+      const cap = Math.min(Math.max(Math.trunc(limit ?? MAX_PROFILE_BATCH), 0), MAX_PROFILE_BATCH);
+      return [...profiles.values()]
+        .filter((profile) => (profile.displayName?.toLowerCase().includes(text) ?? false) || (profile.email?.toLowerCase().includes(text) ?? false))
+        .sort((a, b) => (key(a.identity) < key(b.identity) ? -1 : key(a.identity) > key(b.identity) ? 1 : 0))
+        .slice(0, cap)
+        .map(clone);
+    },
     async delete(identity) {
       return profiles.delete(key(identity));
     },

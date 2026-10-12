@@ -91,6 +91,9 @@ if (!session) return unauthorized();
 await syncProfile(session.identity, session.profile);
 ```
 
+With `@uniora/express` or `@uniora/next` you do not even call it: pass `syncProfile` (and the `profile`) to `authorize` / `requirePermission` /
+`assertCan` / `authorizeRoute` and every authenticated request keeps the profile current.
+
 ## Rules worth knowing
 
 - The subject must be the provider's **stable user id** (`sub`, `user.id`), never an e-mail or a username that can change.

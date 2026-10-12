@@ -2,7 +2,7 @@ import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import express, { type Request } from "express";
 import { afterEach, describe, expect, it } from "vitest";
-import { createAuthorizationEngine, createMemoryStorage, createOrganizationWithOwner } from "@uniora/core";
+import { createAuthorizationEngine, createMemoryStorage, createOrganizationWithOwner, createProfileSync } from "@uniora/core";
 import type { AccessCheckInput, AuthorizationEngine, CanInput, Identity } from "@uniora/core";
 import { authorize, requireFeature, requirePermission } from "./middleware.js";
 
@@ -303,5 +303,59 @@ describe("dynamic keys that resolve to nothing (audit F-01)", () => {
       );
     });
     expect((await get("/orgs/org-1")).status).toBe(403);
+  });
+});
+
+describe("syncProfile", () => {
+  const profile = { displayName: "Ana Pérez", email: "ana@example.com", avatarUrl: "https://cdn.example.com/ana.png" };
+
+  it("stores the profile of an authenticated caller, even one the check then denies, and keeps it current", async () => {
+    const storage = createMemoryStorage();
+    const syncProfile = createProfileSync(storage, { minIntervalMs: 0 });
+    const { engine } = fakeEngine(false);
+    const { get } = await serve((app) => {
+      app.get(
+        "/orgs/:orgId",
+        requirePermission(engine, "vehicles.read", { resolve: (req) => ({ ...resolveFromParams(req), profile }), syncProfile }),
+        (_req, res) => res.json({ ok: true }),
+      );
+    });
+
+    expect((await get("/orgs/org-1")).status).toBe(403);
+    expect((await storage.profiles.findMany([identity]))[0]).toMatchObject({ displayName: "Ana Pérez", email: "ana@example.com", avatarUrl: "https://cdn.example.com/ana.png" });
+  });
+
+  it("stores nothing for an unauthenticated request, and never lets a failing store change the answer", async () => {
+    const storage = createMemoryStorage();
+    const { engine } = fakeEngine(true);
+    const unauthenticated = await serve((app) => {
+      app.get("/a", requirePermission(engine, "x.y", { resolve: () => null, syncProfile: createProfileSync(storage) }), (_req, res) => res.json({ ok: true }));
+    });
+    expect((await unauthenticated.get("/a")).status).toBe(401);
+    expect(await storage.profiles.findMany([identity])).toEqual([]);
+
+    const failing = { ...storage, profiles: { ...storage.profiles, upsert: async () => { throw new Error("db down"); } } };
+    const errors: unknown[] = [];
+    const served = await serve((app) => {
+      app.get(
+        "/orgs/:orgId",
+        requirePermission(engine, "x.y", { resolve: (req) => ({ ...resolveFromParams(req), profile }), syncProfile: createProfileSync(failing, { onError: (error) => errors.push(error) }) }),
+        (_req, res) => res.json({ ok: true }),
+      );
+    });
+    expect((await served.get("/orgs/org-1")).status).toBe(200);
+    expect(errors).toHaveLength(1);
+  });
+
+  it("does nothing without a profile or without the option", async () => {
+    const storage = createMemoryStorage();
+    const { engine } = fakeEngine(true);
+    const { get } = await serve((app) => {
+      app.get("/p/:orgId", requirePermission(engine, "x.y", { resolve: resolveFromParams, syncProfile: createProfileSync(storage) }), (_req, res) => res.json({ ok: true }));
+      app.get("/q/:orgId", requirePermission(engine, "x.y", { resolve: (req) => ({ ...resolveFromParams(req), profile }) }), (_req, res) => res.json({ ok: true }));
+    });
+    expect((await get("/p/org-1")).status).toBe(200);
+    expect((await get("/q/org-1")).status).toBe(200);
+    expect(await storage.profiles.findMany([identity])).toEqual([]);
   });
 });

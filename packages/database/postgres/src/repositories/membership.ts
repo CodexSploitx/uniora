@@ -1,4 +1,4 @@
-import type { Pool } from "pg";
+import type { Pool, QueryResultRow } from "pg";
 import type {
   BlockMembershipInput,
   SuspendMembershipInput,
@@ -12,7 +12,7 @@ import type {
   MembershipVersionOptions,
   UnblockMembershipInput,
 } from "@uniora/core";
-import { MembershipError, assertBlockUntil, assertExpectedVersion, sanitizeBlockReason } from "@uniora/core";
+import { MAX_PROFILE_BATCH, MembershipError, assertBlockUntil, assertExpectedVersion, sanitizeBlockReason } from "@uniora/core";
 import type { Queryable } from "../queryable.js";
 import { countByOrganization } from "../pg-counts.js";
 import { toLikePattern } from "../pg-like.js";
@@ -265,6 +265,38 @@ async function touch(db: Queryable, membershipId: string): Promise<void> {
  * short-lived SERIALIZABLE transaction — mirror of the exact same pattern
  * `identity-link.ts`'s `link()` uses, needed for the same class of reason.
  */
+/**
+ * "ALSO these identities": a search by `query` that finds a person by the name or e-mail of their stored profile (`orIdentities`, from
+ * `profiles.search`). Applied only when given, by extending the exact predicate and the prefilter, so every other search keeps the
+ * very statement (and plan) it had.
+ */
+function orIdentitiesOf(options: { query?: string; orIdentities?: readonly Identity[] } | undefined): Identity[] {
+  return options?.query?.trim() ? [...(options.orIdentities ?? [])].slice(0, MAX_PROFILE_BATCH) : [];
+}
+
+/** `db.query` of a search statement whose term predicate also accepts `identities` (the next two parameter numbers after `params`). */
+function queryOr<R extends QueryResultRow>(db: Queryable, identities: Identity[], sql: string, params: unknown[]) {
+  if (identities.length === 0) return db.query<R>(sql, params);
+  const first = params.length + 1;
+  return db.query<R>(
+    sql.replace(
+      "provider ilike $2 or subject ilike $2",
+      `provider ilike $2 or subject ilike $2 or (provider, subject) in (select * from unnest($${first}::text[], $${first + 1}::text[]))`,
+    ),
+    [...params, identities.map((identity) => identity.provider), identities.map((identity) => identity.subject)],
+  );
+}
+
+/** The prefilter ids of a search that also matches `identities`: the term's candidates plus those identities' memberships (a rare term stays indexed). */
+async function candidatesWith(db: Queryable, base: string[] | null, identities: Identity[], organizationId: string | undefined): Promise<string[] | null> {
+  if (base === null || identities.length === 0) return base;
+  const extra = await db.query<{ id: string }>(
+    `select id from uniora.memberships where (provider, subject) in (select * from unnest($1::text[], $2::text[])) and ($3::text is null or organization_id = $3)`,
+    [identities.map((identity) => identity.provider), identities.map((identity) => identity.subject), organizationId ?? null],
+  );
+  return [...new Set([...base, ...extra.rows.map((row) => row.id)])];
+}
+
 export function createMembershipRepository(db: Queryable, pool?: Pool): MembershipRepository {
   /** `block` (no `until`) and `suspend` (with one) are the same write: a timed suspension is a block that ends. */
   async function blockWithin(membershipId: string, input: BlockMembershipInput, until: Date | undefined): Promise<Membership> {
@@ -413,11 +445,14 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
 
     async search(options?: SearchMembershipsOptions) {
       const query = options?.query?.trim();
-      const candidates = await searchCandidates(db, "memberships", query, options?.organizationId, pageHint(options));
+      const orIdentities = orIdentitiesOf(options);
+      const candidates = await candidatesWith(db, await searchCandidates(db, "memberships", query, options?.organizationId, pageHint(options)), orIdentities, options?.organizationId);
       // Page the memberships FIRST (index-ordered by id, limited), and only
       // then join/aggregate their roles — so the cost is one page of rows,
       // not "every matching member joined to its roles".
-      const result = await db.query<MembershipRow>(
+      const result = await queryOr<MembershipRow>(
+        db,
+        orIdentities,
         `select ${MEMBERSHIP_COLUMNS},
                 coalesce(array_agg(mr.role_id) filter (where mr.role_id is not null), '{}') as role_ids
          from (
@@ -445,7 +480,8 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
 
     async searchListing(options: SearchMembershipsOptions & { rolesPerMember: number }) {
       const query = options.query?.trim();
-      const candidates = await searchCandidates(db, "memberships", query, options.organizationId, pageHint(options));
+      const orIdentities = orIdentitiesOf(options);
+      const candidates = await candidatesWith(db, await searchCandidates(db, "memberships", query, options.organizationId, pageHint(options)), orIdentities, options.organizationId);
       interface ListingRow {
         id: string;
         organization_id: string;
@@ -462,7 +498,9 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
       // Page the memberships first, then, per row, count its roles and take
       // only a bounded preview (Owner first, then by name) — so a member with
       // hundreds of roles costs the same as one with three.
-      const result = await db.query<ListingRow>(
+      const result = await queryOr<ListingRow>(
+        db,
+        orIdentities,
         `select m.id, m.organization_id, m.provider, m.subject, m.status, m.created_at,
                 m.invited_by_provider, m.invited_by_subject, m.last_active_at,
                 (select count(*) from uniora.membership_roles mr where mr.membership_id = m.id)::int as role_count,
@@ -517,15 +555,18 @@ export function createMembershipRepository(db: Queryable, pool?: Pool): Membersh
       );
     },
 
-    async count(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus; limit?: number }) {
+    async count(options?: { organizationId?: string; query?: string; orIdentities?: readonly Identity[]; identity?: Identity; status?: MembershipStatus; limit?: number }) {
       const query = options?.query?.trim();
       // A common term reaches the cap within the first rows of the table: no need to ask the index at all.
       if (query && options?.limit && !options.identity && !options.status) {
         if ((await walkCount(db, query, options.organizationId, options.limit)) >= options.limit) return options.limit;
       }
-      const candidates = await searchCandidates(db, "memberships", query, options?.organizationId);
+      const orIdentities = orIdentitiesOf(options);
+      const candidates = await candidatesWith(db, await searchCandidates(db, "memberships", query, options?.organizationId), orIdentities, options?.organizationId);
       // With `limit`, counting stops there, so a filter matching millions of rows costs a page of work.
-      const result = await db.query<{ count: string }>(
+      const result = await queryOr<{ count: string }>(
+        db,
+        orIdentities,
         `select count(*)::text as count
          from (
            select 1
