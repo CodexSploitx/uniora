@@ -1,4 +1,5 @@
-import type { Identity } from "@uniora/core";
+import type { Identity, IdentityProfile } from "@uniora/core";
+import { sanitizeProfile } from "@uniora/core";
 import type { Auth0VerifiedTokenPayload, Auth0VerifyTokenFn } from "./types.js";
 
 // TypeScript desaparece en runtime (skill §40): `payload` llega de un
@@ -87,4 +88,51 @@ export function toVerifiedEmail(payload: Auth0VerifiedTokenPayload | null | unde
     return email.length > 0 ? email : null;
   }
   return null;
+}
+
+/** The first value that is a non-blank string (providers disagree on which claim holds a name or a picture). */
+function pick(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim().length > 0) return value;
+  }
+  return undefined;
+}
+
+/**
+ * What a screen needs to show this person: display name, e-mail and the avatar URL, from the verified payload (an ID token or the
+ * `/userinfo` response carries `name`, `nickname`, `email` and `picture`; an access token only does if you add them as claims).
+ * Only text and an `http(s)` URL come out, never an object; fields the user does not have are left out, so the result can go
+ * straight to `storage.profiles.upsert(identity, toProfile(payload))`. Display data only.
+ */
+export function toProfile(payload: Auth0VerifiedTokenPayload | null | undefined): IdentityProfile {
+  const claims: Partial<Auth0VerifiedTokenPayload> = typeof payload === "object" && payload !== null ? payload : {};
+  return (
+    sanitizeProfile({
+      displayName: pick(claims.name, claims.nickname),
+      email: pick(claims.email),
+      avatarUrl: pick(claims.picture),
+    }) ?? {}
+  );
+}
+
+/** `resolveIdentity` that also hands back the profile of the same verified payload (one verification, not two). Same fail-closed contract: `null`, never a throw. */
+export async function resolveIdentityWithProfile(
+  verifyToken: Auth0VerifyTokenFn,
+  accessToken: string,
+): Promise<{ identity: Identity; profile: IdentityProfile } | null> {
+  if (typeof accessToken !== "string" || accessToken.length === 0) {
+    return null;
+  }
+
+  try {
+    const payload = await verifyToken(accessToken);
+
+    if (!hasValidSubject(payload)) {
+      return null;
+    }
+
+    return { identity: toIdentity(payload), profile: toProfile(payload) };
+  } catch {
+    return null;
+  }
 }

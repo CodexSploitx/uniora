@@ -7,6 +7,7 @@ import { useState } from "react";
 import { addMember, assignMemberRole, removeMember, unassignMemberRole } from "@/actions/memberships";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { ListSearch } from "@/components/shared/list-search";
+import { PersonCell } from "@/components/shared/person-cell";
 import { MemberRolesPopover, RoleChip } from "@/components/shared/member-roles";
 import { RolePicker } from "@/components/shared/role-picker";
 import { useAction } from "@/components/shared/use-action";
@@ -29,7 +30,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { MemberStatusMenu } from "@/components/organizations/member-status-menu";
 import { StatusBadge, StatusFilter } from "@/components/shared/status";
 import { useI18n } from "@/i18n/client";
-import { timeAgo } from "@/lib/format";
+import { personLabel, timeAgo } from "@/lib/format";
 import type { MemberRow, RoleRef } from "@/lib/types";
 
 /** The members tab link with the search kept and the status dropped (the chips add it back). */
@@ -126,12 +127,7 @@ export function MembersTable({
                 return (
                   <TableRow key={member.id}>
                     <TableCell>
-                      <div className="flex flex-col">
-                        <Link href={`/members/${member.id}`} className="font-medium underline-offset-4 hover:text-primary hover:underline">
-                          {member.identity.subject}
-                        </Link>
-                        <span className="text-xs text-muted-foreground">{t("members.via", { provider: member.identity.provider })}</span>
-                      </div>
+                      <PersonCell person={member} href={`/members/${member.id}`} via={t("members.via", { provider: member.identity.provider })} />
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap items-center gap-1.5">
@@ -140,7 +136,7 @@ export function MembersTable({
                           <RoleChip
                             key={role.id}
                             role={role}
-                            removeLabel={t("members.removeRoleAria", { role: role.name, member: member.identity.subject })}
+                            removeLabel={t("members.removeRoleAria", { role: role.name, member: personLabel(member) })}
                             onRemove={
                               readOnly || pending || (role.isOwnerRole && isLastOwner)
                                 ? undefined
@@ -156,7 +152,7 @@ export function MembersTable({
                           <MemberRolesPopover
                             organizationId={organizationId}
                             membershipId={member.id}
-                            memberLabel={member.identity.subject}
+                            memberLabel={personLabel(member)}
                             hiddenCount={member.roleCount - member.roles.length}
                             readOnly={readOnly}
                             protectOwnerRole={isLastOwner}
@@ -195,12 +191,12 @@ export function MembersTable({
                           <MemberStatusMenu organizationId={organizationId} member={member} disabled={pending} />
                           <ConfirmDialog
                             trigger={
-                              <Button variant="ghost" size="icon-sm" aria-label={t("members.removeAria", { member: member.identity.subject })} disabled={pending}>
+                              <Button variant="ghost" size="icon-sm" aria-label={t("members.removeAria", { member: personLabel(member) })} disabled={pending}>
                                 <IconTrash />
                               </Button>
                             }
                             title={t("members.removeTitle")}
-                            description={t("members.removeDescription", { member: member.identity.subject })}
+                            description={t("members.removeDescription", { member: personLabel(member) })}
                             confirmLabel={t("members.removeConfirm")}
                             pending={pending}
                             onConfirm={() =>

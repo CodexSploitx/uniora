@@ -2,6 +2,18 @@
 
 All notable changes to UNIORA. Packages are released in lockstep, so one version number covers all of them. The format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased
+
+Includes new migrations: Postgres `0046`, SQLite `0031` (run `uniora migrate`). They only add a table, `identity_profiles`. Nothing existing changes.
+
+### Added
+
+- **Stored profiles: Studio shows who a member is, not just an id.** A member used to be a bare provider id (`2eb65215-…`) because UNIORA only kept `(provider, subject)`. It now also stores the person's **display name, e-mail and avatar URL** (`storage.profiles`: `upsert`, `findMany`, `delete`; a plain URL, never an object). It is global per identity (the same person in every organization), display data only (never read by an authorization decision) and writing it is not audited, since it can run on every sign-in.
+  - **Every adapter reads it from its provider**: `toProfile(user)` in `@uniora/supabase` (`user_metadata`), `@uniora/clerk` (session-token claims or a Backend `User`), `@uniora/auth0` (`name`, `nickname`, `email`, `picture`) and `@uniora/better-auth` (`name`, `email`, `image`), plus `resolveIdentityWithProfile`, which verifies once and returns `{ identity, profile }` (same fail-closed contract as `resolveIdentity`).
+  - **Existing members fill themselves in**: `createProfileSync(storage)` returns a `sync(identity, profile)` to call where you already resolve the caller. The first request a person makes after the upgrade stores their profile; afterwards it is written only when it changes or after `minIntervalMs` (15 minutes), it never throws, and a field the provider did not give keeps what is stored. No migration script.
+  - **Studio**: the members tables and the member page show the avatar (initials when there is none), the name, the e-mail and, underneath, the provider's id.
+  - `listMembersWithProfiles` now also reads the stored profiles (the resolver, when given, still wins field by field). An avatar URL is capped at 2,048 characters and dropped, not cut, when longer.
+
 ## 0.10.1 - 2026-10-12
 
 ### Fixed

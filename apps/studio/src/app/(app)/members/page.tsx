@@ -10,6 +10,8 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { getT } from "@/i18n/server";
 import { getMembersPage } from "@/lib/queries";
+import { personLabel } from "@/lib/format";
+import { PersonCell } from "@/components/shared/person-cell";
 
 export default async function MembersPage(props: PageProps<"/members">) {
   const searchParams = await props.searchParams;
@@ -83,12 +85,7 @@ export default async function MembersPage(props: PageProps<"/members">) {
                   {items.map((member) => (
                     <TableRow key={member.id}>
                       <TableCell>
-                        <div className="flex flex-col">
-                          <Link href={`/members/${member.id}`} className="font-medium underline-offset-4 hover:text-primary hover:underline">
-                            {member.identity.subject}
-                          </Link>
-                          <span className="text-xs text-muted-foreground">{t("members.via", { provider: member.identity.provider })}</span>
-                        </div>
+                        <PersonCell person={member} href={`/members/${member.id}`} via={t("members.via", { provider: member.identity.provider })} />
                       </TableCell>
                       <TableCell>
                         {member.organization ? (
@@ -112,7 +109,7 @@ export default async function MembersPage(props: PageProps<"/members">) {
                             <MemberRolesPopover
                               organizationId={member.organization.id}
                               membershipId={member.id}
-                              memberLabel={member.identity.subject}
+                              memberLabel={personLabel(member)}
                               hiddenCount={member.roleCount - member.roles.length}
                               readOnly
                               protectOwnerRole={false}

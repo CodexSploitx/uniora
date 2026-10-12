@@ -28,6 +28,10 @@ export interface BetterAuthUser {
   readonly email?: string;
   /** Better Auth sets `emailVerified` once the address was confirmed. */
   readonly emailVerified?: boolean;
+  /** Display name. Read only by `toProfile`. */
+  readonly name?: string | null;
+  /** Avatar URL (Better Auth calls it `image`). */
+  readonly image?: string | null;
 }
 
 /**

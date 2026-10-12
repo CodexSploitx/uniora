@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createTranslator } from "@/i18n/translate";
 import { en } from "@/i18n/messages/en";
 import { es } from "@/i18n/messages/es";
-import { describeActivity, timeAgo } from "./format";
+import { describeActivity, personInitials, personLabel, timeAgo } from "./format";
 import type { ActivityItem } from "./types";
 
 const tEn = createTranslator("en", en);
@@ -57,5 +57,23 @@ describe("describeActivity covers every audit action Core records", () => {
     expect(raw).toEqual([]);
     const rawEs = AUDIT_ACTIONS.filter((action) => describeActivity({ ...base, action }, tEs).title === action);
     expect(rawEs).toEqual([]);
+  });
+});
+
+describe("personLabel / personInitials", () => {
+  const id = { subject: "2eb65215-291a-4ced-a624-abdaff8d0723" };
+
+  it("prefers the name, then the e-mail, then the provider's id", () => {
+    expect(personLabel({ identity: id, profile: { displayName: "Ana Pérez", email: "ana@example.com" } })).toBe("Ana Pérez");
+    expect(personLabel({ identity: id, profile: { email: "ana@example.com" } })).toBe("ana@example.com");
+    expect(personLabel({ identity: id })).toBe(id.subject);
+    expect(personLabel({ identity: id, profile: {} })).toBe(id.subject);
+  });
+
+  it("builds one or two capital letters for an avatar without a picture", () => {
+    expect(personInitials({ identity: id, profile: { displayName: "Ana María Pérez" } })).toBe("AP");
+    expect(personInitials({ identity: id, profile: { displayName: "ana" } })).toBe("AN");
+    expect(personInitials({ identity: id, profile: { email: "ben.ruiz@example.com" } })).toBe("BR");
+    expect(personInitials({ identity: id })).toBe("2E");
   });
 });

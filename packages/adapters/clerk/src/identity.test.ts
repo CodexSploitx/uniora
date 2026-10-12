@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveIdentity, toIdentity, toVerifiedEmail } from "./identity.js";
+import { resolveIdentity, resolveIdentityWithProfile, toIdentity, toProfile, toVerifiedEmail } from "./identity.js";
 import type { ClerkAuthClient } from "./types.js";
 
 describe("toIdentity", () => {
@@ -81,5 +81,52 @@ describe("toVerifiedEmail (audit F-13)", () => {
     expect(toVerifiedEmail(null)).toBeNull();
     expect(toVerifiedEmail(undefined)).toBeNull();
     expect(toVerifiedEmail({ ...({ sub: "a", email: "Ana@X.com", email_verified: true }), email: 42 as unknown as string })).toBeNull();
+  });
+});
+
+describe("toProfile", () => {
+  it("lee las claims del session token (name, email, picture)", () => {
+    expect(toProfile({ name: "Ana Pérez", email: "ana@example.com", picture: "https://img.clerk.com/a.png" })).toEqual({
+      displayName: "Ana Pérez",
+      email: "ana@example.com",
+      avatarUrl: "https://img.clerk.com/a.png",
+    });
+  });
+
+  it("lee un User del Backend de Clerk: nombre y apellido, imageUrl y el email principal", () => {
+    expect(
+      toProfile({
+        firstName: "Ana",
+        lastName: "Pérez",
+        imageUrl: "https://img.clerk.com/a.png",
+        primaryEmailAddressId: "e2",
+        emailAddresses: [
+          { id: "e1", emailAddress: "old@example.com" },
+          { id: "e2", emailAddress: "ana@example.com" },
+        ],
+      }),
+    ).toEqual({ displayName: "Ana Pérez", email: "ana@example.com", avatarUrl: "https://img.clerk.com/a.png" });
+  });
+
+  it("devuelve {} sin datos y descarta un avatar que no sea una URL http(s)", () => {
+    expect(toProfile(null)).toEqual({});
+    expect(toProfile({ sub: "u" } as never)).toEqual({});
+    expect(toProfile({ image_url: "data:image/png;base64,AAAA" })).toEqual({});
+  });
+});
+
+describe("resolveIdentityWithProfile", () => {
+  it("devuelve identidad y perfil de la misma verificación", async () => {
+    const verify: ClerkAuthClient = async () => ({ data: { sub: "user_1", name: "Ana", email: "a@b.co" } });
+    expect(await resolveIdentityWithProfile(verify, "tok")).toEqual({
+      identity: { provider: "clerk", subject: "user_1" },
+      profile: { displayName: "Ana", email: "a@b.co" },
+    });
+  });
+
+  it("falla cerrado: errors, excepción o token vacío dan null", async () => {
+    expect(await resolveIdentityWithProfile(async () => ({ errors: [new Error("x")] }), "tok")).toBeNull();
+    expect(await resolveIdentityWithProfile(async () => { throw new Error("red"); }, "tok")).toBeNull();
+    expect(await resolveIdentityWithProfile(async () => ({ data: { sub: "u" } }), "")).toBeNull();
   });
 });

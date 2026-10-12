@@ -7,6 +7,7 @@ import type { CreateOrganizationInput, OrganizationRepository } from "../organiz
 import { OrganizationError, assertValidSlug, resolveOrganizationSlug, sanitizeOrganizationName } from "../organization/slug.js";
 import type { Membership, MembershipStatus } from "../membership/types.js";
 import { createMemoryPolicyRepository } from "../policy/memory.js";
+import { createMemoryProfileRepository } from "../profile/memory.js";
 import type { BlockMembershipInput, CreateMembershipInput, MembershipListing, MembershipRepository, SearchMembershipsOptions } from "../membership/repository.js";
 import { MembershipError, assertBlockUntil, sanitizeBlockReason } from "../membership/repository.js";
 import type { Role } from "../role/types.js";
@@ -2166,6 +2167,7 @@ function tally(requestedIds: string[], occurrences: string[]): Record<string, nu
   };
 
   const policyRepository = createMemoryPolicyRepository((organizationId) => organizations.has(organizationId));
+  const profileRepository = createMemoryProfileRepository();
 
   return {
     organizations: organizationRepository,
@@ -2182,6 +2184,7 @@ function tally(requestedIds: string[], occurrences: string[]): Record<string, nu
     teams: teamRepository,
     teamMemberships: teamMembershipRepository,
     policies: policyRepository,
+    profiles: profileRepository,
     async transaction<T>(callback: (tx: UnioraTransaction) => Promise<T>): Promise<T> {
       // In-memory storage has no isolation to offer; adapters with a real
       // database (e.g. Postgres) must run `callback` inside a DB transaction.
@@ -2200,6 +2203,7 @@ function tally(requestedIds: string[], occurrences: string[]): Record<string, nu
         teams: teamRepository,
         teamMemberships: teamMembershipRepository,
         policies: policyRepository,
+        profiles: profileRepository,
       });
     },
   };

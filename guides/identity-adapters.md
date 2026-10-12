@@ -4,7 +4,7 @@ An adapter answers one question: **who is this?** It turns whatever your auth pr
 `Identity` (`{ provider, subject }`) and, for invitations, into a **provider-verified e-mail**. It never decides what the person can do:
 that is the [engine](concepts.md#the-engine-deny-by-default)'s job.
 
-All four adapters have the same three functions and **no dependency on the provider's SDK**: you pass the client or verifier you already configured.
+All four adapters have the same functions (the three below, plus [`toProfile` and `resolveIdentityWithProfile`](#profiles)) and **no dependency on the provider's SDK**: you pass the client or verifier you already configured.
 
 | Function | Returns | Purpose |
 | --- | --- | --- |
@@ -62,6 +62,34 @@ const identity = await resolveIdentity((headers) => auth.api.getSession({ header
 ```
 
 `toVerifiedEmail(user)` needs `user.emailVerified === true`.
+
+## Profiles
+
+To show a person (name, e-mail, avatar) and not just an id, each adapter also has `toProfile(user)` and
+`resolveIdentityWithProfile(...)`, which verifies once and returns `{ identity, profile }` (or `null`, same fail-closed contract as
+`resolveIdentity`). A profile is **display data only**: it never takes part in a decision, and the avatar is just a URL (an object, a `data:` or a
+`javascript:` URL is dropped; fields the user does not have are left out).
+
+| Adapter | Name | E-mail | Avatar |
+| --- | --- | --- | --- |
+| `@uniora/supabase` | `user_metadata.full_name` / `name` | `email` | `user_metadata.avatar_url` / `picture` |
+| `@uniora/clerk` | `name`, or `first_name` + `last_name` (Backend `User`: `firstName` + `lastName`) | `email` (Backend `User`: primary of `emailAddresses`) | `picture` / `image_url` (Backend `User`: `imageUrl`) |
+| `@uniora/auth0` | `name`, else `nickname` | `email` | `picture` |
+| `@uniora/better-auth` | `name` | `email` | `image` |
+
+Clerk's default session token has **no** profile claims: add `name`, `email` and `picture` to your session token template, or pass the Backend
+`User` (`clerkClient.users.getUser(id)`) to `toProfile`. Auth0 access tokens carry them only if you add the claims (an ID token or `/userinfo`
+always does).
+
+Store it where you already resolve the caller with `createProfileSync` ([Core reference](core-reference.md#members-with-profiles)): the
+first request of every person, new or long-standing, writes their profile, and Studio shows it from then on.
+
+```ts
+const syncProfile = createProfileSync(storage);
+const session = await resolveIdentityWithProfile(supabase, accessToken);
+if (!session) return unauthorized();
+await syncProfile(session.identity, session.profile);
+```
 
 ## Rules worth knowing
 

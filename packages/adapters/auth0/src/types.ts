@@ -11,6 +11,11 @@ export interface Auth0VerifiedTokenPayload {
   readonly email?: string;
   /** Auth0 sets `email_verified: true` only after the address was confirmed. */
   readonly email_verified?: boolean;
+  /** Display name, when the token (an ID token, or an access token with the claim added) carries it. Read only by `toProfile`. */
+  readonly name?: string;
+  readonly nickname?: string;
+  /** URL of the user's picture. */
+  readonly picture?: string;
 }
 
 /**

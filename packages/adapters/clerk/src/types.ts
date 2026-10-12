@@ -13,6 +13,27 @@ export interface ClerkVerifiedTokenPayload {
 }
 
 /**
+ * Where `toProfile` reads a person from: the verified session-token payload (with the claims your Clerk session token template adds:
+ * `name`, `email`, `picture` or `image_url`...) or a Clerk Backend `User` (`firstName`, `lastName`, `imageUrl`, `emailAddresses`).
+ * Every field is optional: a missing one is simply left out of the profile.
+ */
+export interface ClerkProfileSource {
+  readonly name?: string | null;
+  readonly full_name?: string | null;
+  readonly first_name?: string | null;
+  readonly last_name?: string | null;
+  readonly username?: string | null;
+  readonly email?: string | null;
+  readonly picture?: string | null;
+  readonly image_url?: string | null;
+  readonly firstName?: string | null;
+  readonly lastName?: string | null;
+  readonly imageUrl?: string | null;
+  readonly primaryEmailAddressId?: string | null;
+  readonly emailAddresses?: ReadonlyArray<{ readonly id?: string; readonly emailAddress?: string }> | null;
+}
+
+/**
  * Forma del resultado de `verifyToken(token, options)` en `@clerk/backend`:
  * nunca lanza por un token inválido/expirado, devuelve `{ data }` en éxito o
  * `{ errors }` en fallo (`JwtReturnType<JwtPayload, TokenVerificationError>`
