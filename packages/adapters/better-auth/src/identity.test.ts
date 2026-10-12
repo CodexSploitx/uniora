@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveIdentity, toIdentity, toVerifiedEmail } from "./identity.js";
+import { resolveIdentity, resolveIdentityWithProfile, toIdentity, toProfile, toVerifiedEmail } from "./identity.js";
 import type { BetterAuthClient, BetterAuthHeaders } from "./types.js";
 
 function fakeHeaders(values: Record<string, string> = {}): BetterAuthHeaders {
@@ -98,5 +98,37 @@ describe("toVerifiedEmail (audit F-13)", () => {
     expect(toVerifiedEmail(null)).toBeNull();
     expect(toVerifiedEmail(undefined)).toBeNull();
     expect(toVerifiedEmail({ ...({ id: "a", email: "Ana@X.com", emailVerified: true }), email: 42 as unknown as string })).toBeNull();
+  });
+});
+
+describe("toProfile", () => {
+  it("lee name, email e image (la URL del avatar)", () => {
+    expect(toProfile({ id: "u", name: "Ana Pérez", email: "ana@example.com", image: "https://cdn.example.com/a.png" })).toEqual({
+      displayName: "Ana Pérez",
+      email: "ana@example.com",
+      avatarUrl: "https://cdn.example.com/a.png",
+    });
+  });
+
+  it("devuelve {} sin datos y descarta una imagen que sea un data: URL", () => {
+    expect(toProfile({ id: "u" })).toEqual({});
+    expect(toProfile(null)).toEqual({});
+    expect(toProfile({ id: "u", image: "data:image/png;base64,AAAA" })).toEqual({});
+  });
+});
+
+describe("resolveIdentityWithProfile", () => {
+  it("devuelve identidad y perfil del mismo usuario de la sesión", async () => {
+    const getSession: BetterAuthClient = async () => ({ user: { id: "u1", name: "Ana", email: "a@b.co" } });
+    expect(await resolveIdentityWithProfile(getSession, fakeHeaders())).toEqual({
+      identity: { provider: "better-auth", subject: "u1" },
+      profile: { displayName: "Ana", email: "a@b.co" },
+    });
+  });
+
+  it("falla cerrado: sin sesión, excepción o headers inválidos dan null", async () => {
+    expect(await resolveIdentityWithProfile(async () => null, fakeHeaders())).toBeNull();
+    expect(await resolveIdentityWithProfile(async () => { throw new Error("db"); }, fakeHeaders())).toBeNull();
+    expect(await resolveIdentityWithProfile(async () => ({ user: { id: "u" } }), null as never)).toBeNull();
   });
 });

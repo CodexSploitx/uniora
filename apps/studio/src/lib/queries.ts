@@ -15,6 +15,7 @@ import type {
   MemberHeader,
   MemberPermissionRow,
   MemberRow,
+  ProfileView,
   OrgFeatureToggle,
   OrgHeader,
   OrgSummary,
@@ -276,6 +277,47 @@ const toMemberRow = (listing: {
   roles: listing.roles.map((role) => ({ id: role.id, name: role.name, isOwnerRole: role.isOwnerRole })),
 });
 
+/**
+ * The people whose stored name or e-mail contains `query`, so the members search finds "Carla" and not only the provider's id.
+ * Best effort like `withProfiles`: no migration yet or a failing read means the search is by id only, as before.
+ */
+async function profileMatches(storage: ReturnType<typeof getStorage>, query: string | undefined) {
+  if (!query) return undefined;
+  try {
+    const found = await storage.profiles.search({ query });
+    return found.length > 0 ? found.map((entry) => entry.identity) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The stored profile of each listed person, in ONE query for the page. Best effort: a database that has not run the profiles
+ * migration yet, or a failing read, leaves the rows as they were (identity only) instead of breaking the members screen.
+ */
+async function withProfiles<T extends { identity: { provider: string; subject: string } }>(
+  storage: ReturnType<typeof getStorage>,
+  rows: T[],
+): Promise<Array<T & { profile?: ProfileView }>> {
+  if (rows.length === 0) return rows;
+  try {
+    const stored = await storage.profiles.findMany(rows.map((row) => row.identity));
+    const byIdentity = new Map(stored.map((entry) => [JSON.stringify([entry.identity.provider, entry.identity.subject]), entry]));
+    return rows.map((row) => {
+      const entry = byIdentity.get(JSON.stringify([row.identity.provider, row.identity.subject]));
+      if (!entry) return row;
+      const profile: ProfileView = {
+        ...(entry.displayName !== undefined ? { displayName: entry.displayName } : {}),
+        ...(entry.email !== undefined ? { email: entry.email } : {}),
+        ...(entry.avatarUrl !== undefined ? { avatarUrl: entry.avatarUrl } : {}),
+      };
+      return { ...row, profile };
+    });
+  } catch {
+    return rows;
+  }
+}
+
 export interface OrgMembersPage {
   items: MemberRow[];
   nextCursor: string | null;
@@ -293,16 +335,18 @@ export async function getOrgMembersPage(
   const storage = getStorage();
   const query = cleanQuery(options?.query);
   const status = options?.status;
+  const orIdentities = await profileMatches(storage, query);
   const [rows, total] = await Promise.all([
     storage.memberships.searchListing({
       organizationId,
       limit: MEMBERS_PAGE_SIZE + 1,
       after: cleanCursor(options?.cursor),
       query,
+      ...(orIdentities ? { orIdentities } : {}),
       status,
       rolesPerMember: ROLES_PREVIEW,
     }),
-    storage.memberships.count({ organizationId, query, status, limit: countLimit(Boolean(query || status)) }),
+    storage.memberships.count({ organizationId, query, ...(orIdentities ? { orIdentities } : {}), status, limit: countLimit(Boolean(query || status)) }),
   ]);
   const { page, hasMore } = splitPage(rows, MEMBERS_PAGE_SIZE);
   // The Owner role always sorts first in a member's preview, so it is visible whenever they hold it.
@@ -310,7 +354,7 @@ export async function getOrgMembersPage(
   const ownerCount = ownerRoleId ? ((await storage.memberships.countByRole([ownerRoleId]))[ownerRoleId] ?? 0) : 0;
 
   return {
-    items: page.map(toMemberRow),
+    items: await withProfiles(storage, page.map(toMemberRow)),
     nextCursor: hasMore ? page[page.length - 1]!.id : null,
     total,
     ownerRoleId,
@@ -330,23 +374,28 @@ export async function getMembersPage(options?: { query?: string; cursor?: string
   const storage = getStorage();
   const query = cleanQuery(options?.query);
   const status = options?.status;
+  const orIdentities = await profileMatches(storage, query);
   const [rows, total] = await Promise.all([
     storage.memberships.searchListing({
       limit: MEMBERS_PAGE_SIZE + 1,
       after: cleanCursor(options?.cursor),
       query,
+      ...(orIdentities ? { orIdentities } : {}),
       status,
       rolesPerMember: ROLES_PREVIEW,
     }),
-    query || status ? storage.memberships.count({ query, status, limit: countLimit(true) }) : totalMembers(),
+    query || status ? storage.memberships.count({ query, ...(orIdentities ? { orIdentities } : {}), status, limit: countLimit(true) }) : totalMembers(),
   ]);
   const { page, hasMore } = splitPage(rows, MEMBERS_PAGE_SIZE);
   const organizations = await storage.organizations.findByIds([...new Set(page.map((membership) => membership.organizationId))]);
   const organizationById = new Map(organizations.map((organization) => [organization.id, { id: organization.id, name: organization.name }]));
-  const items = page.map((membership) => ({
-    ...toMemberRow(membership),
-    organization: organizationById.get(membership.organizationId),
-  }));
+  const items = await withProfiles(
+    storage,
+    page.map((membership) => ({
+      ...toMemberRow(membership),
+      organization: organizationById.get(membership.organizationId),
+    })),
+  );
 
   return { items, nextCursor: hasMore ? page[page.length - 1]!.id : null, total };
 }
@@ -523,9 +572,12 @@ export async function getMemberHeader(membershipId: string): Promise<MemberHeade
   const otherOrganizations = await storage.organizations.findByIds([...new Set(otherMemberships.map((other) => other.organizationId))]);
   const nameById = new Map(otherOrganizations.map((org) => [org.id, org.name]));
 
+  const [withProfile] = await withProfiles(storage, [{ identity: { provider: member.identity.provider, subject: member.identity.subject } }]);
+
   return {
     id: member.id,
     identity: { provider: member.identity.provider, subject: member.identity.subject },
+    ...(withProfile?.profile ? { profile: withProfile.profile } : {}),
     organization: { id: organization.id, name: organization.name },
     isOwner,
     roleCount,

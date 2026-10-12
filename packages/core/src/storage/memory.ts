@@ -7,6 +7,8 @@ import type { CreateOrganizationInput, OrganizationRepository } from "../organiz
 import { OrganizationError, assertValidSlug, resolveOrganizationSlug, sanitizeOrganizationName } from "../organization/slug.js";
 import type { Membership, MembershipStatus } from "../membership/types.js";
 import { createMemoryPolicyRepository } from "../policy/memory.js";
+import { createMemoryProfileRepository } from "../profile/memory.js";
+import { MAX_PROFILE_BATCH } from "../profile/profiles.js";
 import type { BlockMembershipInput, CreateMembershipInput, MembershipListing, MembershipRepository, SearchMembershipsOptions } from "../membership/repository.js";
 import { MembershipError, assertBlockUntil, sanitizeBlockReason } from "../membership/repository.js";
 import type { Role } from "../role/types.js";
@@ -443,7 +445,7 @@ export function createMemoryStorage(): UnioraStorage {
     return copy(membership);
   }
 
-  function matchingMemberships(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus; limit?: number }): Membership[] {
+  function matchingMemberships(options?: { organizationId?: string; query?: string; orIdentities?: readonly Identity[]; identity?: Identity; status?: MembershipStatus; limit?: number }): Membership[] {
     lapseBlocks();
     const query = options?.query?.trim().toLowerCase();
     return [...memberships.values()].filter(
@@ -451,7 +453,10 @@ export function createMemoryStorage(): UnioraStorage {
         (options?.organizationId === undefined || m.organizationId === options.organizationId) &&
         (options?.identity === undefined || sameIdentity(m.identity, options.identity)) &&
         (options?.status === undefined || m.status === options.status) &&
-        (!query || m.identity.subject.toLowerCase().includes(query) || m.identity.provider.toLowerCase().includes(query)),
+        (!query ||
+          m.identity.subject.toLowerCase().includes(query) ||
+          m.identity.provider.toLowerCase().includes(query) ||
+          (options?.orIdentities?.slice(0, MAX_PROFILE_BATCH).some((identity) => sameIdentity(identity, m.identity)) ?? false)),
     );
   }
 
@@ -2166,6 +2171,7 @@ function tally(requestedIds: string[], occurrences: string[]): Record<string, nu
   };
 
   const policyRepository = createMemoryPolicyRepository((organizationId) => organizations.has(organizationId));
+  const profileRepository = createMemoryProfileRepository();
 
   return {
     organizations: organizationRepository,
@@ -2182,6 +2188,7 @@ function tally(requestedIds: string[], occurrences: string[]): Record<string, nu
     teams: teamRepository,
     teamMemberships: teamMembershipRepository,
     policies: policyRepository,
+    profiles: profileRepository,
     async transaction<T>(callback: (tx: UnioraTransaction) => Promise<T>): Promise<T> {
       // In-memory storage has no isolation to offer; adapters with a real
       // database (e.g. Postgres) must run `callback` inside a DB transaction.
@@ -2200,6 +2207,7 @@ function tally(requestedIds: string[], occurrences: string[]): Record<string, nu
         teams: teamRepository,
         teamMemberships: teamMembershipRepository,
         policies: policyRepository,
+        profiles: profileRepository,
       });
     },
   };

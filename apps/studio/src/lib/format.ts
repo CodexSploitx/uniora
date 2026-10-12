@@ -192,3 +192,20 @@ export function describeActivity(
       return { title: item.action, detail: item.target ? `${item.target.type}:${item.target.id}` : undefined, tone: "info" };
   }
 }
+
+/** The best label for a person: their name, else their e-mail, else the provider's id (always something). */
+export function personLabel(person: { identity: { subject: string }; profile?: { displayName?: string; email?: string } }): string {
+  return person.profile?.displayName ?? person.profile?.email ?? person.identity.subject;
+}
+
+/** One or two capital letters for an avatar without a picture: from the name or e-mail, else the id. */
+export function personInitials(person: { identity: { subject: string }; profile?: { displayName?: string; email?: string } }): string {
+  // An opaque id has no words to take letters from: its first two characters are as good as any.
+  if (person.profile?.displayName === undefined && person.profile?.email === undefined) return [...person.identity.subject].slice(0, 2).join("").toUpperCase() || "?";
+  const words = personLabel(person)
+    .replace(/@.*$/, "")
+    .split(/[\s._-]+/)
+    .filter(Boolean);
+  const letters = words.length > 1 ? [words[0]!, words[words.length - 1]!].map((word) => [...word][0]) : [...(words[0] ?? "?")].slice(0, 2);
+  return letters.join("").toUpperCase();
+}

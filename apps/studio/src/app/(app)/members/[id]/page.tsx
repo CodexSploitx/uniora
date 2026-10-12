@@ -1,12 +1,13 @@
-import { IconArrowRight, IconBuildingSkyscraper, IconKey, IconShieldLock, IconToggleRight, IconUser } from "@tabler/icons-react";
+import { IconArrowRight, IconBuildingSkyscraper, IconKey, IconShieldLock, IconToggleRight } from "@tabler/icons-react";
 import { capParams } from "@/lib/limits";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ListSearch } from "@/components/shared/list-search";
 import { RoleChip } from "@/components/shared/member-roles";
+import { PersonAvatar } from "@/components/shared/person-cell";
+import { personLabel } from "@/lib/format";
 import { PageHeader } from "@/components/shell/page-header";
 import { Badge } from "@/components/reui/badge";
-import { IconTile } from "@/components/reui/icon-tile";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { getT } from "@/i18n/server";
@@ -44,14 +45,12 @@ export default async function MemberPage(props: PageProps<"/members/[id]">) {
   return (
     <>
       <PageHeader
-        title={header.identity.subject}
-        crumbs={[{ label: t("nav.members"), href: "/members" }, { label: header.identity.subject }]}
-        leading={
-          <IconTile variant="soft" size="lg">
-            <IconUser />
-          </IconTile>
-        }
-        description={t("members.via", { provider: header.identity.provider })}
+        title={personLabel(header)}
+        crumbs={[{ label: t("nav.members"), href: "/members" }, { label: personLabel(header) }]}
+        leading={<PersonAvatar person={header} size="lg" />}
+        description={[header.profile?.email, t("members.via", { provider: header.identity.provider }), header.profile ? header.identity.subject : undefined]
+          .filter(Boolean)
+          .join(" · ")}
         actions={
           <Button
             variant="outline"

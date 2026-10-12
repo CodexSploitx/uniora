@@ -14,6 +14,8 @@ const identity = await resolveIdentity(auth.api.getSession, request.headers); //
 
 `toVerifiedEmail` returns the address the provider has **verified**, or `null`. Pass it as `verifiedEmail` to `invitations.accept(...)` (never an address the user merely typed). 
 
+`toProfile(user)` returns `{ displayName, email, avatarUrl }` (display data only, the avatar is just a URL) and `resolveIdentityWithProfile(...)` verifies once and returns `{ identity, profile }`: pass them to `createProfileSync(storage)` from `@uniora/core` so Studio shows the person, not an id. See [Identity adapters](https://github.com/CodexSploitx/uniora/blob/main/guides/identity-adapters.md#profiles).
+
 The adapter defines a minimal structural contract for your already-configured client, so it adds no dependency on the provider's SDK.
 
 Documentation: [Identity adapters guide](https://github.com/CodexSploitx/uniora/blob/main/guides/identity-adapters.md) and the [full index](https://github.com/CodexSploitx/uniora/blob/main/guides/README.md).

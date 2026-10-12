@@ -1,4 +1,5 @@
-import type { Identity } from "@uniora/core";
+import type { Identity, IdentityProfile } from "@uniora/core";
+import { sanitizeProfile } from "@uniora/core";
 import type { SupabaseAuthClient, SupabaseUser } from "./types.js";
 
 // TypeScript desaparece en runtime (skill §40): `data.user` llega deserializado
@@ -79,4 +80,51 @@ export function toVerifiedEmail(user: SupabaseUser | null | undefined): string |
     return email.length > 0 ? email : null;
   }
   return null;
+}
+
+/** The first value that is a non-blank string (providers disagree on which claim holds a name or a picture). */
+function pick(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim().length > 0) return value;
+  }
+  return undefined;
+}
+
+/**
+ * What a screen needs to show this person: display name, e-mail and the avatar URL, from the Supabase user (`user_metadata`
+ * is what the OAuth provider or the sign-up form filled in). Only text and an `http(s)` URL come out, never an object. Fields
+ * the user does not have are left out, so the result can go straight to `storage.profiles.upsert(identity, toProfile(user))`.
+ * Display data only: it says nothing about who the person is or what they may do.
+ */
+export function toProfile(user: SupabaseUser | null | undefined): IdentityProfile {
+  const metadata = typeof user?.user_metadata === "object" && user.user_metadata !== null ? user.user_metadata : {};
+  return (
+    sanitizeProfile({
+      displayName: pick(metadata.full_name, metadata.name, metadata.display_name, metadata.user_name, metadata.preferred_username),
+      email: pick(user?.email),
+      avatarUrl: pick(metadata.avatar_url, metadata.picture),
+    }) ?? {}
+  );
+}
+
+/** `resolveIdentity` that also hands back the profile of the same verified user (one `getUser` call, not two). Same fail-closed contract: `null`, never a throw. */
+export async function resolveIdentityWithProfile(
+  client: SupabaseAuthClient,
+  accessToken: string,
+): Promise<{ identity: Identity; profile: IdentityProfile } | null> {
+  if (typeof accessToken !== "string" || accessToken.length === 0) {
+    return null;
+  }
+
+  try {
+    const { data, error } = await client.auth.getUser(accessToken);
+
+    if (error || !hasValidSubject(data.user)) {
+      return null;
+    }
+
+    return { identity: toIdentity(data.user), profile: toProfile(data.user) };
+  } catch {
+    return null;
+  }
 }

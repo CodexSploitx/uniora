@@ -10,6 +10,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { useI18n } from "@/i18n/client";
+import { personLabel } from "@/lib/format";
 import type { MemberRow } from "@/lib/types";
 
 /** Block, suspend until a date, or restore access of one member. Each change asks for an optional reason and is audited by Core. */
@@ -19,13 +20,13 @@ export function MemberStatusMenu({
   disabled,
 }: {
   organizationId: string;
-  member: Pick<MemberRow, "id" | "status" | "identity">;
+  member: Pick<MemberRow, "id" | "status" | "identity" | "profile">;
   disabled?: boolean;
 }) {
   const { t } = useI18n();
   const { pending, run } = useAction();
   const [dialog, setDialog] = useState<"block" | "suspend" | null>(null);
-  const label = member.identity.subject;
+  const label = personLabel(member);
 
   return (
     <>

@@ -160,7 +160,7 @@ export const en = {
   "membersPage.emptyTitle": "No members yet",
   "membersPage.emptyDescription": "Members appear here once they are added to an organization.",
   "membersPage.organization": "Organization",
-  "members.searchPlaceholder": "Search by user id or provider…",
+  "members.searchPlaceholder": "Search by name, e-mail or id…",
   "members.searchLabel": "Search members",
   "members.clearSearch": "Clear search",
   "members.resultsCount_one": "{count} member",

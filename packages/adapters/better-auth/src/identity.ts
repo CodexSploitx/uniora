@@ -1,4 +1,5 @@
-import type { Identity } from "@uniora/core";
+import type { Identity, IdentityProfile } from "@uniora/core";
+import { sanitizeProfile } from "@uniora/core";
 import type { BetterAuthClient, BetterAuthHeaders, BetterAuthUser } from "./types.js";
 
 // TypeScript desaparece en runtime (skill §40): `user` llega de un
@@ -85,4 +86,49 @@ export function toVerifiedEmail(user: BetterAuthUser | null | undefined): string
     return email.length > 0 ? email : null;
   }
   return null;
+}
+
+/** The first value that is a non-blank string (providers disagree on which claim holds a name or a picture). */
+function pick(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim().length > 0) return value;
+  }
+  return undefined;
+}
+
+/**
+ * What a screen needs to show this person: display name, e-mail and the avatar URL (`user.image`), from the Better Auth user.
+ * Only text and an `http(s)` URL come out, never an object (a stored `data:` image is dropped); fields the user does not have are
+ * left out, so the result can go straight to `storage.profiles.upsert(identity, toProfile(user))`. Display data only.
+ */
+export function toProfile(user: BetterAuthUser | null | undefined): IdentityProfile {
+  return (
+    sanitizeProfile({
+      displayName: pick(user?.name),
+      email: pick(user?.email),
+      avatarUrl: pick(user?.image),
+    }) ?? {}
+  );
+}
+
+/** `resolveIdentity` that also hands back the profile of the same session user (one `getSession` call, not two). Same fail-closed contract: `null`, never a throw. */
+export async function resolveIdentityWithProfile(
+  getSession: BetterAuthClient,
+  headers: BetterAuthHeaders,
+): Promise<{ identity: Identity; profile: IdentityProfile } | null> {
+  if (headers == null || typeof headers.get !== "function") {
+    return null;
+  }
+
+  try {
+    const result = await getSession(headers);
+
+    if (!hasValidSubject(result?.user)) {
+      return null;
+    }
+
+    return { identity: toIdentity(result.user), profile: toProfile(result.user) };
+  } catch {
+    return null;
+  }
 }

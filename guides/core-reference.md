@@ -101,10 +101,45 @@ Neither authorizes the caller. Guard them with a strong permission of your own.
 
 ### Members with profiles
 
+UNIORA only knows `(provider, subject)`; to show a person (Studio, your admin pages) it stores their **display name, e-mail and avatar
+URL** in `storage.profiles`. It is global per identity, display data only (no authorization decision reads it) and not audited.
+
+```ts
+await storage.profiles.upsert(identity, { displayName: "Ana Pérez", email: "ana@example.com", avatarUrl: "https://…/ana.png" });
+await storage.profiles.upsert(identity, { avatarUrl: null }); // a field left out is KEPT, `null` clears it
+const stored = await storage.profiles.findMany(identities);   // at most MAX_PROFILE_BATCH; unknown identities are absent
+```
+
+Values are trimmed and capped; an avatar must be an `http(s)` URL (a `data:` or `javascript:` URL, or an object, is dropped).
+
+**Keep it up to date from your auth provider.** The [identity adapters](identity-adapters.md#profiles) turn their user into a profile
+(`toProfile`), and `createProfileSync` stores it where you already resolve the caller. Members who joined before profiles existed fill
+themselves in the first time they make a request, with no migration:
+
+```ts
+const syncProfile = createProfileSync(storage, { onError: (error) => logger.warn(error) });
+
+const session = await resolveIdentityWithProfile(supabase, accessToken); // verifies once: { identity, profile } | null
+if (session) await syncProfile(session.identity, session.profile);        // never throws; skips an unchanged profile for 15 min
+```
+
+**Find a person by name or e-mail.** `storage.profiles.search({ query, limit? })` returns the profiles whose name or e-mail contains the
+text (case-insensitive, literal), and `memberships.searchListing` / `search` / `count` accept `orIdentities` (used only with `query`) to
+ADD those identities to what the term matches by id. `listMembersWithProfiles` does both for you when you pass a `query`.
+
+```ts
+const found = await storage.profiles.search({ query: "gómez" });
+const members = await storage.memberships.searchListing({ organizationId, query: "gómez", orIdentities: found.map((p) => p.identity), rolesPerMember: 3 });
+```
+
+**In Express and Next it is one option.** `requirePermission(engine, "x.y", { resolve, syncProfile })` (Express: `resolve` returns
+`{ identity, organizationId, profile }`) and `assertCan(engine, input, { syncProfile, profile })` / `authorizeRoute(engine, input, { syncProfile, profile })`
+(Next) store the caller's profile on every request, new or long-standing, with no other code.
+
 `listMembersWithProfiles(storage, resolver, { organizationId, rolesPerMember, ... })` adds `profile { displayName, email, avatarUrl }` to
-each listed member with one `resolver.resolveProfiles(identities)` call per page (at most `MAX_PROFILE_BATCH` = 200 identities per call).
-You implement the resolver against your own users table or provider. Output is sanitized (capped strings, `http(s)` avatars only) and a
-failing resolver never breaks the listing (`onResolveError` reports it).
+each listed member: the stored profile (one `findMany` per page) and, if you pass a `resolver`, what `resolver.resolveProfiles(identities)`
+returns (one call per page, at most `MAX_PROFILE_BATCH` = 200 identities), which wins field by field. You implement the resolver against
+your own users table or provider. A failing store or resolver never breaks the listing (`onResolveError` reports it).
 
 ---
 

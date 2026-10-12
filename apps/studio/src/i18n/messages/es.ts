@@ -157,7 +157,7 @@ export const es: Record<keyof typeof en, string> = {
   "membersPage.emptyTitle": "Aún no hay miembros",
   "membersPage.emptyDescription": "Los miembros aparecen aquí cuando se añaden a una organización.",
   "membersPage.organization": "Organización",
-  "members.searchPlaceholder": "Buscar por id de usuario o proveedor…",
+  "members.searchPlaceholder": "Buscar por nombre, email o id…",
   "members.searchLabel": "Buscar miembros",
   "members.clearSearch": "Limpiar búsqueda",
   "members.resultsCount_one": "{count} miembro",

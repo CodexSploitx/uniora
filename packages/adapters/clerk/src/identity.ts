@@ -1,5 +1,6 @@
-import type { Identity } from "@uniora/core";
-import type { ClerkAuthClient, ClerkVerifiedTokenPayload, ClerkVerifyTokenResult } from "./types.js";
+import type { Identity, IdentityProfile } from "@uniora/core";
+import { sanitizeProfile } from "@uniora/core";
+import type { ClerkAuthClient, ClerkProfileSource, ClerkVerifiedTokenPayload, ClerkVerifyTokenResult } from "./types.js";
 
 // TypeScript desaparece en runtime (skill §40): `result.data` llega de un
 // `ClerkAuthClient` provisto por la app, que puede estar mal implementado o
@@ -86,4 +87,55 @@ export function toVerifiedEmail(payload: ClerkVerifiedTokenPayload | null | unde
     return email.length > 0 ? email : null;
   }
   return null;
+}
+
+/** The first value that is a non-blank string (providers disagree on which claim holds a name or a picture). */
+function pick(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim().length > 0) return value;
+  }
+  return undefined;
+}
+
+/**
+ * What a screen needs to show this person: display name, e-mail and the avatar URL. Accepts the verified session-token payload
+ * (add the claims to your Clerk session token template: `name`, `email`, `picture` or `image_url`) and also a Clerk Backend `User`
+ * (`clerkClient.users.getUser(id)`: `firstName`, `lastName`, `imageUrl`, `emailAddresses`), which is the way when the template has
+ * no profile claims. Only text and an `http(s)` URL come out, never an object; fields the user does not have are left out, so the
+ * result can go straight to `storage.profiles.upsert(identity, toProfile(source))`. Display data only.
+ */
+export function toProfile(source: ClerkProfileSource | null | undefined): IdentityProfile {
+  const user: ClerkProfileSource = typeof source === "object" && source !== null ? source : {};
+  const fromParts = [pick(user.first_name, user.firstName), pick(user.last_name, user.lastName)].filter(Boolean).join(" ");
+  const emails = Array.isArray(user.emailAddresses) ? user.emailAddresses : [];
+  const primaryEmail = emails.find((entry) => entry?.id !== undefined && entry.id === user.primaryEmailAddressId) ?? emails[0];
+  return (
+    sanitizeProfile({
+      displayName: pick(user.name, user.full_name, fromParts, user.username),
+      email: pick(user.email, primaryEmail?.emailAddress),
+      avatarUrl: pick(user.picture, user.image_url, user.imageUrl),
+    }) ?? {}
+  );
+}
+
+/** `resolveIdentity` that also hands back the profile of the same verified payload (one `verifyToken` call, not two). Same fail-closed contract: `null`, never a throw. */
+export async function resolveIdentityWithProfile(
+  verifyToken: ClerkAuthClient,
+  sessionToken: string,
+): Promise<{ identity: Identity; profile: IdentityProfile } | null> {
+  if (typeof sessionToken !== "string" || sessionToken.length === 0) {
+    return null;
+  }
+
+  try {
+    const result: ClerkVerifyTokenResult = await verifyToken(sessionToken);
+
+    if (result.errors || !hasValidSubject(result.data)) {
+      return null;
+    }
+
+    return { identity: toIdentity(result.data), profile: toProfile(result.data) };
+  } catch {
+    return null;
+  }
 }

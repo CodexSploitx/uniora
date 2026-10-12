@@ -11,6 +11,7 @@ import type { EntitlementRepository } from "../entitlement/repository.js";
 import type { SupportGrantRepository } from "../support-grant/repository.js";
 import type { TeamMembershipRepository, TeamRepository } from "../team/repository.js";
 import type { PolicyRepository } from "../policy/repository.js";
+import type { IdentityProfileRepository } from "../profile/repository.js";
 
 export interface UnioraTransaction {
   organizations: OrganizationRepository;
@@ -27,6 +28,7 @@ export interface UnioraTransaction {
   teams: TeamRepository;
   teamMemberships: TeamMembershipRepository;
   policies: PolicyRepository;
+  profiles: IdentityProfileRepository;
   /**
    * Takes a transaction-scoped advisory lock on `key`, held until commit/rollback, so check-then-insert
    * sequences (e.g. invitation rate limits) can't interleave across processes. Optional: backends that
@@ -54,5 +56,6 @@ export interface UnioraStorage {
   readonly teams: TeamRepository;
   readonly teamMemberships: TeamMembershipRepository;
   readonly policies: PolicyRepository;
+  readonly profiles: IdentityProfileRepository;
   transaction<T>(callback: (tx: UnioraTransaction) => Promise<T>): Promise<T>;
 }
