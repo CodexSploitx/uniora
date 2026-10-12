@@ -2,6 +2,12 @@
 
 All notable changes to UNIORA. Packages are released in lockstep, so one version number covers all of them. The format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## 0.10.1 - 2026-10-12
+
+### Fixed
+
+- **Studio with SQLite failed in every published install.** `@uniora/sqlite` was bundled into the compiled Studio, which froze the build machine's path (`file:///home/runner/...`) into `createRequire`: every page that opened the database answered `Internal Server Error` (`ERR_INVALID_ARG_VALUE` on Windows, `better-sqlite3` not found elsewhere). It now stays an external import, and `pnpm check:packages` fails if a compiled Studio carries a build path. Postgres projects, the CLI commands and the libraries were not affected.
+
 ## 0.10.0 - 2026-10-11
 
 Includes new migrations: Postgres `0043`, `0044` and `0045`, SQLite `0028`, `0029` and `0030` (run `uniora migrate`). They only add tables: the API credentials (`uniora_api` schema in Postgres, `uniora_api_*` tables in SQLite), the shared rate-limit buckets (`uniora_api.rate_limits`) and the webhook endpoints and deliveries (`uniora_webhooks` schema, `uniora_webhook_*` tables). Nothing existing changes.
