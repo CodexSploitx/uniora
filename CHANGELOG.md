@@ -2,7 +2,7 @@
 
 All notable changes to UNIORA. Packages are released in lockstep, so one version number covers all of them. The format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## Unreleased
+## 0.11.0 - 2026-10-12
 
 Includes new migrations: Postgres `0046`, SQLite `0031` (run `uniora migrate`). They only add a table, `identity_profiles`. Nothing existing changes.
 
