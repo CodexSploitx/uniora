@@ -3,7 +3,7 @@
 // `attw` (Are The Types Wrong) valida que los tipos resuelvan para quien consume el paquete.
 // Corre después de `pnpm -r build`. Solo los paquetes con `exports` (las librerías); la CLI y Studio no son librerías.
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOTS = ["packages", "packages/adapters", "packages/database"];
@@ -29,6 +29,24 @@ for (const root of ROOTS) {
         failures.push(`${pkg.name} (${tool})`);
       }
     }
+  }
+}
+
+// Studio se publica ya compilado. Si webpack empaqueta un paquete del workspace (p. ej. @uniora/sqlite), congela
+// `import.meta.url` con la ruta de la máquina de build (en CI: file:///home/runner/...) y `createRequire` falla
+// en la máquina del usuario. Ninguna ruta file:// de build debe quedar en el servidor compilado.
+const studioServer = join("apps", "studio", ".next", "server");
+if (existsSync(studioServer)) {
+  const walk = (dir) =>
+    readdirSync(dir).flatMap((name) => {
+      const path = join(dir, name);
+      return statSync(path).isDirectory() ? walk(path) : path.endsWith(".js") ? [path] : [];
+    });
+  const baked = walk(studioServer).filter((file) => /createRequire\)?\("file:\/\/\//.test(readFileSync(file, "utf8")));
+  console.log(`${baked.length === 0 ? "✓" : "✗"} @uniora/studio · sin rutas de build fijas`);
+  if (baked.length > 0) {
+    console.log(baked.join("\n"));
+    failures.push("@uniora/studio (ruta de build fija en createRequire)");
   }
 }
 
