@@ -1,6 +1,6 @@
 {
   "name": "@uniora/server",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "UNIORA as its own self-hosted HTTP service: an authenticated, bounded, documented API over @uniora/core. Your backend calls it with an API key; your auth provider stays where it is.",
   "license": "PolyForm-Shield-1.0.0",
   "keywords": [
