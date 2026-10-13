@@ -8,6 +8,10 @@ Cada vez que se haga un cambio, una actualización, una corrección o una funci�
 
 Resumen: si algo cambia en UNIORA, la API HTTP de `@uniora/server` (rutas, esquemas, scopes, errores, eventos), su OpenAPI (`guides/openapi.json`), la referencia (`guides/server-api.md`), el cliente (`packages/client/src/generated.ts`) y la API embebida deben quedar actualizados y regenerados con `UPDATE_DOCS=1 pnpm --filter @uniora/server test`. Solo se exime un cambio puramente interno, y la razón se escribe en el PR.
 
+## Versiones (SemVer)
+
+Un cambio **no** sube la versión: se anota bajo `## Unreleased` del CHANGELOG. La versión se sube al cortar un release: solo correcciones → parche (`0.12.0` → `0.12.1`); función nueva compatible (campo, ruta, scope, error, migración) → menor (`0.13.0`); cambio incompatible → mayor (en `0.x`, menor). Detalle en la skill `uniora-api-sync` (Paso 7).
+
 ## Comandos
 
 ```bash

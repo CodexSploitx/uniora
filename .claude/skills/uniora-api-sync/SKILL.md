@@ -135,7 +135,18 @@ Un fallo en esta prueba es un fallo del cambio: se corrige y se vuelve a pasar e
 
 1. **CHANGELOG.md**: entrada bajo "Unreleased" que mencione explícitamente el efecto en la API HTTP (ruta nueva, campo nuevo, scope nuevo, error nuevo) y en la embebida, y las migraciones nuevas con su número.
 2. **Descripción del PR**: una sección "API" que liste qué rutas, campos, scopes, errores y eventos cambian, o la razón escrita de que no cambia ninguno.
-3. **Versión**: el release es en bloque (los 15 paquetes comparten versión) y se publica con un tag `vX.Y.Z`. Una API HTTP que cambia exige un release; `@uniora/server` y `@uniora/client` deben salir juntos. Antes de pedir el tag corre el chequeo de empaquetado (`pnpm -r build && pnpm check:packages`).
+3. **Versión**: **un cambio no sube la versión; un release sí.** Mientras trabajas, solo escribes la entrada bajo `## Unreleased` en el CHANGELOG y **no tocas ningún `package.json`**. La versión se sube una sola vez, al cortar un release (cuando la persona lo pide), y el número sale de lo que haya acumulado `Unreleased` siguiendo [SemVer](https://semver.org) (`MAYOR.MENOR.PARCHE`):
+
+   | Qué contiene lo acumulado | Sube | Ejemplo |
+   | --- | --- | --- |
+   | Solo **correcciones** de errores, sin API ni datos nuevos (el comportamiento documentado no cambia) | PARCHE | `0.12.0` → `0.12.1` |
+   | **Funciones nuevas compatibles**: campo, ruta, scope, error, evento, export o migración nuevos, y todo lo opcional | MENOR | `0.12.1` → `0.13.0` (y el parche vuelve a `0`) |
+   | **Cambio incompatible**: quitar o renombrar algo, hacer obligatorio un campo, cambiar un significado | MAYOR (mientras sea `0.x`: MENOR, anunciado como incompatible en el CHANGELOG) | `1.4.2` → `2.0.0` |
+
+   - Si hay de varias clases, manda la más alta. Una corrección que además añade un campo a la API es MENOR, no PARCHE.
+   - Un PARCHE nunca añade ni quita superficie pública: si el cambio añade un campo o una migración, no es un parche aunque "arregle algo".
+   - El release es en bloque (los 15 paquetes comparten versión) y se publica con un tag `vX.Y.Z` sobre un commit que ya está en `main`. `@uniora/server` y `@uniora/client` salen juntos. Antes de pedir el tag corre `pnpm -r build && pnpm check:packages` y `node scripts/check-release.mjs vX.Y.Z`.
+   - Nunca empujes el tag sin que la persona lo pida: publica en npm y una versión publicada no se puede reutilizar.
 4. Dile a la persona **qué tiene que actualizar en sus proyectos** que usan UNIORA (paquetes, `uniora migrate`, claves con el scope nuevo) y qué comportamiento cambia para quien use el servidor externo.
 
 ## Lista de comprobación final (si falta una, no está terminado)
