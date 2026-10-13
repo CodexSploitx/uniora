@@ -69,6 +69,7 @@ No existe una nube de UNIORA. En ambos modos lo ejecutas tú y los datos son tuy
 - **Políticas.** Reglas condicionales sobre los permisos: atributos del recurso, alcance y jerarquía de equipos, tiempo y contexto de la solicitud, y step-up (MFA reciente). Simula antes de publicar ([guía](guides/policies.md)).
 - **Features y cuotas.** Qué ha desbloqueado cada organización y cuántos asientos o reportes puede usar ([guía](guides/entitlements.md)).
 - **Invitaciones.** Enlaces de un solo uso, envío por correo con reintentos, reenvío y revocación ([guía](guides/invitations.md)).
+- **Quién es cada persona.** Nombre, email y URL del avatar de cada miembro, guardados junto a la membresía para que Studio muestre a una persona y no un id. Cada adaptador de identidad los lee de su proveedor, una sincronización de una línea los mantiene al día (integrada en Express y Next, o `profiles.put` por la API) y se puede encontrar a los miembros por nombre o email ([embebida](guides/core-reference.md#members-with-profiles), [servidor](guides/server.md#profiles-show-a-person-not-an-id)).
 - **Administración delegada.** Permite que los líderes inviten y asignen roles sin escalada de privilegios ([guía](guides/access-admin.md)).
 - **Log de auditoría.** Solo-añadir y encadenado por hash, con verificación de integridad ([guía](guides/audit-log.md)).
 - **Webhooks y outbox.** Eventos escritos en la misma transacción que el cambio y entregados después, firmados y con reintentos ([outbox](guides/outbox.md)).

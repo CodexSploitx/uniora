@@ -18,6 +18,14 @@ const { allowed } = await uniora.decisions.check({ identity: { subject: user.id 
 await uniora.members.assignRole({ organizationId, membershipId, roleId }, { actor: { subject: session.userId } });
 ```
 
+```ts
+// Show a person, not an id: store who your users are (name, e-mail, avatar URL), e.g. right after verifying their session.
+// Needs a client with the `profiles:write` scope and the organization list `*`. Up to 100 people per call, all or none.
+await uniora.profiles.put({ profiles: [{ identity: { subject: session.userId }, displayName: "Ana Pérez", email: "ana@example.com", avatarUrl: "https://cdn.example.com/ana.png" }] });
+// A field you leave out is kept, `null` clears it, the avatar must be an http(s) URL. Member reads then carry `profile`.
+const { items } = await uniora.members.list({ organizationId, q: "Pérez" }); // `q` also matches the name or e-mail of the profile
+```
+
 - Every operation is a typed method, generated from the server's route table.
 - Retries with backoff only where they cannot repeat a change; an `Idempotency-Key` is added for the calls that create something.
 - Refuses to run in a browser, to send the key over plain `http:` (except to this machine) and to print the key.
