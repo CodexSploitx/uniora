@@ -2,7 +2,7 @@
 
 All notable changes to UNIORA. Packages are released in lockstep, so one version number covers all of them. The format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## Unreleased
+## 0.13.0 - 2026-10-13
 
 Includes new migrations: Postgres `0047`, SQLite `0032` (run `uniora migrate`). They only add two nullable columns to the feature definitions (`default_reason`, `default_updated_at`). Nothing existing changes.
 
