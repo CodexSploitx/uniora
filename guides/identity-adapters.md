@@ -94,6 +94,10 @@ await syncProfile(session.identity, session.profile);
 With `@uniora/express` or `@uniora/next` you do not even call it: pass `syncProfile` (and the `profile`) to `authorize` / `requirePermission` /
 `assertCan` / `authorizeRoute` and every authenticated request keeps the profile current.
 
+Using UNIORA as an **external server** (`@uniora/server`) instead of embedding it? Send the same profile with `uniora.profiles.put(...)`
+(or `ownerProfile` in `organizations.create`): see [Profiles in the server guide](server.md#profiles-show-a-person-not-an-id). The client needs the
+`profiles:write` scope and the list `*`.
+
 ## Rules worth knowing
 
 - The subject must be the provider's **stable user id** (`sub`, `user.id`), never an e-mail or a username that can change.

@@ -31,7 +31,7 @@ beforeAll(async () => {
   const client = await service.createClient({
     actor: OPERATOR,
     name: "backend",
-    scopes: ["check", "organizations:read", "organizations:create", "members:write", "actor:assert"],
+    scopes: ["check", "organizations:read", "organizations:create", "profiles:write", "members:write", "actor:assert"],
     organizations: "*",
   });
   clientId = client.id;
@@ -44,6 +44,27 @@ afterAll(async () => {
 });
 
 describe("createUnioraClient", () => {
+  it("stores the profile of a person and every member read carries it", async () => {
+    const result = await uniora.profiles.put({
+      profiles: [
+        { identity: { subject: "ana" }, displayName: "Ana Pérez", email: "ana@example.com", avatarUrl: "https://cdn.example.com/avatars/ana.png" },
+        { identity: { subject: "bob" }, displayName: "Bob Ruiz" },
+      ],
+    });
+    expect(result).toEqual({ stored: 2, empty: 0 });
+
+    const ana = await uniora.members.get({ organizationId: "org_acme", membershipId: "mem_ana" });
+    expect(ana.profile).toEqual({ displayName: "Ana Pérez", email: "ana@example.com", avatarUrl: "https://cdn.example.com/avatars/ana.png" });
+    const list = await uniora.members.list({ organizationId: "org_acme", q: "Ruiz" });
+    expect(list.items.map((member) => member.id)).toEqual(["mem_bob"]);
+    expect(list.items[0]?.profile).toEqual({ displayName: "Bob Ruiz" });
+
+    // A field left out is kept; null clears it.
+    await uniora.profiles.put({ profiles: [{ identity: { subject: "bob" }, email: "bob@example.com", displayName: null }] });
+    expect((await uniora.members.get({ organizationId: "org_acme", membershipId: "mem_bob" })).profile).toEqual({ email: "bob@example.com" });
+    await expect(uniora.profiles.put({ profiles: [{ identity: { subject: "ana" }, avatarUrl: "javascript:alert(1)" }] })).rejects.toBeInstanceOf(UnioraApiError);
+  });
+
   it("answers decisions", async () => {
     expect(await uniora.decisions.check({ identity: { subject: "ana" }, organizationId: "org_acme", permission: "reports.read" })).toEqual({ allowed: true });
     expect(await uniora.decisions.check({ identity: { subject: "bob" }, organizationId: "org_acme", permission: "reports.read" })).toEqual({ allowed: false });

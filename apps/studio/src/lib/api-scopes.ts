@@ -8,6 +8,7 @@ export const API_SCOPE_META = {
   "organizations:read": { sensitive: false, group: "read" },
   "audit:read": { sensitive: false, group: "read" },
   "organizations:create": { sensitive: false, group: "provision" },
+  "profiles:write": { sensitive: false, group: "provision" },
   "members:write": { sensitive: true, group: "administer" },
   "roles:write": { sensitive: true, group: "administer" },
   "teams:write": { sensitive: true, group: "administer" },

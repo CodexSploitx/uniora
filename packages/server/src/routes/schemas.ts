@@ -14,6 +14,16 @@ export const OrganizationOut = s.object({
   version: s.int({ min: 1, max: Number.MAX_SAFE_INTEGER }),
 });
 
+/** What a screen shows about a person, as their auth provider reported it. Only text and an `http(s)` URL: never an object. */
+export const ProfileOut = s.object(
+  {
+    displayName: s.optional(s.string({ max: 320, description: "The person's name." })),
+    email: s.optional(s.string({ max: 320, description: "The e-mail the auth provider reported. Display data only: never proof of anything." })),
+    avatarUrl: s.optional(s.string({ max: 2048, description: "An `http(s)` URL of the picture." })),
+  },
+  { description: "Present when the application has stored one for this person (`PUT /v1/profiles`)." },
+);
+
 export const MemberOut = s.object({
   id: s.string({ max: 200 }),
   organizationId: s.string({ max: 200 }),
@@ -24,6 +34,7 @@ export const MemberOut = s.object({
   updatedAt: s.date(),
   lastActiveAt: s.optional(s.date()),
   invitedBy: s.optional(IdentityOutput),
+  profile: s.optional(ProfileOut),
   blocked: s.optional(s.object({ at: s.date(), until: s.optional(s.date()) }, { description: "Present while the member is blocked or suspended." })),
   version: s.int({ min: 1, max: Number.MAX_SAFE_INTEGER, description: "Send it back as `If-Match` to refuse changes made from a stale copy." }),
 });
