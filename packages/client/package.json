@@ -1,6 +1,6 @@
 {
   "name": "@uniora/client",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "The typed client of the UNIORA API: decisions, organizations, roles, teams, policies and invitations from your backend, plus a remote authorization engine for the Express and Next guards.",
   "license": "PolyForm-Shield-1.0.0",
   "keywords": [
