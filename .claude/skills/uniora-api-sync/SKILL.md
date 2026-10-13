@@ -1,11 +1,11 @@
 ---
 name: uniora-api-sync
-description: OBLIGATORIA en este repositorio cada vez que se haga un cambio, una actualización, una corrección o una función nueva (feature, bugfix, refactor con efecto visible, migración, nuevo campo, nuevo error, nuevo permiso, nuevo evento). Obliga a mantener actualizadas las APIs de UNIORA — la API HTTP de @uniora/server con su OpenAPI, el cliente @uniora/client y la referencia server-api.md, y la API embebida (@uniora/core y adaptadores) — y a no dar el trabajo por terminado hasta que todo lo derivado esté regenerado y los tests pasen. Use whenever code, schema, storage, permissions, adapters or Studio change in uniora; before finishing, committing or opening a PR.
+description: OBLIGATORIA en este repositorio cada vez que se haga un cambio, una actualización, una corrección o una función nueva (feature, bugfix, refactor con efecto visible, migración, nuevo campo, nuevo error, nuevo permiso, nuevo evento). Obliga a mantener actualizadas las APIs de UNIORA — la API HTTP de @uniora/server con su OpenAPI, el cliente @uniora/client y la referencia server-api.md, y la API embebida (@uniora/core y adaptadores) — y a no dar el trabajo por terminado hasta que todo lo derivado esté regenerado, su DOCUMENTACIÓN DE USO esté escrita o actualizada (para qué sirve, cómo se usa, ejemplos, requisitos, errores, cómo adoptarla) y los tests pasen. Use whenever code, schema, storage, permissions, adapters or Studio change in uniora; before finishing, committing or opening a PR.
 ---
 
 # UNIORA: las APIs siempre al día
 
-**Regla de oro: ningún cambio en UNIORA está terminado hasta que las APIs que lo exponen estén actualizadas.**
+**Regla de oro: ningún cambio en UNIORA está terminado hasta que las APIs que lo exponen estén actualizadas Y documentadas para que cualquiera sepa usarlas.** Una API cambiada sin su documentación de uso (Paso 5) tampoco está terminada: si nadie sabe que existe o cómo se usa, para esa persona no existe.
 UNIORA se usa de dos formas, y las dos son una API pública que clientes reales usan sin ver nuestro código:
 
 1. **Servicio externo** (`@uniora/server`): una API HTTP con clave. Quien la usa (por ejemplo climasy) solo conoce lo que está en las rutas, en `guides/openapi.json` y en `@uniora/client`. **Si una función no tiene ruta, para esa gente no existe.**
@@ -34,7 +34,8 @@ Solo se exime un cambio **puramente interno** (renombrar una variable privada, c
 5. ¿Hay un **permiso o scope** nuevo, o una ruta cambia de quién puede llamarla? → hay que actualizar los scopes.
 6. ¿Se **emite un evento** nuevo o cambia el contenido de uno? → hay que actualizarlo en webhooks y docs.
 7. ¿Cambia la **API embebida** (exports, firmas, opciones)? → hay que actualizar la referencia y las guías.
-8. ¿Un cliente con una versión anterior sigue funcionando? Si no, es un **cambio incompatible** y se trata como tal (Paso 5).
+8. ¿Un cliente con una versión anterior sigue funcionando? Si no, es un **cambio incompatible** y se trata como tal (Paso 6).
+9. ¿Qué tiene que **saber o hacer** una persona para usar esto (requisitos, permisos, migraciones, configuración, ejemplo mínimo, errores que verá)? → eso es lo que hay que **documentar** (Paso 5).
 
 Si la respuesta a la 1 es "no" pero la función sí existe en la librería, escribe en el PR por qué no tiene sentido por HTTP. "Se me olvidó" no es una razón.
 
@@ -71,7 +72,9 @@ pnpm --filter @uniora/server test                   # sin la variable: debe pasa
 
 Revisa el diff generado: debe contener **exactamente** lo que querías cambiar y nada más. Un cambio inesperado en otro endpoint es una regresión de contrato.
 
-## Paso 4 — Cliente, Studio, adaptadores, CLI y guías
+## Paso 4 — Cliente, Studio, adaptadores y CLI
+
+(La documentación de uso de todo esto va en el Paso 5.)
 
 - **`@uniora/client`** (`packages/client/src`): `generated.ts` ya sale del paso 3; si el cambio necesita lógica a mano (`client.ts`, `engine.ts`), escríbela y añade su prueba.
 - **API embebida**: exporta lo nuevo en `packages/core/src/index.ts`, documenta en `guides/core-reference.md` y en la guía del área (`teams.md`, `policies.md`, `invitations.md`, `identity-adapters.md`, etc.). Los adaptadores de identidad mantienen la misma forma entre sí.
@@ -79,24 +82,50 @@ Revisa el diff generado: debe contener **exactamente** lo que querías cambiar y
 - **Studio** (`apps/studio`): si muestra o edita esos datos, actualízalo; el texto visible se traduce (clave en inglés y su par en español).
 - **CLI y servidor**: si hay opciones o configuración nuevas, `guides/cli-and-studio.md` y `guides/server.md`.
 
-### Documentación para quien la consume (obligatoria, no solo la generada)
+## Paso 5 — Documentación de uso (para saber cómo usarla)
 
-`server-api.md` y `openapi.json` dicen **qué** devuelve la API; no explican **cómo usarla bien**. Cada vez que cambia una API, actualiza también las guías escritas a mano para que una persona que no ve nuestro código sepa consumirla correctamente:
+La referencia generada (`server-api.md`, `openapi.json`) describe **cada llamada**, pero no explica **cuándo ni cómo usarla**. Eso lo escribimos a mano, y es obligatorio cada vez que la API cambia: ruta, campo, scope, error, evento, opción o función exportada, nuevos o con otro comportamiento.
 
-- **Qué hace y cuándo usarlo**: explica el caso de uso, no solo el campo. Por ejemplo: "si `defaultReason` viene, muéstralo; si falta, no se dio motivo, usa tu mensaje genérico".
-- **Un ejemplo que se pueda copiar**, en `curl` o en el cliente `@uniora/client`, con la respuesta real (sale de lo que el servidor devuelve de verdad, no inventada).
-- **Casos límite y errores**: qué pasa si el campo falta, si la organización tiene su propio valor, qué error devuelve y qué hacer.
-- **Compatibilidad**: si es opcional, dilo; cómo se comporta un cliente anterior; qué migración o versión necesita (`uniora migrate`).
-- **Dónde**: la guía del área (`server.md` para la forma externa; `concepts.md`, `core-reference.md` y la guía propia del área para la embebida). Si el área no tiene guía, créala y enlázala desde `guides/README.md`.
-- Un cambio de API **sin** su documentación para el consumidor no está terminado, igual que uno sin regenerar el OpenAPI.
+**Qué debe decir la documentación (todo, no solo una línea):**
 
-## Paso 5 — Compatibilidad (los clientes externos no se actualizan a la vez)
+1. **Para qué sirve**, en un párrafo y con el caso real ("para que Studio muestre a la persona y no solo un id").
+2. **Requisitos**: qué permiso o scope hace falta, a qué organizaciones debe alcanzar la clave, qué migración hay que correr (`uniora migrate`), qué configuración o versión mínima se necesita.
+3. **Un ejemplo mínimo que funciona**, copiable, para **cada forma de uso** que aplique: embebida (código con `@uniora/core`, adaptadores, Express/Next) y servicio externo (`@uniora/client` y/o HTTP). Debe incluir lo que se recibe de vuelta.
+4. **Las reglas que sorprenden**: qué pasa con un campo omitido o `null`, límites (tamaños, número de elementos), idempotencia, orden, qué es todo-o-nada, qué no se audita, qué valida el servidor.
+5. **Errores**: qué errores puede ver quien lo use, qué significan y qué debe hacer (lo que no se explica se convierte en una pregunta de soporte).
+6. **Cómo adoptarlo en un proyecto que ya usa UNIORA**: pasos en orden (actualizar paquetes, migrar, crear o actualizar la clave con el scope nuevo, añadir la llamada), y qué pasa con los datos existentes.
+7. **Qué cambió respecto a la versión anterior**, en el CHANGELOG y, si algo se comporta distinto, en la propia guía.
+
+**Dónde se escribe (según el alcance del cambio, todos los que apliquen):**
+
+| Lugar | Qué va ahí |
+| --- | --- |
+| `guides/server.md` | Servicio externo: una historia nueva en "The flows" (o ampliar la existente), el scope en "API clients and keys" y el ejemplo de CLI si hay un cliente típico. |
+| `guides/core-reference.md` y la guía del área (`teams.md`, `policies.md`, `invitations.md`, `identity-adapters.md`, `access-admin.md`, `audit-log.md`, `entitlements.md`, `platform.md`...) | Forma embebida: cómo se usa la función o el repositorio nuevo. |
+| `guides/errors.md` | Cada código de error nuevo, con su significado. |
+| `guides/cli-and-studio.md` | Comandos o pantallas de Studio nuevos o cambiados. |
+| `packages/<paquete>/README.md` | El README de cada paquete cuyo uso cambie (cliente, servidor, adaptadores, Express, Next, CLI...). |
+| `README.md` y `README.es.md` | Si es una capacidad destacada del producto. Los dos idiomas se mantienen iguales. |
+| `guides/getting-started.md`, `guides/roadmap.md` | Si cambia el primer uso o se cierra algo que figuraba como pendiente. |
+| Studio (`apps/studio/src/i18n/messages`) | Todo texto visible nuevo, en inglés y su par en español. |
+| `CHANGELOG.md` | Entrada con el efecto en la API y en la forma de usarla. |
+
+**Reglas de calidad:**
+
+- **Ningún ejemplo sin ejecutar.** Los de `server-api.md` salen del escenario ejecutado. Los que escribas a mano en guías o READMEs se comprueban: se compilan (typecheck) o se ejecutan contra un servidor o una base de prueba. Un ejemplo que no funciona es peor que no tenerlo.
+- **No se edita a mano lo generado** (`server-api.md`, `openapi.json`, `generated.ts`). Si falta explicación ahí, se mejora la `description` de la ruta o del campo en el código y se regenera: es lo que lee quien consume la API.
+- Cada campo, ruta y scope nuevo lleva `description` y, cuando ayude, un `example` en el esquema, porque alimentan la referencia, el OpenAPI y los tipos del cliente.
+- Enlaces entre guías (la guía del área enlaza a la del servidor y viceversa) para que quien llegue por una forma de uso encuentre la otra.
+- Mismo vocabulario en todas partes: el nombre del scope, de la ruta y del campo se escribe igual en el código, el CHANGELOG, las guías y los READMEs.
+- Si la documentación existente deja de ser cierta por este cambio, se corrige en el mismo PR. Una guía desactualizada cuenta como una regresión.
+
+## Paso 6 — Compatibilidad (los clientes externos no se actualizan a la vez)
 
 - **Añadir es seguro; quitar o cambiar no.** Campo nuevo en una respuesta: opcional. Campo nuevo en una petición: opcional, con un valor por defecto que conserve el comportamiento anterior. Ruta nueva: sin tocar las existentes.
 - **Prohibido sin aviso**: quitar o renombrar un campo, ruta o scope; hacer obligatorio un campo que no lo era; cambiar el tipo o el significado de algo; reutilizar un código de error. Si es inevitable: se anuncia en el CHANGELOG como **cambio incompatible**, se avisa en la descripción del PR, y se prefiere dejar el nombre viejo funcionando un release con aviso de obsolescencia.
 - Un cliente que lleve la versión anterior del cliente HTTP debe seguir funcionando contra el servidor nuevo.
 
-## Paso 6 — Verificación (todo en verde, sin saltarse nada)
+## Paso 7 — Verificación (todo en verde, sin saltarse nada)
 
 ```bash
 pnpm build
@@ -109,6 +138,8 @@ node scripts/check-release.mjs     # coherencia de versiones y metadatos
 Además:
 
 - Corre `pnpm --filter @uniora/server test` **sin** `UPDATE_DOCS` y comprueba que los tres archivos generados no cambian.
+- Si hay una ruta nueva, llámala de verdad con un servidor levantado (o con los tests de ruta, que usan uno real) y comprueba la respuesta y el error de un scope ausente.
+- Los ejemplos que escribiste a mano en guías y READMEs funcionan (compilan o se ejecutaron), y los enlaces entre guías no están rotos.
 - Nunca saltes, desactives o pongas en cuarentena un test para que pase.
 
 ### Prueba real de la API, como la usaría una persona (obligatoria)
@@ -131,10 +162,10 @@ Los tests de ruta no bastan: hay que llamar a la API **desde fuera**, con un ser
 
 Un fallo en esta prueba es un fallo del cambio: se corrige y se vuelve a pasar el script completo. No se da por buena una API que solo pasó sus tests unitarios.
 
-## Paso 7 — Cierre
+## Paso 8 — Cierre
 
 1. **CHANGELOG.md**: entrada bajo "Unreleased" que mencione explícitamente el efecto en la API HTTP (ruta nueva, campo nuevo, scope nuevo, error nuevo) y en la embebida, y las migraciones nuevas con su número.
-2. **Descripción del PR**: una sección "API" que liste qué rutas, campos, scopes, errores y eventos cambian, o la razón escrita de que no cambia ninguno.
+2. **Descripción del PR**: una sección "API" que liste qué rutas, campos, scopes, errores y eventos cambian, o la razón escrita de que no cambia ninguno, y una sección "Documentación" que liste qué guías y READMEs se escribieron o actualizaron.
 3. **Versión**: **un cambio no sube la versión; un release sí.** Mientras trabajas, solo escribes la entrada bajo `## Unreleased` en el CHANGELOG y **no tocas ningún `package.json`**. La versión se sube una sola vez, al cortar un release (cuando la persona lo pide), y el número sale de lo que haya acumulado `Unreleased` siguiendo [SemVer](https://semver.org) (`MAYOR.MENOR.PARCHE`):
 
    | Qué contiene lo acumulado | Sube | Ejemplo |
@@ -147,11 +178,11 @@ Un fallo en esta prueba es un fallo del cambio: se corrige y se vuelve a pasar e
    - Un PARCHE nunca añade ni quita superficie pública: si el cambio añade un campo o una migración, no es un parche aunque "arregle algo".
    - El release es en bloque (los 15 paquetes comparten versión) y se publica con un tag `vX.Y.Z` sobre un commit que ya está en `main`. `@uniora/server` y `@uniora/client` salen juntos. Antes de pedir el tag corre `pnpm -r build && pnpm check:packages` y `node scripts/check-release.mjs vX.Y.Z`.
    - Nunca empujes el tag sin que la persona lo pida: publica en npm y una versión publicada no se puede reutilizar.
-4. Dile a la persona **qué tiene que actualizar en sus proyectos** que usan UNIORA (paquetes, `uniora migrate`, claves con el scope nuevo) y qué comportamiento cambia para quien use el servidor externo.
+4. Dile a la persona **qué tiene que actualizar en sus proyectos** (es el mismo texto de "cómo adoptarlo" de la documentación) que usan UNIORA (paquetes, `uniora migrate`, claves con el scope nuevo) y qué comportamiento cambia para quien use el servidor externo.
 
 ## Lista de comprobación final (si falta una, no está terminado)
 
-- [ ] Respondí por escrito las 8 preguntas del Paso 1.
+- [ ] Respondí por escrito las 9 preguntas del Paso 1.
 - [ ] La ruta, el esquema de entrada y el de salida están actualizados (o dejé escrita la razón de que no aplica).
 - [ ] El scope es exactamente uno por ruta, y si es nuevo está en Core, en Studio y en la CLI.
 - [ ] Errores nuevos documentados; ninguno renombrado.
@@ -159,8 +190,9 @@ Un fallo en esta prueba es un fallo del cambio: se corrige y se vuelve a pasar e
 - [ ] Regeneré `server-api.md`, `openapi.json` y `generated.ts` con `UPDATE_DOCS=1`, y sin la variable todo pasa sin cambios.
 - [ ] Hay pruebas de la ruta (caso feliz, scope ausente, otra organización, entrada inválida).
 - [ ] La API embebida está exportada y documentada; Postgres, SQLite y memoria pasan la misma suite.
-- [ ] Actualicé las guías escritas a mano (`server.md`, `concepts.md`, `core-reference.md`, la del área) con cómo consumir el cambio: ejemplo copiable, casos límite, errores y compatibilidad.
+- [ ] La documentación de uso está escrita o actualizada: para qué sirve, requisitos, ejemplo mínimo por cada forma de uso, reglas que sorprenden, errores y cómo adoptarlo, en la guía del área, `guides/server.md`, los READMEs de los paquetes afectados y, si es destacado, `README.md` y `README.es.md`.
+- [ ] Los ejemplos escritos a mano están comprobados (compilados o ejecutados) y cada campo, ruta y scope nuevo tiene `description` en el esquema.
 - [ ] Probé la API con un servidor real levantado por la CLI, con `curl` y un script de Python (feliz, campo presente y ausente, paginación, 401/403/404, entrada inválida), y el resultado está en el PR.
 - [ ] Nada se rompe para un cliente con la versión anterior (o está anunciado como incompatible).
 - [ ] `build`, `typecheck`, `test` y `lint` en verde; no hay tests saltados.
-- [ ] CHANGELOG y descripción del PR mencionan el efecto en las APIs.
+- [ ] CHANGELOG y descripción del PR mencionan el efecto en las APIs y la documentación que se tocó.

@@ -69,6 +69,7 @@ There is no UNIORA cloud. In both modes you run it and you own the data.
 - **Policies.** Conditional rules on top of permissions: resource attributes, team scope and hierarchy, time and request context, and step-up (recent MFA). Simulate before you publish ([guide](guides/policies.md)).
 - **Features and quotas.** What each organization has unlocked, and how many seats or reports it may use ([guide](guides/entitlements.md)).
 - **Invitations.** Single-use links, e-mail delivery with retries, resend and revoke ([guide](guides/invitations.md)).
+- **Who the people are.** Name, e-mail and avatar URL of each member, stored next to the membership so Studio shows a person and not an id. Every identity adapter reads them from its provider, a one-line sync keeps them current (embedded in Express and Next, or `profiles.put` over the API), and members can be found by name or e-mail ([embedded](guides/core-reference.md#members-with-profiles), [server](guides/server.md#profiles-show-a-person-not-an-id)).
 - **Delegated administration.** Let team leads invite and assign roles without privilege escalation ([guide](guides/access-admin.md)).
 - **Audit log.** Append-only and hash-chained, with an integrity check ([guide](guides/audit-log.md)).
 - **Webhooks and outbox.** Events written in the same transaction as the change, then delivered signed, with retries ([outbox](guides/outbox.md)).
