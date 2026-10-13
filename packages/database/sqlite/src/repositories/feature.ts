@@ -41,9 +41,11 @@ interface FeatureDefinitionRow {
   description: string | null;
   default_enabled: number;
   parent_key: string | null;
+  default_reason: string | null;
+  default_updated_at: string | null;
 }
 
-const DEFINITION_COLUMNS = "key, name, description, default_enabled, parent_key";
+const DEFINITION_COLUMNS = "key, name, description, default_enabled, parent_key, default_reason, default_updated_at";
 const OVERRIDE_COLUMNS = "organization_id, key, enabled, updated_at, updated_by_provider, updated_by_subject, reason, version";
 
 function toFeature(row: FeatureRow): Feature {
@@ -67,6 +69,8 @@ function toFeatureDefinition(row: FeatureDefinitionRow): FeatureDefinition {
     description: row.description ?? undefined,
     defaultEnabled: row.default_enabled === 1,
     ...(row.parent_key !== null ? { parentKey: row.parent_key } : {}),
+    ...(row.default_reason !== null ? { reason: row.default_reason } : {}),
+    ...(row.default_updated_at !== null ? { updatedAt: new Date(row.default_updated_at) } : {}),
   };
 }
 
@@ -149,7 +153,10 @@ export function createFeatureRepository(db: SqliteExecutor): FeatureRepository {
            values (?1, ?2, ?3, ?4, ?5)
            on conflict (key) do update set
              name = excluded.name, description = excluded.description,
-             default_enabled = excluded.default_enabled, parent_key = excluded.parent_key
+             default_enabled = excluded.default_enabled, parent_key = excluded.parent_key,
+             -- The kill switch's reason survives an app re-registering its catalog; turning the default back on clears it.
+             default_reason = case when excluded.default_enabled then null else uniora_feature_definitions.default_reason end,
+             default_updated_at = case when excluded.default_enabled then null else uniora_feature_definitions.default_updated_at end
            returning ${DEFINITION_COLUMNS}`,
           [key, name, input.description ?? null, input.defaultEnabled === true, input.parentKey ?? null],
         );
@@ -261,7 +268,12 @@ export function createFeatureRepository(db: SqliteExecutor): FeatureRepository {
            where key = ?1 and enabled = 1`,
           [key, meta?.actor?.provider ?? null, meta?.actor?.subject ?? null, reason],
         );
-        await db.query(`update uniora_feature_definitions set default_enabled = 0 where key = ?1`, [key]);
+        await db.query(
+          `update uniora_feature_definitions
+           set default_enabled = 0, default_reason = ?2, default_updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+           where key = ?1`,
+          [key, reason],
+        );
         return { disabledOverrides: disabled.rowCount, defaultWasEnabled: definition.rows[0]!.default_enabled === 1 };
       });
     },

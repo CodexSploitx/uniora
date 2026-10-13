@@ -1140,12 +1140,17 @@ function tally(requestedIds: string[], occurrences: string[]): Record<string, nu
       const name = sanitizeFeatureName(input.name);
       const key = resolveFeatureKey(name, input.key);
       assertValidFeatureParent(featureDefinitions, key, input.parentKey);
+      const defaultEnabled = input.defaultEnabled === true;
+      const previous = featureDefinitions.get(key);
       const definition: FeatureDefinition = {
         key,
         name,
         description: input.description,
-        defaultEnabled: input.defaultEnabled === true,
+        defaultEnabled,
         ...(input.parentKey !== undefined ? { parentKey: input.parentKey } : {}),
+        // An app registers its catalog on every start: the kill switch's reason must survive that, until the feature is turned back on.
+        ...(!defaultEnabled && previous?.reason !== undefined ? { reason: previous.reason } : {}),
+        ...(!defaultEnabled && previous?.updatedAt !== undefined ? { updatedAt: previous.updatedAt } : {}),
       };
       featureDefinitions.set(key, definition);
       return copy(definition);
@@ -1201,7 +1206,16 @@ function tally(requestedIds: string[], occurrences: string[]): Record<string, nu
         writeOverride(feature.organizationId, key, false, meta);
         disabledOverrides += 1;
       }
-      featureDefinitions.set(key, { ...definition, defaultEnabled: false });
+      const reason = sanitizeFeatureChangeReason(meta?.reason);
+      featureDefinitions.set(key, {
+        key: definition.key,
+        name: definition.name,
+        description: definition.description,
+        defaultEnabled: false,
+        ...(definition.parentKey !== undefined ? { parentKey: definition.parentKey } : {}),
+        ...(reason !== undefined ? { reason } : {}),
+        updatedAt: new Date(),
+      });
       return { disabledOverrides, defaultWasEnabled: definition.defaultEnabled };
     },
     async isEnabled(organizationId, key) {

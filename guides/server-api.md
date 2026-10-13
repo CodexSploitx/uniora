@@ -884,6 +884,8 @@ The effective state of each feature (the override, else the default, and every p
 | `items[].defaultEnabled` | boolean |  |
 | `items[].parentKey` | string (≤ 200 chars), may be absent |  |
 | `items[].blockedBy` | string (≤ 200 chars), may be absent |  |
+| `items[].defaultReason` | string (≤ 500 chars), may be absent | For an organization without an override: why the feature was turned off everywhere (the kill switch's reason), when it was given. |
+| `items[].defaultUpdatedAt` | string (date-time), may be absent | When the kill switch turned the default off, alongside `defaultReason`. |
 | `nextCursor` | string (≤ 600 chars) or `null` | Pass it back as `cursor` for the next page; `null` on the last one. |
 
 **Errors of this operation** (besides the ones every call can meet: see [Errors](#errors))
@@ -907,7 +909,16 @@ const result = await uniora.organizations.features({ organizationId: "org_acme",
 HTTP/1.1 200 OK
 
 {
-  "items": [],
+  "items": [
+    {
+      "key": "legacy_exports",
+      "enabled": false,
+      "reason": "default",
+      "defaultEnabled": false,
+      "defaultReason": "Retired on 2026-10-01; use the new export instead.",
+      "defaultUpdatedAt": "2026-03-02T09:07:00.000Z"
+    }
+  ],
   "nextCursor": null
 }
 ```
@@ -1021,7 +1032,7 @@ HTTP/1.1 201 Created
     "slug": "initech",
     "name": "Initech",
     "status": "active",
-    "createdAt": "2026-03-02T09:07:00.000Z",
+    "createdAt": "2026-03-02T09:08:00.000Z",
     "version": 1
   },
   "ownerRole": {
@@ -1044,8 +1055,8 @@ HTTP/1.1 201 Created
       "role_EXAMPLE0002_____________"
     ],
     "status": "active",
-    "createdAt": "2026-03-02T09:08:00.000Z",
-    "updatedAt": "2026-03-02T09:09:00.000Z",
+    "createdAt": "2026-03-02T09:09:00.000Z",
+    "updatedAt": "2026-03-02T09:10:00.000Z",
     "version": 1
   }
 }
@@ -1082,7 +1093,7 @@ HTTP/1.1 201 Created
     "slug": "initech",
     "name": "Initech",
     "status": "active",
-    "createdAt": "2026-03-02T09:10:00.000Z",
+    "createdAt": "2026-03-02T09:11:00.000Z",
     "version": 1
   },
   "ownerRole": {
@@ -1105,8 +1116,8 @@ HTTP/1.1 201 Created
       "role_EXAMPLE0002_____________"
     ],
     "status": "active",
-    "createdAt": "2026-03-02T09:11:00.000Z",
-    "updatedAt": "2026-03-02T09:12:00.000Z",
+    "createdAt": "2026-03-02T09:12:00.000Z",
+    "updatedAt": "2026-03-02T09:13:00.000Z",
     "version": 1
   },
   "replayed": true
@@ -1184,7 +1195,7 @@ HTTP/1.1 201 Created
     "slug": "initech-labs",
     "name": "Initech Labs",
     "status": "active",
-    "createdAt": "2026-03-02T09:13:00.000Z",
+    "createdAt": "2026-03-02T09:14:00.000Z",
     "version": 1
   },
   "ownerRole": {
@@ -1207,8 +1218,8 @@ HTTP/1.1 201 Created
       "00000000-0000-4000-8000-000000000002"
     ],
     "status": "active",
-    "createdAt": "2026-03-02T09:14:00.000Z",
-    "updatedAt": "2026-03-02T09:15:00.000Z",
+    "createdAt": "2026-03-02T09:15:00.000Z",
+    "updatedAt": "2026-03-02T09:16:00.000Z",
     "version": 1
   }
 }
@@ -1299,8 +1310,8 @@ HTTP/1.1 200 OK
         "role_viewer"
       ],
       "status": "active",
-      "createdAt": "2026-03-02T09:16:00.000Z",
-      "updatedAt": "2026-03-02T09:17:00.000Z",
+      "createdAt": "2026-03-02T09:17:00.000Z",
+      "updatedAt": "2026-03-02T09:18:00.000Z",
       "profile": {
         "displayName": "Ana Pérez",
         "email": "ana@example.com",
@@ -1317,8 +1328,8 @@ HTTP/1.1 200 OK
       },
       "roleIds": [],
       "status": "active",
-      "createdAt": "2026-03-02T09:18:00.000Z",
-      "updatedAt": "2026-03-02T09:19:00.000Z",
+      "createdAt": "2026-03-02T09:19:00.000Z",
+      "updatedAt": "2026-03-02T09:20:00.000Z",
       "profile": {
         "displayName": "Bob Ruiz"
       },
@@ -1335,8 +1346,8 @@ HTTP/1.1 200 OK
         "role_manager"
       ],
       "status": "active",
-      "createdAt": "2026-03-02T09:20:00.000Z",
-      "updatedAt": "2026-03-02T09:21:00.000Z",
+      "createdAt": "2026-03-02T09:21:00.000Z",
+      "updatedAt": "2026-03-02T09:22:00.000Z",
       "version": 1
     },
     {
@@ -1350,8 +1361,8 @@ HTTP/1.1 200 OK
         "role_owner"
       ],
       "status": "active",
-      "createdAt": "2026-03-02T09:22:00.000Z",
-      "updatedAt": "2026-03-02T09:23:00.000Z",
+      "createdAt": "2026-03-02T09:23:00.000Z",
+      "updatedAt": "2026-03-02T09:24:00.000Z",
       "version": 1
     }
   ],
@@ -1432,8 +1443,8 @@ HTTP/1.1 200 OK
     "role_viewer"
   ],
   "status": "active",
-  "createdAt": "2026-03-02T09:24:00.000Z",
-  "updatedAt": "2026-03-02T09:25:00.000Z",
+  "createdAt": "2026-03-02T09:25:00.000Z",
+  "updatedAt": "2026-03-02T09:26:00.000Z",
   "profile": {
     "displayName": "Ana Pérez",
     "email": "ana@example.com",
@@ -1541,8 +1552,8 @@ ETag: "2"
     "role_viewer"
   ],
   "status": "active",
-  "createdAt": "2026-03-02T09:26:00.000Z",
-  "updatedAt": "2026-03-02T09:27:00.000Z",
+  "createdAt": "2026-03-02T09:27:00.000Z",
+  "updatedAt": "2026-03-02T09:28:00.000Z",
   "version": 2
 }
 ```
@@ -1706,8 +1717,8 @@ ETag: "3"
   },
   "roleIds": [],
   "status": "active",
-  "createdAt": "2026-03-02T09:28:00.000Z",
-  "updatedAt": "2026-03-02T09:29:00.000Z",
+  "createdAt": "2026-03-02T09:29:00.000Z",
+  "updatedAt": "2026-03-02T09:30:00.000Z",
   "version": 3
 }
 ```
@@ -1811,10 +1822,10 @@ ETag: "4"
   },
   "roleIds": [],
   "status": "blocked",
-  "createdAt": "2026-03-02T09:30:00.000Z",
-  "updatedAt": "2026-03-02T09:31:00.000Z",
+  "createdAt": "2026-03-02T09:31:00.000Z",
+  "updatedAt": "2026-03-02T09:32:00.000Z",
   "blocked": {
-    "at": "2026-03-02T09:32:00.000Z"
+    "at": "2026-03-02T09:33:00.000Z"
   },
   "version": 4
 }
@@ -1856,10 +1867,10 @@ ETag: "6"
   },
   "roleIds": [],
   "status": "blocked",
-  "createdAt": "2026-03-02T09:33:00.000Z",
-  "updatedAt": "2026-03-02T09:34:00.000Z",
+  "createdAt": "2026-03-02T09:34:00.000Z",
+  "updatedAt": "2026-03-02T09:35:00.000Z",
   "blocked": {
-    "at": "2026-03-02T09:35:00.000Z"
+    "at": "2026-03-02T09:36:00.000Z"
   },
   "version": 6
 }
@@ -1968,10 +1979,10 @@ ETag: "8"
   },
   "roleIds": [],
   "status": "suspended",
-  "createdAt": "2026-03-02T09:36:00.000Z",
-  "updatedAt": "2026-03-02T09:37:00.000Z",
+  "createdAt": "2026-03-02T09:37:00.000Z",
+  "updatedAt": "2026-03-02T09:38:00.000Z",
   "blocked": {
-    "at": "2026-03-02T09:38:00.000Z",
+    "at": "2026-03-02T09:39:00.000Z",
     "until": "2099-01-01T00:00:00.000Z"
   },
   "version": 8
@@ -2095,8 +2106,8 @@ ETag: "5"
   },
   "roleIds": [],
   "status": "active",
-  "createdAt": "2026-03-02T09:39:00.000Z",
-  "updatedAt": "2026-03-02T09:40:00.000Z",
+  "createdAt": "2026-03-02T09:40:00.000Z",
+  "updatedAt": "2026-03-02T09:41:00.000Z",
   "version": 5
 }
 ```
@@ -2129,8 +2140,8 @@ ETag: "7"
   },
   "roleIds": [],
   "status": "active",
-  "createdAt": "2026-03-02T09:41:00.000Z",
-  "updatedAt": "2026-03-02T09:42:00.000Z",
+  "createdAt": "2026-03-02T09:42:00.000Z",
+  "updatedAt": "2026-03-02T09:43:00.000Z",
   "version": 7
 }
 ```
@@ -2163,8 +2174,8 @@ ETag: "9"
   },
   "roleIds": [],
   "status": "active",
-  "createdAt": "2026-03-02T09:43:00.000Z",
-  "updatedAt": "2026-03-02T09:44:00.000Z",
+  "createdAt": "2026-03-02T09:44:00.000Z",
+  "updatedAt": "2026-03-02T09:45:00.000Z",
   "version": 9
 }
 ```
@@ -3123,6 +3134,8 @@ Every feature the project has registered, with its default and parent. What an o
 | `items[].description` | string (≤ 1000 chars), may be absent |  |
 | `items[].defaultEnabled` | boolean |  |
 | `items[].parentKey` | string (≤ 200 chars), may be absent |  |
+| `items[].reason` | string (≤ 500 chars), may be absent | Why the kill switch (`disableEverywhere`) turned the default off, when it was given. Absent otherwise. |
+| `items[].updatedAt` | string (date-time), may be absent | When the kill switch last turned the default off. Absent if it never did. |
 | `nextCursor` | string (≤ 600 chars) or `null` | Pass it back as `cursor` for the next page; `null` on the last one. |
 
 **Errors of this operation** (besides the ones every call can meet: see [Errors](#errors))
@@ -3145,7 +3158,15 @@ const result = await uniora.features.list({ limit: 5 });
 HTTP/1.1 200 OK
 
 {
-  "items": [],
+  "items": [
+    {
+      "key": "legacy_exports",
+      "name": "Legacy exports",
+      "defaultEnabled": false,
+      "reason": "Retired on 2026-10-01; use the new export instead.",
+      "updatedAt": "2026-03-02T09:46:00.000Z"
+    }
+  ],
   "nextCursor": null
 }
 ```
@@ -3236,8 +3257,8 @@ HTTP/1.1 200 OK
       "parentId": "00000000-0000-4000-8000-000000000007",
       "metadata": {},
       "settings": {},
-      "createdAt": "2026-03-02T09:45:00.000Z",
-      "updatedAt": "2026-03-02T09:46:00.000Z",
+      "createdAt": "2026-03-02T09:47:00.000Z",
+      "updatedAt": "2026-03-02T09:48:00.000Z",
       "version": 1
     }
   ],
@@ -3321,8 +3342,8 @@ ETag: "1"
     "region": "ES"
   },
   "settings": {},
-  "createdAt": "2026-03-02T09:47:00.000Z",
-  "updatedAt": "2026-03-02T09:48:00.000Z",
+  "createdAt": "2026-03-02T09:49:00.000Z",
+  "updatedAt": "2026-03-02T09:50:00.000Z",
   "version": 1
 }
 ```
@@ -3411,9 +3432,9 @@ HTTP/1.1 200 OK
       "status": "active",
       "responsibility": "member",
       "roleIds": [],
-      "createdAt": "2026-03-02T09:49:00.000Z",
-      "updatedAt": "2026-03-02T09:50:00.000Z",
-      "joinedAt": "2026-03-02T09:51:00.000Z",
+      "createdAt": "2026-03-02T09:51:00.000Z",
+      "updatedAt": "2026-03-02T09:52:00.000Z",
+      "joinedAt": "2026-03-02T09:53:00.000Z",
       "invitedBy": {
         "provider": "main",
         "subject": "mgr"
@@ -3533,8 +3554,8 @@ Location: /v1/organizations/org_acme/teams/00000000-0000-4000-8000-000000000007
     "region": "ES"
   },
   "settings": {},
-  "createdAt": "2026-03-02T09:52:00.000Z",
-  "updatedAt": "2026-03-02T09:53:00.000Z",
+  "createdAt": "2026-03-02T09:54:00.000Z",
+  "updatedAt": "2026-03-02T09:55:00.000Z",
   "version": 1
 }
 ```
@@ -3577,8 +3598,8 @@ Location: /v1/organizations/org_acme/teams/00000000-0000-4000-8000-000000000008
   "parentId": "00000000-0000-4000-8000-000000000007",
   "metadata": {},
   "settings": {},
-  "createdAt": "2026-03-02T09:54:00.000Z",
-  "updatedAt": "2026-03-02T09:55:00.000Z",
+  "createdAt": "2026-03-02T09:56:00.000Z",
+  "updatedAt": "2026-03-02T09:57:00.000Z",
   "version": 1
 }
 ```
@@ -3615,8 +3636,8 @@ Location: /v1/organizations/org_acme/teams/00000000-0000-4000-8000-000000000010
   "status": "active",
   "metadata": {},
   "settings": {},
-  "createdAt": "2026-03-02T09:56:00.000Z",
-  "updatedAt": "2026-03-02T09:57:00.000Z",
+  "createdAt": "2026-03-02T09:58:00.000Z",
+  "updatedAt": "2026-03-02T09:59:00.000Z",
   "version": 1
 }
 ```
@@ -3730,8 +3751,8 @@ ETag: "2"
     "region": "ES"
   },
   "settings": {},
-  "createdAt": "2026-03-02T09:58:00.000Z",
-  "updatedAt": "2026-03-02T09:59:00.000Z",
+  "createdAt": "2026-03-02T10:00:00.000Z",
+  "updatedAt": "2026-03-02T10:01:00.000Z",
   "version": 2
 }
 ```
@@ -3868,10 +3889,10 @@ ETag: "2"
   "parentId": "00000000-0000-4000-8000-000000000007",
   "metadata": {},
   "settings": {},
-  "createdAt": "2026-03-02T10:00:00.000Z",
-  "updatedAt": "2026-03-02T10:01:00.000Z",
+  "createdAt": "2026-03-02T10:02:00.000Z",
+  "updatedAt": "2026-03-02T10:03:00.000Z",
   "archived": {
-    "at": "2026-03-02T10:02:00.000Z",
+    "at": "2026-03-02T10:04:00.000Z",
     "by": {
       "provider": "main",
       "subject": "mgr"
@@ -3915,10 +3936,10 @@ ETag: "4"
   "parentId": "00000000-0000-4000-8000-000000000007",
   "metadata": {},
   "settings": {},
-  "createdAt": "2026-03-02T10:03:00.000Z",
-  "updatedAt": "2026-03-02T10:04:00.000Z",
+  "createdAt": "2026-03-02T10:05:00.000Z",
+  "updatedAt": "2026-03-02T10:06:00.000Z",
   "archived": {
-    "at": "2026-03-02T10:05:00.000Z",
+    "at": "2026-03-02T10:07:00.000Z",
     "by": {
       "provider": "main",
       "subject": "mgr"
@@ -4019,8 +4040,8 @@ ETag: "3"
   "parentId": "00000000-0000-4000-8000-000000000007",
   "metadata": {},
   "settings": {},
-  "createdAt": "2026-03-02T10:06:00.000Z",
-  "updatedAt": "2026-03-02T10:07:00.000Z",
+  "createdAt": "2026-03-02T10:08:00.000Z",
+  "updatedAt": "2026-03-02T10:09:00.000Z",
   "version": 3
 }
 ```
@@ -4196,9 +4217,9 @@ ETag: "1"
   "status": "active",
   "responsibility": "member",
   "roleIds": [],
-  "createdAt": "2026-03-02T10:08:00.000Z",
-  "updatedAt": "2026-03-02T10:09:00.000Z",
-  "joinedAt": "2026-03-02T10:10:00.000Z",
+  "createdAt": "2026-03-02T10:10:00.000Z",
+  "updatedAt": "2026-03-02T10:11:00.000Z",
+  "joinedAt": "2026-03-02T10:12:00.000Z",
   "invitedBy": {
     "provider": "main",
     "subject": "mgr"
@@ -4244,8 +4265,8 @@ ETag: "1"
   "status": "pending",
   "responsibility": "member",
   "roleIds": [],
-  "createdAt": "2026-03-02T10:11:00.000Z",
-  "updatedAt": "2026-03-02T10:12:00.000Z",
+  "createdAt": "2026-03-02T10:13:00.000Z",
+  "updatedAt": "2026-03-02T10:14:00.000Z",
   "invitedBy": {
     "provider": "main",
     "subject": "mgr"
@@ -4345,15 +4366,15 @@ ETag: "2"
   "status": "removed",
   "responsibility": "member",
   "roleIds": [],
-  "createdAt": "2026-03-02T10:13:00.000Z",
-  "updatedAt": "2026-03-02T10:14:00.000Z",
-  "joinedAt": "2026-03-02T10:15:00.000Z",
+  "createdAt": "2026-03-02T10:15:00.000Z",
+  "updatedAt": "2026-03-02T10:16:00.000Z",
+  "joinedAt": "2026-03-02T10:17:00.000Z",
   "invitedBy": {
     "provider": "main",
     "subject": "mgr"
   },
   "statusChange": {
-    "at": "2026-03-02T10:16:00.000Z",
+    "at": "2026-03-02T10:18:00.000Z",
     "by": {
       "provider": "main",
       "subject": "ana"
@@ -4454,15 +4475,15 @@ ETag: "2"
   "status": "active",
   "responsibility": "member",
   "roleIds": [],
-  "createdAt": "2026-03-02T10:17:00.000Z",
-  "updatedAt": "2026-03-02T10:18:00.000Z",
-  "joinedAt": "2026-03-02T10:19:00.000Z",
+  "createdAt": "2026-03-02T10:19:00.000Z",
+  "updatedAt": "2026-03-02T10:20:00.000Z",
+  "joinedAt": "2026-03-02T10:21:00.000Z",
   "invitedBy": {
     "provider": "main",
     "subject": "mgr"
   },
   "statusChange": {
-    "at": "2026-03-02T10:20:00.000Z",
+    "at": "2026-03-02T10:22:00.000Z",
     "by": {
       "provider": "main",
       "subject": "bob"
@@ -4564,15 +4585,15 @@ ETag: "3"
   "status": "removed",
   "responsibility": "member",
   "roleIds": [],
-  "createdAt": "2026-03-02T10:21:00.000Z",
-  "updatedAt": "2026-03-02T10:22:00.000Z",
-  "joinedAt": "2026-03-02T10:23:00.000Z",
+  "createdAt": "2026-03-02T10:23:00.000Z",
+  "updatedAt": "2026-03-02T10:24:00.000Z",
+  "joinedAt": "2026-03-02T10:25:00.000Z",
   "invitedBy": {
     "provider": "main",
     "subject": "mgr"
   },
   "statusChange": {
-    "at": "2026-03-02T10:24:00.000Z",
+    "at": "2026-03-02T10:26:00.000Z",
     "by": {
       "provider": "main",
       "subject": "mgr"
@@ -4679,15 +4700,15 @@ ETag: "5"
   "status": "suspended",
   "responsibility": "manager",
   "roleIds": [],
-  "createdAt": "2026-03-02T10:25:00.000Z",
-  "updatedAt": "2026-03-02T10:26:00.000Z",
-  "joinedAt": "2026-03-02T10:27:00.000Z",
+  "createdAt": "2026-03-02T10:27:00.000Z",
+  "updatedAt": "2026-03-02T10:28:00.000Z",
+  "joinedAt": "2026-03-02T10:29:00.000Z",
   "invitedBy": {
     "provider": "main",
     "subject": "mgr"
   },
   "statusChange": {
-    "at": "2026-03-02T10:28:00.000Z",
+    "at": "2026-03-02T10:30:00.000Z",
     "by": {
       "provider": "main",
       "subject": "mgr"
@@ -4788,15 +4809,15 @@ ETag: "6"
   "status": "active",
   "responsibility": "manager",
   "roleIds": [],
-  "createdAt": "2026-03-02T10:29:00.000Z",
-  "updatedAt": "2026-03-02T10:30:00.000Z",
-  "joinedAt": "2026-03-02T10:31:00.000Z",
+  "createdAt": "2026-03-02T10:31:00.000Z",
+  "updatedAt": "2026-03-02T10:32:00.000Z",
+  "joinedAt": "2026-03-02T10:33:00.000Z",
   "invitedBy": {
     "provider": "main",
     "subject": "mgr"
   },
   "statusChange": {
-    "at": "2026-03-02T10:32:00.000Z",
+    "at": "2026-03-02T10:34:00.000Z",
     "by": {
       "provider": "main",
       "subject": "mgr"
@@ -4902,9 +4923,9 @@ ETag: "2"
   "status": "active",
   "responsibility": "manager",
   "roleIds": [],
-  "createdAt": "2026-03-02T10:33:00.000Z",
-  "updatedAt": "2026-03-02T10:34:00.000Z",
-  "joinedAt": "2026-03-02T10:35:00.000Z",
+  "createdAt": "2026-03-02T10:35:00.000Z",
+  "updatedAt": "2026-03-02T10:36:00.000Z",
+  "joinedAt": "2026-03-02T10:37:00.000Z",
   "invitedBy": {
     "provider": "main",
     "subject": "mgr"
@@ -5009,9 +5030,9 @@ ETag: "3"
   "roleIds": [
     "role_viewer"
   ],
-  "createdAt": "2026-03-02T10:36:00.000Z",
-  "updatedAt": "2026-03-02T10:37:00.000Z",
-  "joinedAt": "2026-03-02T10:38:00.000Z",
+  "createdAt": "2026-03-02T10:38:00.000Z",
+  "updatedAt": "2026-03-02T10:39:00.000Z",
+  "joinedAt": "2026-03-02T10:40:00.000Z",
   "invitedBy": {
     "provider": "main",
     "subject": "mgr"
@@ -5112,9 +5133,9 @@ ETag: "4"
   "status": "active",
   "responsibility": "manager",
   "roleIds": [],
-  "createdAt": "2026-03-02T10:39:00.000Z",
-  "updatedAt": "2026-03-02T10:40:00.000Z",
-  "joinedAt": "2026-03-02T10:41:00.000Z",
+  "createdAt": "2026-03-02T10:41:00.000Z",
+  "updatedAt": "2026-03-02T10:42:00.000Z",
+  "joinedAt": "2026-03-02T10:43:00.000Z",
   "invitedBy": {
     "provider": "main",
     "subject": "mgr"
@@ -5228,9 +5249,9 @@ ETag: "1"
   "status": "active",
   "responsibility": "member",
   "roleIds": [],
-  "createdAt": "2026-03-02T10:42:00.000Z",
-  "updatedAt": "2026-03-02T10:43:00.000Z",
-  "joinedAt": "2026-03-02T10:44:00.000Z",
+  "createdAt": "2026-03-02T10:44:00.000Z",
+  "updatedAt": "2026-03-02T10:45:00.000Z",
+  "joinedAt": "2026-03-02T10:46:00.000Z",
   "invitedBy": {
     "provider": "main",
     "subject": "mgr"
@@ -5356,12 +5377,12 @@ HTTP/1.1 200 OK
         "kind": "access"
       },
       "definitionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
-      "createdAt": "2026-03-02T10:45:00.000Z",
+      "createdAt": "2026-03-02T10:47:00.000Z",
       "createdBy": {
         "provider": "main",
         "subject": "mgr"
       },
-      "updatedAt": "2026-03-02T10:46:00.000Z",
+      "updatedAt": "2026-03-02T10:48:00.000Z",
       "version": 1
     }
   ],
@@ -5479,12 +5500,12 @@ ETag: "1"
     "kind": "access"
   },
   "definitionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
-  "createdAt": "2026-03-02T10:47:00.000Z",
+  "createdAt": "2026-03-02T10:49:00.000Z",
   "createdBy": {
     "provider": "main",
     "subject": "mgr"
   },
-  "updatedAt": "2026-03-02T10:48:00.000Z",
+  "updatedAt": "2026-03-02T10:50:00.000Z",
   "version": 1
 }
 ```
@@ -5584,7 +5605,7 @@ HTTP/1.1 200 OK
         "kind": "access"
       },
       "definitionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
-      "createdAt": "2026-03-02T10:49:00.000Z",
+      "createdAt": "2026-03-02T10:51:00.000Z",
       "createdBy": {
         "provider": "main",
         "subject": "mgr"
@@ -5747,12 +5768,12 @@ Location: /v1/organizations/org_acme/policies/00000000-0000-4000-8000-0000000000
     "kind": "access"
   },
   "definitionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
-  "createdAt": "2026-03-02T10:50:00.000Z",
+  "createdAt": "2026-03-02T10:52:00.000Z",
   "createdBy": {
     "provider": "main",
     "subject": "mgr"
   },
-  "updatedAt": "2026-03-02T10:51:00.000Z",
+  "updatedAt": "2026-03-02T10:53:00.000Z",
   "version": 1
 }
 ```
@@ -5836,12 +5857,12 @@ Location: /v1/organizations/org_acme/policies/00000000-0000-4000-8000-0000000000
     "kind": "access"
   },
   "definitionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2",
-  "createdAt": "2026-03-02T10:52:00.000Z",
+  "createdAt": "2026-03-02T10:54:00.000Z",
   "createdBy": {
     "provider": "main",
     "subject": "mgr"
   },
-  "updatedAt": "2026-03-02T10:53:00.000Z",
+  "updatedAt": "2026-03-02T10:55:00.000Z",
   "version": 1
 }
 ```
@@ -5972,12 +5993,12 @@ ETag: "2"
     "kind": "access"
   },
   "definitionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
-  "createdAt": "2026-03-02T10:54:00.000Z",
+  "createdAt": "2026-03-02T10:56:00.000Z",
   "createdBy": {
     "provider": "main",
     "subject": "mgr"
   },
-  "updatedAt": "2026-03-02T10:55:00.000Z",
+  "updatedAt": "2026-03-02T10:57:00.000Z",
   "version": 2
 }
 ```
@@ -6103,21 +6124,21 @@ ETag: "3"
     "kind": "access"
   },
   "definitionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
-  "createdAt": "2026-03-02T10:56:00.000Z",
+  "createdAt": "2026-03-02T10:58:00.000Z",
   "createdBy": {
     "provider": "main",
     "subject": "mgr"
   },
-  "updatedAt": "2026-03-02T10:57:00.000Z",
+  "updatedAt": "2026-03-02T10:59:00.000Z",
   "statusChange": {
-    "at": "2026-03-02T10:58:00.000Z",
+    "at": "2026-03-02T11:00:00.000Z",
     "by": {
       "provider": "main",
       "subject": "mgr"
     },
     "reason": "audit starts"
   },
-  "activatedAt": "2026-03-02T10:59:00.000Z",
+  "activatedAt": "2026-03-02T11:01:00.000Z",
   "version": 3
 }
 ```
@@ -6240,20 +6261,20 @@ ETag: "4"
     "kind": "access"
   },
   "definitionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
-  "createdAt": "2026-03-02T11:00:00.000Z",
+  "createdAt": "2026-03-02T11:02:00.000Z",
   "createdBy": {
     "provider": "main",
     "subject": "mgr"
   },
-  "updatedAt": "2026-03-02T11:01:00.000Z",
+  "updatedAt": "2026-03-02T11:03:00.000Z",
   "statusChange": {
-    "at": "2026-03-02T11:02:00.000Z",
+    "at": "2026-03-02T11:04:00.000Z",
     "by": {
       "provider": "main",
       "subject": "mgr"
     }
   },
-  "activatedAt": "2026-03-02T11:03:00.000Z",
+  "activatedAt": "2026-03-02T11:05:00.000Z",
   "version": 4
 }
 ```
@@ -6379,21 +6400,21 @@ ETag: "5"
     "kind": "access"
   },
   "definitionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
-  "createdAt": "2026-03-02T11:04:00.000Z",
+  "createdAt": "2026-03-02T11:06:00.000Z",
   "createdBy": {
     "provider": "main",
     "subject": "mgr"
   },
-  "updatedAt": "2026-03-02T11:05:00.000Z",
+  "updatedAt": "2026-03-02T11:07:00.000Z",
   "statusChange": {
-    "at": "2026-03-02T11:06:00.000Z",
+    "at": "2026-03-02T11:08:00.000Z",
     "by": {
       "provider": "main",
       "subject": "mgr"
     },
     "reason": "audit over"
   },
-  "activatedAt": "2026-03-02T11:07:00.000Z",
+  "activatedAt": "2026-03-02T11:09:00.000Z",
   "version": 5
 }
 ```
@@ -6755,7 +6776,7 @@ HTTP/1.1 200 OK
       "reason": "policy_denied"
     }
   ],
-  "evaluatedAt": "2026-03-02T11:08:00.000Z"
+  "evaluatedAt": "2026-03-02T11:10:00.000Z"
 }
 ```
 
@@ -6887,8 +6908,8 @@ HTTP/1.1 201 Created
       "subject": "mgr"
     },
     "status": "pending",
-    "createdAt": "2026-03-02T11:09:00.000Z",
-    "expiresAt": "2026-03-02T11:10:00.000Z",
+    "createdAt": "2026-03-02T11:11:00.000Z",
+    "expiresAt": "2026-03-02T11:12:00.000Z",
     "delivery": {
       "status": "pending",
       "attempts": 0,
@@ -6946,8 +6967,8 @@ HTTP/1.1 201 Created
       "subject": "mgr"
     },
     "status": "pending",
-    "createdAt": "2026-03-02T11:11:00.000Z",
-    "expiresAt": "2026-03-02T11:12:00.000Z",
+    "createdAt": "2026-03-02T11:13:00.000Z",
+    "expiresAt": "2026-03-02T11:14:00.000Z",
     "delivery": {
       "status": "pending",
       "attempts": 0,
@@ -7072,8 +7093,8 @@ HTTP/1.1 200 OK
       "subject": "mgr"
     },
     "status": "pending",
-    "createdAt": "2026-03-02T11:13:00.000Z",
-    "expiresAt": "2026-03-02T11:14:00.000Z",
+    "createdAt": "2026-03-02T11:15:00.000Z",
+    "expiresAt": "2026-03-02T11:16:00.000Z",
     "delivery": {
       "status": "pending",
       "attempts": 0,
@@ -7184,9 +7205,9 @@ HTTP/1.1 200 OK
     "subject": "mgr"
   },
   "status": "revoked",
-  "createdAt": "2026-03-02T11:15:00.000Z",
-  "expiresAt": "2026-03-02T11:16:00.000Z",
-  "revokedAt": "2026-03-02T11:17:00.000Z",
+  "createdAt": "2026-03-02T11:17:00.000Z",
+  "expiresAt": "2026-03-02T11:18:00.000Z",
+  "revokedAt": "2026-03-02T11:19:00.000Z",
   "delivery": {
     "status": "pending",
     "attempts": 0,
@@ -7254,7 +7275,7 @@ HTTP/1.1 200 OK
     "Viewer"
   ],
   "teamNames": [],
-  "expiresAt": "2026-03-02T11:18:00.000Z"
+  "expiresAt": "2026-03-02T11:20:00.000Z"
 }
 ```
 
@@ -7364,9 +7385,9 @@ HTTP/1.1 200 OK
       "subject": "mgr"
     },
     "status": "accepted",
-    "createdAt": "2026-03-02T11:19:00.000Z",
-    "expiresAt": "2026-03-02T11:20:00.000Z",
-    "acceptedAt": "2026-03-02T11:21:00.000Z",
+    "createdAt": "2026-03-02T11:21:00.000Z",
+    "expiresAt": "2026-03-02T11:22:00.000Z",
+    "acceptedAt": "2026-03-02T11:23:00.000Z",
     "acceptedBy": {
       "provider": "main",
       "subject": "newbie-1"
@@ -7463,8 +7484,8 @@ HTTP/1.1 200 OK
         "platform.*"
       ],
       "isSystem": true,
-      "createdAt": "2026-03-02T11:22:00.000Z",
-      "updatedAt": "2026-03-02T11:23:00.000Z",
+      "createdAt": "2026-03-02T11:24:00.000Z",
+      "updatedAt": "2026-03-02T11:25:00.000Z",
       "version": 1
     }
   ],
@@ -7602,8 +7623,8 @@ ETag: "1"
     "platform.support.grant"
   ],
   "isSystem": false,
-  "createdAt": "2026-03-02T11:24:00.000Z",
-  "updatedAt": "2026-03-02T11:25:00.000Z",
+  "createdAt": "2026-03-02T11:26:00.000Z",
+  "updatedAt": "2026-03-02T11:27:00.000Z",
   "version": 1
 }
 ```
@@ -7699,8 +7720,8 @@ ETag: "2"
     "platform.support.grant"
   ],
   "isSystem": false,
-  "createdAt": "2026-03-02T11:26:00.000Z",
-  "updatedAt": "2026-03-02T11:27:00.000Z",
+  "createdAt": "2026-03-02T11:28:00.000Z",
+  "updatedAt": "2026-03-02T11:29:00.000Z",
   "version": 2
 }
 ```
@@ -7848,8 +7869,8 @@ HTTP/1.1 200 OK
       "roleIds": [
         "00000000-0000-4000-8000-000000000017"
       ],
-      "createdAt": "2026-03-02T11:28:00.000Z",
-      "updatedAt": "2026-03-02T11:29:00.000Z",
+      "createdAt": "2026-03-02T11:30:00.000Z",
+      "updatedAt": "2026-03-02T11:31:00.000Z",
       "addedBy": {
         "provider": "staff",
         "subject": "root"
@@ -7955,8 +7976,8 @@ ETag: "1"
   "roleIds": [
     "00000000-0000-4000-8000-000000000018"
   ],
-  "createdAt": "2026-03-02T11:30:00.000Z",
-  "updatedAt": "2026-03-02T11:31:00.000Z",
+  "createdAt": "2026-03-02T11:32:00.000Z",
+  "updatedAt": "2026-03-02T11:33:00.000Z",
   "addedBy": {
     "provider": "staff",
     "subject": "root"
@@ -8057,14 +8078,14 @@ ETag: "2"
   "roleIds": [
     "00000000-0000-4000-8000-000000000018"
   ],
-  "createdAt": "2026-03-02T11:32:00.000Z",
-  "updatedAt": "2026-03-02T11:33:00.000Z",
+  "createdAt": "2026-03-02T11:34:00.000Z",
+  "updatedAt": "2026-03-02T11:35:00.000Z",
   "addedBy": {
     "provider": "staff",
     "subject": "root"
   },
   "statusChange": {
-    "at": "2026-03-02T11:34:00.000Z",
+    "at": "2026-03-02T11:36:00.000Z",
     "by": {
       "provider": "staff",
       "subject": "root"
@@ -8189,14 +8210,14 @@ ETag: "3"
   "roleIds": [
     "00000000-0000-4000-8000-000000000018"
   ],
-  "createdAt": "2026-03-02T11:35:00.000Z",
-  "updatedAt": "2026-03-02T11:36:00.000Z",
+  "createdAt": "2026-03-02T11:37:00.000Z",
+  "updatedAt": "2026-03-02T11:38:00.000Z",
   "addedBy": {
     "provider": "staff",
     "subject": "root"
   },
   "statusChange": {
-    "at": "2026-03-02T11:37:00.000Z",
+    "at": "2026-03-02T11:39:00.000Z",
     "by": {
       "provider": "staff",
       "subject": "root"
@@ -8356,14 +8377,14 @@ ETag: "5"
   "roleIds": [
     "00000000-0000-4000-8000-000000000018"
   ],
-  "createdAt": "2026-03-02T11:38:00.000Z",
-  "updatedAt": "2026-03-02T11:39:00.000Z",
+  "createdAt": "2026-03-02T11:40:00.000Z",
+  "updatedAt": "2026-03-02T11:41:00.000Z",
   "addedBy": {
     "provider": "staff",
     "subject": "root"
   },
   "statusChange": {
-    "at": "2026-03-02T11:40:00.000Z",
+    "at": "2026-03-02T11:42:00.000Z",
     "by": {
       "provider": "staff",
       "subject": "root"
@@ -8462,14 +8483,14 @@ ETag: "4"
   },
   "status": "active",
   "roleIds": [],
-  "createdAt": "2026-03-02T11:41:00.000Z",
-  "updatedAt": "2026-03-02T11:42:00.000Z",
+  "createdAt": "2026-03-02T11:43:00.000Z",
+  "updatedAt": "2026-03-02T11:44:00.000Z",
   "addedBy": {
     "provider": "staff",
     "subject": "root"
   },
   "statusChange": {
-    "at": "2026-03-02T11:43:00.000Z",
+    "at": "2026-03-02T11:45:00.000Z",
     "by": {
       "provider": "staff",
       "subject": "root"
@@ -8548,7 +8569,7 @@ HTTP/1.1 200 OK
       "slug": "acme",
       "name": "Acme",
       "status": "active",
-      "createdAt": "2026-03-02T11:44:00.000Z",
+      "createdAt": "2026-03-02T11:46:00.000Z",
       "version": 1
     }
   ],
@@ -8631,7 +8652,7 @@ HTTP/1.1 200 OK
   "slug": "acme",
   "name": "Acme",
   "status": "suspended",
-  "createdAt": "2026-03-02T11:45:00.000Z",
+  "createdAt": "2026-03-02T11:47:00.000Z",
   "version": 2
 }
 ```
@@ -8663,7 +8684,7 @@ HTTP/1.1 200 OK
   "slug": "acme",
   "name": "Acme",
   "status": "active",
-  "createdAt": "2026-03-02T11:46:00.000Z",
+  "createdAt": "2026-03-02T11:48:00.000Z",
   "version": 3
 }
 ```
@@ -8739,7 +8760,7 @@ curl -X POST "https://uniora.example.com/v1/platform/support-grants" \
       "reports.read"
     ],
     "reason": "Ticket 4821: reports do not load",
-    "expiresAt": "2026-03-02T11:47:00.000Z"
+    "expiresAt": "2026-03-02T11:49:00.000Z"
   }'
 ```
 
@@ -8749,7 +8770,7 @@ const result = await uniora.platformSupport.grant(
     organizationId: "org_acme",
     permissions: ["reports.read"],
     reason: "Ticket 4821: reports do not load",
-    expiresAt: "2026-03-02T11:48:00.000Z",
+    expiresAt: "2026-03-02T11:50:00.000Z",
   },
   { operatorToken: operatorToken },
 );
@@ -8773,8 +8794,8 @@ HTTP/1.1 201 Created
   "permissions": [
     "reports.read"
   ],
-  "createdAt": "2026-03-02T11:49:00.000Z",
-  "expiresAt": "2026-03-02T11:50:00.000Z"
+  "createdAt": "2026-03-02T11:51:00.000Z",
+  "expiresAt": "2026-03-02T11:52:00.000Z"
 }
 ```
 
@@ -8862,9 +8883,9 @@ HTTP/1.1 200 OK
   "permissions": [
     "reports.read"
   ],
-  "createdAt": "2026-03-02T11:51:00.000Z",
-  "expiresAt": "2026-03-02T11:52:00.000Z",
-  "revokedAt": "2026-03-02T11:53:00.000Z",
+  "createdAt": "2026-03-02T11:53:00.000Z",
+  "expiresAt": "2026-03-02T11:54:00.000Z",
+  "revokedAt": "2026-03-02T11:55:00.000Z",
   "revokedBy": {
     "provider": "staff",
     "subject": "root"
@@ -8954,7 +8975,7 @@ HTTP/1.1 200 OK
           "actorMode": "asserted"
         }
       },
-      "createdAt": "2026-03-02T11:54:00.000Z"
+      "createdAt": "2026-03-02T11:56:00.000Z"
     },
     {
       "id": "00000000-0000-4000-8000-000000000023",
@@ -8977,7 +8998,7 @@ HTTP/1.1 200 OK
           "actorMode": "asserted"
         }
       },
-      "createdAt": "2026-03-02T11:55:00.000Z"
+      "createdAt": "2026-03-02T11:57:00.000Z"
     },
     {
       "id": "00000000-0000-4000-8000-000000000024",
@@ -9000,7 +9021,7 @@ HTTP/1.1 200 OK
           "actorMode": "asserted"
         }
       },
-      "createdAt": "2026-03-02T11:56:00.000Z"
+      "createdAt": "2026-03-02T11:58:00.000Z"
     },
     {
       "id": "00000000-0000-4000-8000-000000000025",
@@ -9026,7 +9047,7 @@ HTTP/1.1 200 OK
           "actorMode": "asserted"
         }
       },
-      "createdAt": "2026-03-02T11:57:00.000Z"
+      "createdAt": "2026-03-02T11:59:00.000Z"
     }
   ],
   "nextCursor": "EXAMPLE_OPAQUE_CURSOR"

@@ -247,6 +247,25 @@ const { permissions, features } = await uniora.decisions.snapshot({ identity: { 
 `context` and `session` are things only **your** server can know. UNIORA cannot verify them, so never copy them from what the end user
 sent: build them from your verified session. See [policies](policies.md) for what they are for.
 
+### Why a feature is off for an organization
+
+`uniora.organizations.features(...)` (`GET /v1/organizations/:organizationId/features`) returns each feature as a check sees it. For an
+organization without an override whose feature was switched off for everyone (the kill switch), the item carries the operator's reason:
+
+```ts
+const { items } = await uniora.organizations.features({ organizationId });
+for (const feature of items) {
+  if (!feature.enabled && feature.reason === "default") {
+    // `defaultReason` / `defaultUpdatedAt` are optional: absent means no reason was given.
+    showUnavailable(feature.defaultReason ?? "This feature is not available.");
+  }
+}
+```
+
+The catalog (`GET /v1/features`) also lists `reason` and `updatedAt` on each killed feature. All of these fields are optional, so a client
+from before they existed keeps working. Needs the `organizations:read` scope, as before. The server stores the reason when an operator
+pulls the kill switch from the library (`storage.features.disableEverywhere(key, { reason })`).
+
 ### Changes on behalf of an end user
 
 Changing who holds which power is a **delegated** call: the services apply the [anti-escalation rules](access-admin.md) **to the end user**

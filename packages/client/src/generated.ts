@@ -371,6 +371,10 @@ export interface Operations {
         description?: string;
         defaultEnabled: boolean;
         parentKey?: string;
+        /** Why the kill switch (`disableEverywhere`) turned the default off, when it was given. Absent otherwise. */
+        reason?: string;
+        /** When the kill switch last turned the default off. Absent if it never did. */
+        updatedAt?: string;
       }[];
       nextCursor: string | null;
     };
@@ -621,6 +625,10 @@ export interface Operations {
         defaultEnabled: boolean;
         parentKey?: string;
         blockedBy?: string;
+        /** For an organization without an override: why the feature was turned off everywhere (the kill switch's reason), when it was given. */
+        defaultReason?: string;
+        /** When the kill switch turned the default off, alongside `defaultReason`. */
+        defaultUpdatedAt?: string;
       })[];
       nextCursor: string | null;
     };

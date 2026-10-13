@@ -1053,6 +1053,16 @@
                           "parentKey": {
                             "type": "string",
                             "maxLength": 200
+                          },
+                          "reason": {
+                            "type": "string",
+                            "maxLength": 500,
+                            "description": "Why the kill switch (`disableEverywhere`) turned the default off, when it was given. Absent otherwise."
+                          },
+                          "updatedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "When the kill switch last turned the default off. Absent if it never did."
                           }
                         },
                         "required": [
@@ -2617,6 +2627,16 @@
                           "blockedBy": {
                             "type": "string",
                             "maxLength": 200
+                          },
+                          "defaultReason": {
+                            "type": "string",
+                            "maxLength": 500,
+                            "description": "For an organization without an override: why the feature was turned off everywhere (the kill switch's reason), when it was given."
+                          },
+                          "defaultUpdatedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "When the kill switch turned the default off, alongside `defaultReason`."
                           }
                         },
                         "required": [

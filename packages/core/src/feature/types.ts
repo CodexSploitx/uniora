@@ -46,6 +46,14 @@ export interface FeatureDefinition {
    * too (turning `workspace` off turns `workspace_*` off). Absent for a root feature.
    */
   parentKey?: string;
+  /**
+   * Why the feature's default was switched off by `disableEverywhere` (the kill switch), when the caller gave a reason.
+   * Lets every organization without an override be told why the feature is unavailable (`EffectiveFeature.defaultReason`)
+   * without reading the audit log. Re-registering with `defaultEnabled: false` keeps it; `defaultEnabled: true` clears it.
+   */
+  reason?: string;
+  /** When `disableEverywhere` last switched the default off. Absent if it never did (or after re-registering with `defaultEnabled: true`). */
+  updatedAt?: Date;
 }
 
 /** Who changed a feature and why — stored on the override and surfaced in `Feature` / `listEffective`. */
@@ -72,6 +80,12 @@ export interface EffectiveFeature {
   readonly parentKey?: string;
   /** The nearest ancestor that is switched off, when `reason` is `parent_disabled`. */
   readonly blockedBy?: string;
+  /**
+   * For an organization WITHOUT an override whose feature is off because `disableEverywhere` switched the default off:
+   * the reason given then (`FeatureDefinition.reason`) and when (`FeatureDefinition.updatedAt`). Absent otherwise.
+   */
+  readonly defaultReason?: string;
+  readonly defaultUpdatedAt?: Date;
   /** The override that decided it, if there is one. */
   readonly override?: { enabled: boolean; updatedAt?: Date; updatedBy?: Identity; reason?: string; version: number };
 }

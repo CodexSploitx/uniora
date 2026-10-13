@@ -142,11 +142,42 @@ Además:
 - Los ejemplos que escribiste a mano en guías y READMEs funcionan (compilan o se ejecutaron), y los enlaces entre guías no están rotos.
 - Nunca saltes, desactives o pongas en cuarentena un test para que pase.
 
+### Prueba real de la API, como la usaría una persona (obligatoria)
+
+Los tests de ruta no bastan: hay que llamar a la API **desde fuera**, con un servidor de verdad, como la usa quien la consume. Si el cambio toca la API HTTP (rutas, esquemas, scopes, errores, eventos, o datos que salen por ella), antes de dar el trabajo por terminado:
+
+1. **Levanta un servidor real con la CLI**, sobre una base nueva (Postgres con `TEST_DATABASE_URL` si hay; si no, SQLite). Así también se prueban las migraciones nuevas sobre una base vacía:
+   ```bash
+   uniora migrate
+   uniora server clients create --name backend --scopes <los scopes de la ruta> --orgs '*'
+   uniora server keys create --client backend      # la clave se muestra una sola vez
+   uniora server start --default-provider main
+   ```
+   Siembra los datos como lo haría un backend (con `@uniora/core` y el adaptador), no insertando filas a mano.
+2. **Pruébala con `curl`** y con un **script de Python** (solo librería estándar, `python3 -I`), con `Authorization: Bearer <clave>`, sin importar nada de nuestro código. El script comprueba con `PASS`/`FAIL` y sale con código distinto de cero si algo falla.
+3. **Cubre siempre**: el caso feliz con el cuerpo exacto; el campo nuevo presente **y** ausente; la paginación (`limit`, `cursor`) si es una lista; una clave **sin el scope** (403); una organización que no existe o a la que el cliente no llega (404); sin clave o clave mala (401); una entrada inválida (4xx, nunca 500); y, si es una escritura, que repetirla o cambiar de organización no rompe nada ni filtra datos de otra.
+4. **Compara con lo documentado**: los campos que salen son los del OpenAPI y los del ejemplo de la guía; lo que la guía dice que hay que hacer (por ejemplo "si falta el campo, usa tu mensaje genérico") funciona de verdad con la respuesta real.
+5. **Para el servidor** al terminar y no dejes la base ni las claves de prueba en el repositorio (trabaja en el directorio de scratchpad, nunca commitees claves).
+6. En la descripción del PR, di **qué probaste y qué respondió** (los `curl`/script y el resultado), y si algo no se pudo probar (por ejemplo sin Postgres real), dilo tal cual.
+
+Un fallo en esta prueba es un fallo del cambio: se corrige y se vuelve a pasar el script completo. No se da por buena una API que solo pasó sus tests unitarios.
+
 ## Paso 8 — Cierre
 
 1. **CHANGELOG.md**: entrada bajo "Unreleased" que mencione explícitamente el efecto en la API HTTP (ruta nueva, campo nuevo, scope nuevo, error nuevo) y en la embebida, y las migraciones nuevas con su número.
 2. **Descripción del PR**: una sección "API" que liste qué rutas, campos, scopes, errores y eventos cambian, o la razón escrita de que no cambia ninguno, y una sección "Documentación" que liste qué guías y READMEs se escribieron o actualizaron.
-3. **Versión**: el release es en bloque (los 15 paquetes comparten versión) y se publica con un tag `vX.Y.Z`. Una API HTTP que cambia exige un release; `@uniora/server` y `@uniora/client` deben salir juntos. Antes de pedir el tag corre el chequeo de empaquetado (`pnpm -r build && pnpm check:packages`).
+3. **Versión**: **un cambio no sube la versión; un release sí.** Mientras trabajas, solo escribes la entrada bajo `## Unreleased` en el CHANGELOG y **no tocas ningún `package.json`**. La versión se sube una sola vez, al cortar un release (cuando la persona lo pide), y el número sale de lo que haya acumulado `Unreleased` siguiendo [SemVer](https://semver.org) (`MAYOR.MENOR.PARCHE`):
+
+   | Qué contiene lo acumulado | Sube | Ejemplo |
+   | --- | --- | --- |
+   | Solo **correcciones** de errores, sin API ni datos nuevos (el comportamiento documentado no cambia) | PARCHE | `0.12.0` → `0.12.1` |
+   | **Funciones nuevas compatibles**: campo, ruta, scope, error, evento, export o migración nuevos, y todo lo opcional | MENOR | `0.12.1` → `0.13.0` (y el parche vuelve a `0`) |
+   | **Cambio incompatible**: quitar o renombrar algo, hacer obligatorio un campo, cambiar un significado | MAYOR (mientras sea `0.x`: MENOR, anunciado como incompatible en el CHANGELOG) | `1.4.2` → `2.0.0` |
+
+   - Si hay de varias clases, manda la más alta. Una corrección que además añade un campo a la API es MENOR, no PARCHE.
+   - Un PARCHE nunca añade ni quita superficie pública: si el cambio añade un campo o una migración, no es un parche aunque "arregle algo".
+   - El release es en bloque (los 15 paquetes comparten versión) y se publica con un tag `vX.Y.Z` sobre un commit que ya está en `main`. `@uniora/server` y `@uniora/client` salen juntos. Antes de pedir el tag corre `pnpm -r build && pnpm check:packages` y `node scripts/check-release.mjs vX.Y.Z`.
+   - Nunca empujes el tag sin que la persona lo pida: publica en npm y una versión publicada no se puede reutilizar.
 4. Dile a la persona **qué tiene que actualizar en sus proyectos** (es el mismo texto de "cómo adoptarlo" de la documentación) que usan UNIORA (paquetes, `uniora migrate`, claves con el scope nuevo) y qué comportamiento cambia para quien use el servidor externo.
 
 ## Lista de comprobación final (si falta una, no está terminado)
@@ -161,6 +192,7 @@ Además:
 - [ ] La API embebida está exportada y documentada; Postgres, SQLite y memoria pasan la misma suite.
 - [ ] La documentación de uso está escrita o actualizada: para qué sirve, requisitos, ejemplo mínimo por cada forma de uso, reglas que sorprenden, errores y cómo adoptarlo, en la guía del área, `guides/server.md`, los READMEs de los paquetes afectados y, si es destacado, `README.md` y `README.es.md`.
 - [ ] Los ejemplos escritos a mano están comprobados (compilados o ejecutados) y cada campo, ruta y scope nuevo tiene `description` en el esquema.
+- [ ] Probé la API con un servidor real levantado por la CLI, con `curl` y un script de Python (feliz, campo presente y ausente, paginación, 401/403/404, entrada inválida), y el resultado está en el PR.
 - [ ] Nada se rompe para un cliente con la versión anterior (o está anunciado como incompatible).
 - [ ] `build`, `typecheck`, `test` y `lint` en verde; no hay tests saltados.
 - [ ] CHANGELOG y descripción del PR mencionan el efecto en las APIs y la documentación que se tocó.
