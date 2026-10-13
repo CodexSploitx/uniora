@@ -82,6 +82,9 @@ export async function seed(storage: UnioraStorage): Promise<void> {
   for (const key of ["reports.read", "vehicles.delete", "members.roles.manage", "members.invite", "members.block", "members.remove", "roles.manage", "teams.manage", "teams.members.add", "teams.members.remove", "teams.members.manage", "policies.read", "policies.manage", "policies.activate"]) {
     await storage.permissions.register({ key });
   }
+  // A feature the operator switched off for everyone, with the reason organizations are told.
+  await storage.features.register({ key: "legacy_exports", name: "Legacy exports", defaultEnabled: true });
+  await storage.features.disableEverywhere("legacy_exports", { reason: "Retired on 2026-10-01; use the new export instead." });
   await createOrganizationWithOwner(storage, {
     organizationId: "org_acme",
     organizationName: "Acme",

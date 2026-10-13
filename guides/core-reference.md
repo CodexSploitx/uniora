@@ -221,7 +221,7 @@ const effective = await storage.features.listEffective(orgId); // [{ key, enable
 | `register({ key?, name, description?, defaultEnabled?, parentKey? })` | **Full upsert**; the key is derived from the name when omitted. |
 | `enable` / `disable(organizationId, key, meta?)` | An explicit override. Unknown key: `feature_unknown`. `meta` is `{ actor?, reason?, expectedVersion? }`; `expectedVersion` is the override's `version` (0 = no override yet) and a stale one fails with `feature_version_conflict`. |
 | `setMany(organizationId, { key: boolean }, meta?)` | Atomic: all or nothing. |
-| `disableEverywhere(key, meta?)` | Kill switch: every override off, default off. |
+| `disableEverywhere(key, meta?)` | Kill switch: every override off, default off. `meta.reason` is also kept on the feature (`FeatureDefinition.reason` and `updatedAt`) and `listEffective` returns it as `defaultReason` / `defaultUpdatedAt` for the organizations without an override. |
 | `isEnabled(organizationId, key)` | Effective answer. Unknown key is `false`. |
 | `listEffective(organizationId, { keys? })` / `listEffectiveMany(organizationIds, { keys? })` | With the reason; many accepts up to 500 organizations. |
 | `enabledKeys(organizationId, keys)` | Which of the keys are on. |
@@ -229,6 +229,18 @@ const effective = await storage.features.listEffective(orgId); // [{ key, enable
 | `listCatalog()` / `search({ query?, enabledIn?, limit?, after? })` / `count(...)` | |
 | `summarizeUsage(keys, sampleSize)` / `countEnabledByOrganization(ids)` | Admin-screen aggregates. |
 | `unregister(key)` | Refused while enabled somewhere (`feature_in_use`) or a parent (`feature_has_children`). |
+
+```ts
+await storage.features.disableEverywhere("legacy_exports", { actor, reason: "Retired; use the new export." });
+
+const feature = (await storage.features.listEffective(orgId)).find((f) => f.key === "legacy_exports");
+if (feature && !feature.enabled && feature.reason === "default") {
+  showUnavailable(feature.defaultReason ?? "This feature is not available."); // why, and `feature.defaultUpdatedAt` for when
+}
+```
+
+Re-registering a feature keeps the kill switch's reason while `defaultEnabled` stays off and clears it when `defaultEnabled` is `true`.
+This needs migration Postgres `0047` / SQLite `0032` (`uniora migrate`).
 
 Key: lowercase alphanumerics separated by underscores, up to 63 characters.
 

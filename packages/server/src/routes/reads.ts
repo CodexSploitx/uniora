@@ -47,6 +47,8 @@ const FeatureOut = s.object({
   description: s.optional(s.string({ max: 1000 })),
   defaultEnabled: s.bool(),
   parentKey: s.optional(s.string({ max: 200 })),
+  reason: s.optional(s.string({ max: 500, description: "Why the kill switch (`disableEverywhere`) turned the default off, when it was given. Absent otherwise." })),
+  updatedAt: s.optional(s.date({ description: "When the kill switch last turned the default off. Absent if it never did." })),
 });
 
 const EffectiveFeatureOut = s.object({
@@ -56,6 +58,8 @@ const EffectiveFeatureOut = s.object({
   defaultEnabled: s.bool(),
   parentKey: s.optional(s.string({ max: 200 })),
   blockedBy: s.optional(s.string({ max: 200 })),
+  defaultReason: s.optional(s.string({ max: 500, description: "For an organization without an override: why the feature was turned off everywhere (the kill switch's reason), when it was given." })),
+  defaultUpdatedAt: s.optional(s.date({ description: "When the kill switch turned the default off, alongside `defaultReason`." })),
 });
 
 const AuditEntryOut = s.object({

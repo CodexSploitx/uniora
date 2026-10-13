@@ -79,6 +79,17 @@ Revisa el diff generado: debe contener **exactamente** lo que querías cambiar y
 - **Studio** (`apps/studio`): si muestra o edita esos datos, actualízalo; el texto visible se traduce (clave en inglés y su par en español).
 - **CLI y servidor**: si hay opciones o configuración nuevas, `guides/cli-and-studio.md` y `guides/server.md`.
 
+### Documentación para quien la consume (obligatoria, no solo la generada)
+
+`server-api.md` y `openapi.json` dicen **qué** devuelve la API; no explican **cómo usarla bien**. Cada vez que cambia una API, actualiza también las guías escritas a mano para que una persona que no ve nuestro código sepa consumirla correctamente:
+
+- **Qué hace y cuándo usarlo**: explica el caso de uso, no solo el campo. Por ejemplo: "si `defaultReason` viene, muéstralo; si falta, no se dio motivo, usa tu mensaje genérico".
+- **Un ejemplo que se pueda copiar**, en `curl` o en el cliente `@uniora/client`, con la respuesta real (sale de lo que el servidor devuelve de verdad, no inventada).
+- **Casos límite y errores**: qué pasa si el campo falta, si la organización tiene su propio valor, qué error devuelve y qué hacer.
+- **Compatibilidad**: si es opcional, dilo; cómo se comporta un cliente anterior; qué migración o versión necesita (`uniora migrate`).
+- **Dónde**: la guía del área (`server.md` para la forma externa; `concepts.md`, `core-reference.md` y la guía propia del área para la embebida). Si el área no tiene guía, créala y enlázala desde `guides/README.md`.
+- Un cambio de API **sin** su documentación para el consumidor no está terminado, igual que uno sin regenerar el OpenAPI.
+
 ## Paso 5 — Compatibilidad (los clientes externos no se actualizan a la vez)
 
 - **Añadir es seguro; quitar o cambiar no.** Campo nuevo en una respuesta: opcional. Campo nuevo en una petición: opcional, con un valor por defecto que conserve el comportamiento anterior. Ruta nueva: sin tocar las existentes.
@@ -98,8 +109,27 @@ node scripts/check-release.mjs     # coherencia de versiones y metadatos
 Además:
 
 - Corre `pnpm --filter @uniora/server test` **sin** `UPDATE_DOCS` y comprueba que los tres archivos generados no cambian.
-- Si hay una ruta nueva, llámala de verdad con un servidor levantado (o con los tests de ruta, que usan uno real) y comprueba la respuesta y el error de un scope ausente.
 - Nunca saltes, desactives o pongas en cuarentena un test para que pase.
+
+### Prueba real de la API, como la usaría una persona (obligatoria)
+
+Los tests de ruta no bastan: hay que llamar a la API **desde fuera**, con un servidor de verdad, como la usa quien la consume. Si el cambio toca la API HTTP (rutas, esquemas, scopes, errores, eventos, o datos que salen por ella), antes de dar el trabajo por terminado:
+
+1. **Levanta un servidor real con la CLI**, sobre una base nueva (Postgres con `TEST_DATABASE_URL` si hay; si no, SQLite). Así también se prueban las migraciones nuevas sobre una base vacía:
+   ```bash
+   uniora migrate
+   uniora server clients create --name backend --scopes <los scopes de la ruta> --orgs '*'
+   uniora server keys create --client backend      # la clave se muestra una sola vez
+   uniora server start --default-provider main
+   ```
+   Siembra los datos como lo haría un backend (con `@uniora/core` y el adaptador), no insertando filas a mano.
+2. **Pruébala con `curl`** y con un **script de Python** (solo librería estándar, `python3 -I`), con `Authorization: Bearer <clave>`, sin importar nada de nuestro código. El script comprueba con `PASS`/`FAIL` y sale con código distinto de cero si algo falla.
+3. **Cubre siempre**: el caso feliz con el cuerpo exacto; el campo nuevo presente **y** ausente; la paginación (`limit`, `cursor`) si es una lista; una clave **sin el scope** (403); una organización que no existe o a la que el cliente no llega (404); sin clave o clave mala (401); una entrada inválida (4xx, nunca 500); y, si es una escritura, que repetirla o cambiar de organización no rompe nada ni filtra datos de otra.
+4. **Compara con lo documentado**: los campos que salen son los del OpenAPI y los del ejemplo de la guía; lo que la guía dice que hay que hacer (por ejemplo "si falta el campo, usa tu mensaje genérico") funciona de verdad con la respuesta real.
+5. **Para el servidor** al terminar y no dejes la base ni las claves de prueba en el repositorio (trabaja en el directorio de scratchpad, nunca commitees claves).
+6. En la descripción del PR, di **qué probaste y qué respondió** (los `curl`/script y el resultado), y si algo no se pudo probar (por ejemplo sin Postgres real), dilo tal cual.
+
+Un fallo en esta prueba es un fallo del cambio: se corrige y se vuelve a pasar el script completo. No se da por buena una API que solo pasó sus tests unitarios.
 
 ## Paso 7 — Cierre
 
@@ -118,6 +148,8 @@ Además:
 - [ ] Regeneré `server-api.md`, `openapi.json` y `generated.ts` con `UPDATE_DOCS=1`, y sin la variable todo pasa sin cambios.
 - [ ] Hay pruebas de la ruta (caso feliz, scope ausente, otra organización, entrada inválida).
 - [ ] La API embebida está exportada y documentada; Postgres, SQLite y memoria pasan la misma suite.
+- [ ] Actualicé las guías escritas a mano (`server.md`, `concepts.md`, `core-reference.md`, la del área) con cómo consumir el cambio: ejemplo copiable, casos límite, errores y compatibilidad.
+- [ ] Probé la API con un servidor real levantado por la CLI, con `curl` y un script de Python (feliz, campo presente y ausente, paginación, 401/403/404, entrada inválida), y el resultado está en el PR.
 - [ ] Nada se rompe para un cliente con la versión anterior (o está anunciado como incompatible).
 - [ ] `build`, `typecheck`, `test` y `lint` en verde; no hay tests saltados.
 - [ ] CHANGELOG y descripción del PR mencionan el efecto en las APIs.

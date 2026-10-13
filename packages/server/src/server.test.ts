@@ -275,6 +275,29 @@ describe.each(BACKENDS)("@uniora/server over %s", (backend) => {
   });
 
   describe("reads", () => {
+    it("features: the reason of a kill switch reaches the organizations that follow the default, and nothing else", async () => {
+      const f = await start(backend);
+      const { token } = await f.issue();
+      const reason = "Retired on 2026-10-01; use the new export instead.";
+
+      const effective = await f.call("GET", "/v1/organizations/org_acme/features", { token });
+      expect(effective.status).toBe(200);
+      expect(effective.body.items).toEqual([
+        { key: "legacy_exports", enabled: false, reason: "default", defaultEnabled: false, defaultReason: reason, defaultUpdatedAt: expect.any(String) },
+      ]);
+      expect(Number.isNaN(Date.parse(effective.body.items[0].defaultUpdatedAt))).toBe(false);
+
+      const catalog = await f.call("GET", "/v1/features", { token });
+      expect(catalog.body.items).toEqual([{ key: "legacy_exports", name: "Legacy exports", defaultEnabled: false, reason, updatedAt: expect.any(String) }]);
+
+      // The scope is the same as before: without it, nothing is read.
+      const noScope = await f.issue({ scopes: ["check"] });
+      expect((await f.call("GET", "/v1/organizations/org_acme/features", { token: noScope.token })).status).toBe(403);
+      // An organization the client may not reach looks exactly like one that does not exist.
+      const other = await f.issue({ organizations: ["org_globex"] });
+      expect((await f.call("GET", "/v1/organizations/org_acme/features", { token: other.token })).status).toBe(404);
+    });
+
     it("pages organizations with an opaque cursor and never repeats or skips", async () => {
       const f = await start(backend);
       const { token } = await f.issue();

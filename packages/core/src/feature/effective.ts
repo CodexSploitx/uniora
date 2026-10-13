@@ -40,6 +40,9 @@ export function resolveEffectiveFeatures(
       key: definition.key,
       defaultEnabled: definition.defaultEnabled,
       ...(definition.parentKey !== undefined ? { parentKey: definition.parentKey } : {}),
+      // No override and the default was switched off by `disableEverywhere`: carry its reason, so "why is this off?" has an answer.
+      ...(!row && !definition.defaultEnabled && definition.reason !== undefined ? { defaultReason: definition.reason } : {}),
+      ...(!row && !definition.defaultEnabled && definition.updatedAt !== undefined ? { defaultUpdatedAt: definition.updatedAt } : {}),
       ...(row
         ? { override: { enabled: row.enabled, updatedAt: row.updatedAt, updatedBy: row.updatedBy, reason: row.reason, version: row.version } }
         : {}),

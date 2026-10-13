@@ -2,6 +2,17 @@
 
 All notable changes to UNIORA. Packages are released in lockstep, so one version number covers all of them. The format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased
+
+Includes new migrations: Postgres `0047`, SQLite `0032` (run `uniora migrate`). They only add two nullable columns to the feature definitions (`default_reason`, `default_updated_at`). Nothing existing changes.
+
+### Added
+
+- **The reason of the kill switch is now stored and readable per organization.** `features.disableEverywhere(key, { reason })` used to leave the reason only in the audit log (`feature.disabled_everywhere`); an application could not tell an organization why a feature was unavailable.
+  - **Embedded API**: `FeatureDefinition` has optional `reason` and `updatedAt` (set by `disableEverywhere`; kept when the app registers the feature again with the default off, cleared when it is registered with `defaultEnabled: true` or the kill switch is pulled again without a reason). `EffectiveFeature` has optional `defaultReason` and `defaultUpdatedAt`, returned by `listEffective` / `listEffectiveMany` for organizations **without** an override. Same behaviour in memory, Postgres and SQLite (shared conformance test).
+  - **HTTP API / `@uniora/client`**: `organizations.features` items gain optional `defaultReason` and `defaultUpdatedAt`; `features.list` items gain optional `reason` and `updatedAt`. No new route, scope, error or event; all fields are optional, so a client from before keeps working.
+  - Docs: `concepts.md`, `core-reference.md` and `server.md` explain how to show the reason. `server-api.md`, `openapi.json` and the generated client are regenerated; in the reference the example ids and timestamps after the new feature moved by a few steps because the example deployment now has one killed feature (`legacy_exports`).
+
 ## 0.12.0 - 2026-10-13
 
 ### Added

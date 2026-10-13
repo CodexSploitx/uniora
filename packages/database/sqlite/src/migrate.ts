@@ -31,6 +31,7 @@ import { MIGRATION_0028_API_CREDENTIALS } from "./migrations/0028_api_credential
 import { MIGRATION_0029_RATE_LIMITS } from "./migrations/0029_rate_limits.js";
 import { MIGRATION_0030_WEBHOOKS } from "./migrations/0030_webhooks.js";
 import { MIGRATION_0031_IDENTITY_PROFILES } from "./migrations/0031_identity_profiles.js";
+import { MIGRATION_0032_FEATURE_DEFAULT_REASON } from "./migrations/0032_feature_default_reason.js";
 
 interface Migration {
   readonly id: string;
@@ -70,6 +71,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0029_rate_limits", sql: MIGRATION_0029_RATE_LIMITS },
   { id: "0030_webhooks", sql: MIGRATION_0030_WEBHOOKS },
   { id: "0031_identity_profiles", sql: MIGRATION_0031_IDENTITY_PROFILES },
+  { id: "0032_feature_default_reason", sql: MIGRATION_0032_FEATURE_DEFAULT_REASON },
 ];
 
 const LEDGER_TABLE = "uniora_schema_migrations";
