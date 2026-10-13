@@ -23,6 +23,7 @@ pnpm lint                            # Studio's ESLint
 - **Storage adapters share one suite.** Behaviour that touches storage goes in `packages/database/conformance`, so PostgreSQL and SQLite are held to the same assertions.
 - **Migrations are additive and never edited after release.** Add a new numbered migration for both adapters.
 - **User-facing text in Studio is translated** (`apps/studio/src/i18n/messages`): add the English key and its Spanish pair; a test checks they match.
+- **Keep the APIs up to date, always.** Any change, update or new function must update the UNIORA APIs that expose it: the HTTP API of `@uniora/server` (routes, schemas, scopes, errors, events), `guides/openapi.json`, `guides/server-api.md`, the generated `@uniora/client` surface and the embedded API (`@uniora/core` exports and docs). Regenerate with `UPDATE_DOCS=1 pnpm --filter @uniora/server test`. Only a purely internal change is exempt, and the PR says why. The checklist is the project skill `.claude/skills/uniora-api-sync`.
 - Releases are lockstep (every package shares one version) and published by a maintainer from a `vX.Y.Z` tag. Add an entry to `CHANGELOG.md` for user-visible changes.
 
 ## Pull requests
