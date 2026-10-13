@@ -97,6 +97,7 @@ audited with the operator who made it.
 
 ```bash
 uniora server clients create --name signup-worker --scopes organizations:create --orgs '*'
+uniora server clients create --name profile-sync --scopes profiles:write --orgs '*'   # stores the name, e-mail and avatar of your users
 uniora server clients list
 uniora server clients update backend --scopes check,organizations:read,members:write,actor:assert
 uniora server clients disable backend            # every key of the client stops on its next request
@@ -201,6 +202,26 @@ The organization, its protected Owner role and the founder's membership are crea
 `Idempotency-Key` a retry (a timeout, a double click, two requests at once) cannot create a second organization: it answers the first
 result with `replayed: true`. The client adds a key by itself if you do not pass one and retries are on. Use a client with only
 `organizations:create`, and the list `*` (it cannot be limited to organizations that do not exist yet).
+
+### Profiles: show a person, not an id
+
+UNIORA only knows `(provider, subject)`. To let Studio and your own screens show a **name, an e-mail and an avatar**, your backend stores them
+where it already knows the user (right after verifying their session), or in pages to backfill the users you already have:
+
+```ts
+await uniora.profiles.put({
+  profiles: [{ identity: { subject: session.userId }, displayName: "Ana Pérez", email: "ana@example.com", avatarUrl: "https://cdn.example.com/ana.png" }],
+});
+// at sign-up, in the same call and the same transaction: organizations.create({ name, owner, ownerProfile: { displayName, email } })
+```
+
+Up to 100 people per call, stored together or not at all. A field you leave out is **kept**, `null` clears it, and the avatar is just an `http(s)`
+URL (an object or any other kind of address is refused with a 400). It is display data only: no authorization decision reads it, and writing
+it is not audited (it can run on every sign-in). A person has **one** profile in every organization, so the client needs the `profiles:write`
+scope **and** the list `*` (`ownerProfile` at sign-up also needs that scope: a client with only `organizations:create` that sends one is refused).
+Member reads (`members.list`, `members.get`) then carry a `profile`, and `q` on the member list also finds a person by the name or e-mail of it.
+
+Your auth adapter already turns its user into this shape (`toProfile`, see [Identity adapters](identity-adapters.md#profiles)); send that.
 
 ### Checks and snapshots from your backend
 

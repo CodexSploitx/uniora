@@ -21,6 +21,7 @@ export const ALL_SCOPES: ApiScope[] = [
   "check",
   "organizations:read",
   "organizations:create",
+  "profiles:write",
   "members:write",
   "roles:write",
   "teams:write",

@@ -2,6 +2,17 @@
 
 All notable changes to UNIORA. Packages are released in lockstep, so one version number covers all of them. The format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## 0.12.0 - 2026-10-13
+
+### Added
+
+- **Profiles over the HTTP API** (for UNIORA used as an external server; the embedded library already had them in 0.11.0).
+  - **`PUT /v1/profiles`** (`profiles.put`, `uniora.profiles.put` in `@uniora/client`) stores the display name, e-mail and avatar URL of up to 100 people per call, together or not at all. A field left out is kept, `null` clears it, and the avatar must be an `http(s)` URL (anything else is a `400`). Display data only, not audited.
+  - **New scope `profiles:write`**, not sensitive. The route needs a client with every organization (`*`), because a person's profile is the same in all of them. It is in Studio's scope picker (group *provision*, English and Spanish) and accepted by `uniora server clients create --scopes`.
+  - **Member reads carry the profile**: `members.list` and `members.get` return an optional `profile` for the people who have one, and `q` on `members.list` also matches the name or e-mail of the profile. Both are additive and optional: a client from before this change keeps working.
+  - **`organizations.create` accepts an optional `ownerProfile`**, stored in the same transaction as the owner. A client without `profiles:write` that sends one is refused with a `403` and nothing is created.
+  - The reference (`server-api.md`), `openapi.json` and the generated client are regenerated. In the reference, the timestamps and example ids of the examples after the new ones moved by a few steps; nothing else about the other operations changed.
+
 ## 0.11.0 - 2026-10-12
 
 Includes new migrations: Postgres `0046`, SQLite `0031` (run `uniora migrate`). They only add a table, `identity_profiles`. Nothing existing changes.

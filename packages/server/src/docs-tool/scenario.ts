@@ -67,6 +67,20 @@ export const STEPS: readonly Step[] = [
   }),
   step("decisions.snapshot", "What a screen needs, in one call", { identity: ana, organizationId: ORG, permissions: ["reports.read", "vehicles.delete"], features: ["advanced_reports"] }),
 
+  // Profiles: who the people are, so a screen shows a name and a picture and not just an id
+  step(
+    "profiles.put",
+    "Store who your users are (name, e-mail and avatar URL)",
+    {
+      profiles: [
+        { identity: ana, displayName: "Ana Pérez", email: "ana@example.com", avatarUrl: "https://cdn.example.com/avatars/ana.png" },
+        { identity: { subject: "bob" }, displayName: "Bob Ruiz", email: "bob@example.com" },
+      ],
+    },
+  ),
+  step("profiles.put", "A field left out is kept; `null` clears it", { profiles: [{ identity: { subject: "bob" }, email: null }] }),
+  step("profiles.put", "An avatar must be an http(s) URL, nothing else", { profiles: [{ identity: ana, avatarUrl: "javascript:alert(1)" }] }, 400),
+
   // Reads
   step("organizations.list", "The organizations this client may reach", { limit: 10 }),
   step("organizations.get", "One organization", { organizationId: ORG }),
@@ -199,6 +213,9 @@ export const STEPS: readonly Step[] = [
   step("platformSupport.revoke", "End it now", (c) => ({ grantId: c.saved("grant").id }), 200, operator("root")),
   step("platformMembers.remove", "Remove a person from the platform staff", (c) => ({ memberId: c.saved("sam").id }), 200, operator("root")),
   step("platformRoles.delete", "Delete a role nobody holds", (c) => ({ roleId: c.saved("supportRole").id }), 200, operator("root")),
+
+  // Sign-up that also stores who the owner is (last, so the ids of every earlier example stay as they were)
+  step("organizations.create", "Sign-up that also stores who the owner is", { name: "Initech Labs", owner: { subject: "founder-8" }, ownerProfile: { displayName: "Dana Lee", email: "dana@initech.example" } }, 201),
 
   // What every call can meet
   step("organizations.list", "A call with no key", {}, 401, { as: "anonymous" }),

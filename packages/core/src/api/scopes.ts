@@ -7,6 +7,7 @@ export const API_SCOPES = {
   check: { description: "Ask whether an identity may do something (can, authorize, access checks, snapshots).", sensitive: false },
   "organizations:read": { description: "Read organizations, members, roles, permissions, features, teams and policies.", sensitive: false },
   "organizations:create": { description: "Create an organization together with its first Owner.", sensitive: false },
+  "profiles:write": { description: "Store the name, e-mail and avatar URL of the people of your application. A person's profile is the same in every organization, so it needs a client with every organization.", sensitive: false },
   "members:write": { description: "Assign and remove roles, block, suspend and remove members, on behalf of a user.", sensitive: true },
   "roles:write": { description: "Create, edit and delete roles and their permissions, on behalf of a user.", sensitive: true },
   "teams:write": { description: "Manage teams and their members, on behalf of a user.", sensitive: true },

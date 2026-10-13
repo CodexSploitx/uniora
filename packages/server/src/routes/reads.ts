@@ -1,10 +1,37 @@
-import type { Organization, OrganizationCursor, OrganizationStatus } from "@uniora/core";
+import type { Identity, Membership, Organization, OrganizationCursor, OrganizationStatus, UnioraStorage } from "@uniora/core";
+import { MAX_PROFILE_BATCH } from "@uniora/core";
 import { ApiError, errors } from "../errors.js";
 import type { RouteContext } from "../route.js";
 import { defineRoute } from "../route.js";
 import { s } from "../schema.js";
 import { MEMBER_STATUSES, MemberOut, ORG_STATUSES, OrganizationOut, RoleOut } from "./schemas.js";
 import { IdentityOutput, PageQuery, decodeCursor, id, pageOf, pageSize, toPage } from "./common.js";
+
+/** The members as listed, each with the profile the application stored for them (one query for the whole page; none stored = no `profile`). */
+async function withProfiles(storage: UnioraStorage, members: Membership[]): Promise<Array<Membership & { profile?: { displayName?: string; email?: string; avatarUrl?: string } }>> {
+  if (members.length === 0) return members;
+  const stored = await storage.profiles.findMany(members.map((member) => member.identity).slice(0, MAX_PROFILE_BATCH));
+  const byIdentity = new Map(stored.map((entry) => [JSON.stringify([entry.identity.provider, entry.identity.subject]), entry]));
+  return members.map((member) => {
+    const entry = byIdentity.get(JSON.stringify([member.identity.provider, member.identity.subject]));
+    if (!entry) return member;
+    return {
+      ...member,
+      profile: {
+        ...(entry.displayName !== undefined ? { displayName: entry.displayName } : {}),
+        ...(entry.email !== undefined ? { email: entry.email } : {}),
+        ...(entry.avatarUrl !== undefined ? { avatarUrl: entry.avatarUrl } : {}),
+      },
+    };
+  });
+}
+
+/** The identities whose stored name or e-mail contains `query`, so a text search finds a person by name and not only by id. */
+async function profileMatches(storage: UnioraStorage, query: string | undefined): Promise<Identity[] | undefined> {
+  if (query === undefined) return undefined;
+  const found = await storage.profiles.search({ query });
+  return found.length > 0 ? found.map((entry) => entry.identity) : undefined;
+}
 
 const PermissionOut = s.object({
   key: s.string({ max: 200 }),
@@ -119,7 +146,7 @@ export const readRoutes = [
     method: "GET",
     path: "/v1/organizations/:organizationId/members",
     summary: "List an organization's members",
-    description: "Ordered by member id. `q` matches the identity's subject or provider.",
+    description: "Ordered by member id. `q` matches the identity's subject or provider, and the name or e-mail of the profile the application stored for the person. Each member carries its `profile` when there is one.",
     scope: "organizations:read",
     params: orgParam,
     query: s.object({ ...PageQuery, status: s.optional(s.enum(MEMBER_STATUSES)) }),
@@ -130,14 +157,17 @@ export const readRoutes = [
       await requireOrganization(ctx, params.organizationId);
       const limit = pageSize(ctx, query.limit);
       const after = decodeCursor(query.cursor, stringCursor);
+      const orIdentities = await profileMatches(ctx.config.storage, query.q);
       const rows = await ctx.config.storage.memberships.search({
         organizationId: params.organizationId,
         limit: limit + 1,
         ...(after !== undefined ? { after } : {}),
         ...(query.q !== undefined ? { query: query.q } : {}),
+        ...(orIdentities !== undefined ? { orIdentities } : {}),
         ...(query.status !== undefined ? { status: query.status } : {}),
       });
-      return toPage(rows, limit, (last) => ({ after: last.id }));
+      const page = toPage(rows, limit, (last) => ({ after: last.id }));
+      return { ...page, items: await withProfiles(ctx.config.storage, page.items) };
     },
   }),
 
@@ -146,7 +176,7 @@ export const readRoutes = [
     method: "GET",
     path: "/v1/organizations/:organizationId/members/:membershipId",
     summary: "Get a member",
-    description: "A member of another organization answers exactly like one that does not exist.",
+    description: "A member of another organization answers exactly like one that does not exist. Carries its `profile` when the application stored one.",
     scope: "organizations:read",
     params: s.object({ organizationId: id("The organization.", "org_acme"), membershipId: id("The membership.", "mem_42") }),
     response: MemberOut,
@@ -156,7 +186,7 @@ export const readRoutes = [
       await requireOrganization(ctx, params.organizationId);
       const member = await ctx.config.storage.memberships.findById(params.membershipId);
       if (!member || member.organizationId !== params.organizationId) throw errors.notFound("membership_not_found");
-      return member;
+      return (await withProfiles(ctx.config.storage, [member]))[0]!;
     },
   }),
 
