@@ -178,6 +178,19 @@ Un fallo en esta prueba es un fallo del cambio: se corrige y se vuelve a pasar e
    - Un PARCHE nunca añade ni quita superficie pública: si el cambio añade un campo o una migración, no es un parche aunque "arregle algo".
    - El release es en bloque (los 15 paquetes comparten versión) y se publica con un tag `vX.Y.Z` sobre un commit que ya está en `main`. `@uniora/server` y `@uniora/client` salen juntos. Antes de pedir el tag corre `pnpm -r build && pnpm check:packages` y `node scripts/check-release.mjs vX.Y.Z`.
    - Nunca empujes el tag sin que la persona lo pida: publica en npm y una versión publicada no se puede reutilizar.
+
+### Publicar un release: la persona crea el tag y aprueba la publicación (siempre)
+
+Publicar es cosa de la persona. En esta plataforma el proxy de las sesiones suele rechazar el push de tags (`403`), y aunque pudiera, la aprobación de la publicación es suya. Por eso, **cuando un release esté listo, tu entrega final incluye siempre estos enlaces**, ya rellenos, para que ella solo tenga que pulsar:
+
+1. **Crear el tag y el release** (sustituye `X.Y.Z` por la versión):
+   `https://github.com/CodexSploitx/uniora/releases/new?tag=vX.Y.Z&target=main&title=vX.Y.Z`
+   Crear el release crea el tag, y el tag dispara el workflow `Release`. Dile el SHA de `main` sobre el que debe caer el tag (para que compruebe que `main` no avanzó) y de dónde copiar las notas (la sección `X.Y.Z` del CHANGELOG).
+2. **El workflow que publica**: `https://github.com/CodexSploitx/uniora/actions/workflows/release.yml`. Explica lo que hará: repite el CI y luego `npm publish` (environment `npm`, con provenance, comprobando antes tag, versiones y metadatos con `check-release.mjs`).
+3. **Dónde aprobar**: si el environment `npm` tiene revisores obligatorios, el job espera en *Review deployments → Approve*. Enlace a la configuración: `https://github.com/CodexSploitx/uniora/settings/environments`.
+4. **Para comprobar el resultado**: el enlace de npm de un par de paquetes (por ejemplo `https://www.npmjs.com/package/@uniora/core` y `@uniora/server`).
+
+Antes de dar los enlaces, deja el release listo: el bump de versión y el CHANGELOG ya fusionados en `main`, y `pnpm -r build && pnpm check:packages` y `node scripts/check-release.mjs vX.Y.Z` en verde. Recuérdale también que quien use UNIORA debe subir los paquetes y correr `uniora migrate` si hay migraciones nuevas. Si algo falla a mitad de la publicación, no se reutiliza la versión: se corrige y sale la siguiente de parche.
 4. Dile a la persona **qué tiene que actualizar en sus proyectos** (es el mismo texto de "cómo adoptarlo" de la documentación) que usan UNIORA (paquetes, `uniora migrate`, claves con el scope nuevo) y qué comportamiento cambia para quien use el servidor externo.
 
 ## Lista de comprobación final (si falta una, no está terminado)

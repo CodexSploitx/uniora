@@ -10,7 +10,7 @@ Resumen: si algo cambia en UNIORA, la API HTTP de `@uniora/server` (rutas, esque
 
 ## Versiones (SemVer)
 
-Un cambio **no** sube la versión: se anota bajo `## Unreleased` del CHANGELOG. La versión se sube al cortar un release: solo correcciones → parche (`0.12.0` → `0.12.1`); función nueva compatible (campo, ruta, scope, error, migración) → menor (`0.13.0`); cambio incompatible → mayor (en `0.x`, menor). Detalle en la skill `uniora-api-sync` (Paso 7).
+Un cambio **no** sube la versión: se anota bajo `## Unreleased` del CHANGELOG. La versión se sube al cortar un release: solo correcciones → parche (`0.12.0` → `0.12.1`); función nueva compatible (campo, ruta, scope, error, migración) → menor (`0.13.0`); cambio incompatible → mayor (en `0.x`, menor). Detalle en la skill `uniora-api-sync` (Paso 8). **Publicar es de la persona**: cuando un release esté listo, entrega siempre los enlaces para crear el tag (`releases/new?tag=vX.Y.Z&target=main`) y el de Actions (`actions/workflows/release.yml`) para que ella apruebe la publicación; no empujes el tag.
 
 ## Comandos
 
