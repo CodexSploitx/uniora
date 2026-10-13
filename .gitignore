@@ -18,8 +18,10 @@ pnpm-debug.log*
 .vscode/*
 !.vscode/extensions.json
 
-# Contexto local de desarrollo: no se versiona (solo referencia local)
-.claude/
+# Contexto local de desarrollo: no se versiona (solo referencia local).
+# Excepción: las skills del proyecto (.claude/skills/) y el CLAUDE.md raíz SÍ se versionan, para que
+# las reglas del repositorio (p. ej. mantener las APIs al día) se apliquen en cualquier sesión.
+.claude/*
+!.claude/skills/
 docs/
-CLAUDE.md
 apps/*/CLAUDE.md
