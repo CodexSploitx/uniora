@@ -164,7 +164,7 @@ export const accessRoutes = [
     }),
     response: RoleVersionedOut,
     organization: ({ params }) => params.organizationId,
-    errors: [...COMMON, "role_exists", "role_key_exists", "permission_not_found"],
+    errors: [...COMMON, "role_exists", "role_key_exists", "role_name_invalid", "permission_not_found"],
     async handler(ctx, { params, body }) {
       const result = (await runAccess(ctx, "createRole", params.organizationId, body)) as { id: string; version: number };
       ctx.setHeader("ETag", etag(result.version));
@@ -187,7 +187,7 @@ export const accessRoutes = [
     body: s.object({ name: s.optional(s.string({ min: 1, max: 100 })), description: s.optional(s.nullable(s.string({ min: 1, max: 500 }))) }),
     response: RoleVersionedOut,
     organization: ({ params }) => params.organizationId,
-    errors: ROLE_ERRORS,
+    errors: [...ROLE_ERRORS, "role_exists", "role_name_invalid"],
     async handler(ctx, { params, body }) {
       const result = (await runAccess(ctx, "updateRole", params.organizationId, { roleId: params.roleId, ...body, ...versioned(ctx) })) as { version: number };
       ctx.setHeader("ETag", etag(result.version));
@@ -270,7 +270,7 @@ export const accessRoutes = [
     }),
     response: RoleVersionedOut,
     organization: ({ params }) => params.organizationId,
-    errors: [...ROLE_ERRORS, "role_exists", "role_key_exists", "owner_role_protected"],
+    errors: [...ROLE_ERRORS, "role_exists", "role_key_exists", "role_name_invalid", "owner_role_protected"],
     async handler(ctx, { params, body }) {
       const result = (await runAccess(ctx, "cloneRole", params.organizationId, { roleId: params.roleId, ...body })) as { version: number };
       ctx.setHeader("ETag", etag(result.version));

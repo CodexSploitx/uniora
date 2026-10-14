@@ -8479,7 +8479,7 @@
             }
           },
           "400": {
-            "description": "Bad Request. `code` is one of: `actor_required`, `identity_provider_required`, `identity_provider_reserved`, `invalid_json`, `invalid_request`.",
+            "description": "Bad Request. `code` is one of: `actor_required`, `identity_provider_required`, `identity_provider_reserved`, `invalid_json`, `invalid_request`, `role_name_invalid`.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -8963,7 +8963,7 @@
             }
           },
           "400": {
-            "description": "Bad Request. `code` is one of: `actor_required`, `identity_provider_required`, `identity_provider_reserved`, `invalid_json`, `invalid_request`.",
+            "description": "Bad Request. `code` is one of: `actor_required`, `identity_provider_required`, `identity_provider_reserved`, `invalid_json`, `invalid_request`, `role_name_invalid`.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -9001,6 +9001,16 @@
           },
           "404": {
             "description": "Not Found. `code` is one of: `organization_not_found`, `role_not_found`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict. `code` is one of: `role_exists`.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -9219,7 +9229,7 @@
             }
           },
           "400": {
-            "description": "Bad Request. `code` is one of: `actor_required`, `identity_provider_required`, `identity_provider_reserved`, `invalid_json`, `invalid_request`, `owner_role_protected`.",
+            "description": "Bad Request. `code` is one of: `actor_required`, `identity_provider_required`, `identity_provider_reserved`, `invalid_json`, `invalid_request`, `owner_role_protected`, `role_name_invalid`.",
             "content": {
               "application/problem+json": {
                 "schema": {

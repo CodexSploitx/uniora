@@ -4,6 +4,14 @@ All notable changes to UNIORA. Packages are released in lockstep, so one version
 
 ## Unreleased
 
+### Security
+
+- **A role name that is a Latin/Cyrillic/Greek look-alike of another role's name — notably `Owner` — no longer slips past name uniqueness.** `owner` was already a reserved role *key* (`role_key_reserved`), closing the ASCII near-miss ("OWNER", "Owner ") the ordinary derived-key path would hit. But a role *name* using a confusable code point from another script — Cyrillic `О` instead of Latin `O`, which renders identically in every common UI font — derived to an unrelated key (`"Оwner"` → `wner`) and sailed through as a brand-new role, with whatever permissions its creator held. Found during a security audit; the real-world risk is a non-owner admin (anyone holding `roles.manage`) creating a role that reads as "Owner" in a role picker, a support ticket or an audit-log line, to confuse a teammate or a support agent into trusting it.
+  - **`normalizeRoleName`** (`@uniora/core`) now folds the common single-codepoint Cyrillic and Greek look-alikes of Latin letters to their Latin equivalent before the existing diacritic-stripping/lowercasing, so a homoglyph name collides with the real name the same way `"Recepción"`/`"recepcion"` already did (`role_exists`, 409) — general-purpose, not an `Owner`-only special case.
+  - **`sanitizeRoleName`** now also rejects zero-width and bidirectional-control code points outright (`role_name_invalid`, 400): they have no legitimate reason to appear in a name shown to people, only to hide characters from a reader while a comparison still sees them.
+  - **HTTP API**: `role_name_invalid` is now a documented, actually-reachable response of `POST /v1/organizations/:organizationId/roles`, `PATCH /v1/organizations/:organizationId/roles/:roleId` and `POST /v1/organizations/:organizationId/roles/:roleId/clone` (previously unreachable through these routes, since the request schema already bounds name length — only the new content check can trigger it); `roles.update` also gains the already-existing `role_exists` in its documented errors, which it could already return. No new route, field, scope or event. `openapi.json`, `server-api.md` regenerated; the generated client is unaffected (error codes are not part of its typed surface).
+  - Docs: `guides/core-reference.md`'s role table explains the new collision and rejection.
+
 ### Added
 
 - **`trustedProxies` closes a spoofing gap in `trustedProxyHops`.** With `trustedProxyHops > 0` and no `trustedProxies`, the server trusted `X-Forwarded-For` from ANY direct connection, not only from the real reverse proxy; a caller that reaches the process without actually going through that proxy (a misconfigured network, a second listener, a health-check path) could forge a fresh address on every request and run past the failed-authentication throttle indefinitely. Found during a security audit of the permission/API surface.
