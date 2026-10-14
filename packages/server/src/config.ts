@@ -183,6 +183,17 @@ export interface UnioraServerOptions {
    * address is the n-th from the right in `X-Forwarded-For`, which is what your proxy appended; never trust more hops than you run.
    */
   trustedProxyHops?: number;
+  /**
+   * The exact address(es) of the reverse proxy(ies) named by `trustedProxyHops`. When set, `X-Forwarded-For` is only read when
+   * the TCP connection itself comes from one of these addresses; a direct connection from anywhere else is treated as if
+   * `trustedProxyHops` were `0` (its own socket address, the header ignored). Without it, `trustedProxyHops > 0` trusts
+   * `X-Forwarded-For` from ANY caller that reaches the server directly — if the server is ever reachable without actually going
+   * through your proxy (a misconfigured network, a second listener, a load balancer health check path), that caller can forge
+   * its own address and run past the failed-authentication throttle under an endless supply of fake addresses. Optional, for
+   * backward compatibility, but strongly recommended with `trustedProxyHops > 0`: without it the server logs a warning once
+   * at start. See `guides/server.md`.
+   */
+  trustedProxies?: readonly string[];
   logger?: Logger;
   /** The clock, for tests. */
   now?: () => Date;
@@ -204,11 +215,17 @@ export interface ResolvedConfig {
   readonly webhooks: WebhooksConfig | undefined;
   readonly readOnly: boolean;
   readonly trustedProxyHops: number;
+  readonly trustedProxies: ReadonlySet<string> | undefined;
   readonly logger: Logger;
   readonly now: () => Date;
 }
 
 const PROVIDER_LABEL = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
+
+/** `::ffff:10.0.0.1` and `10.0.0.1` are the same address; compare them the same way `throttleKey` does. */
+export function normalizeProxyAddress(address: string): string {
+  return address.startsWith("::ffff:") && address.includes(".") ? address.slice(7) : address;
+}
 
 function positiveInt(name: string, value: number, max: number): void {
   if (!Number.isInteger(value) || value < 1 || value > max) throw new ServerConfigError(`limits.${name} must be an integer from 1 to ${max} (got ${String(value)}).`);
@@ -251,6 +268,18 @@ export function resolveConfig(options: UnioraServerOptions): ResolvedConfig {
   const hops = options.trustedProxyHops ?? 0;
   if (!Number.isInteger(hops) || hops < 0 || hops > 10) throw new ServerConfigError("`trustedProxyHops` must be an integer from 0 to 10.");
 
+  let trustedProxies: ReadonlySet<string> | undefined;
+  if (options.trustedProxies !== undefined) {
+    if (hops < 1) throw new ServerConfigError("`trustedProxies` needs `trustedProxyHops` of at least 1: with no hop trusted there is no proxy address to check.");
+    if (!Array.isArray(options.trustedProxies) || options.trustedProxies.length === 0) {
+      throw new ServerConfigError("`trustedProxies` must be a non-empty array of IP addresses.");
+    }
+    for (const address of options.trustedProxies) {
+      if (typeof address !== "string" || isIP(address) === 0) throw new ServerConfigError(`\`trustedProxies\` must list IP addresses; "${String(address)}" is not one.`);
+    }
+    trustedProxies = new Set(options.trustedProxies.map(normalizeProxyAddress));
+  }
+
   if (options.sharedRateLimit === true && !options.credentials.rateLimits) {
     throw new ServerConfigError("`sharedRateLimit` needs `credentials.rateLimits`: use a credential storage that keeps the shared bucket (memory, SQLite or PostgreSQL).");
   }
@@ -287,6 +316,7 @@ export function resolveConfig(options: UnioraServerOptions): ResolvedConfig {
     webhooks: resolveWebhooks(options.webhooks, options.storage),
     readOnly: options.readOnly === true,
     trustedProxyHops: hops,
+    trustedProxies,
     logger: options.logger ?? createJsonLogger(),
     now: options.now ?? (() => new Date()),
   });

@@ -2,6 +2,15 @@
 
 All notable changes to UNIORA. Packages are released in lockstep, so one version number covers all of them. The format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased
+
+### Added
+
+- **`trustedProxies` closes a spoofing gap in `trustedProxyHops`.** With `trustedProxyHops > 0` and no `trustedProxies`, the server trusted `X-Forwarded-For` from ANY direct connection, not only from the real reverse proxy; a caller that reaches the process without actually going through that proxy (a misconfigured network, a second listener, a health-check path) could forge a fresh address on every request and run past the failed-authentication throttle indefinitely. Found during a security audit of the permission/API surface.
+  - **`createUnioraServer({ trustedProxies })`** (new, optional, `@uniora/server`): the exact address(es) of the proxy `trustedProxyHops` names. When set, a direct connection from anywhere else is treated as `trustedProxyHops: 0` (its own socket address, `X-Forwarded-For` ignored) — a caller that is not the real proxy can no longer borrow a fake address. Backward compatible: left unset, behavior is unchanged, but the server now logs one `warn` at start when `trustedProxyHops > 0` without it.
+  - No HTTP route, scope, schema or event changes: this is a server construction option, not part of the HTTP API surface, so `openapi.json`, `server-api.md` and the generated client are unaffected.
+  - Docs: `guides/server.md` explains the risk and the option, next to `trustedProxyHops`.
+
 ## 0.13.0 - 2026-10-13
 
 Includes new migrations: Postgres `0047`, SQLite `0032` (run `uniora migrate`). They only add two nullable columns to the feature definitions (`default_reason`, `default_updated_at`). Nothing existing changes.

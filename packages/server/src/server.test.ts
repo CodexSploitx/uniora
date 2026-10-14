@@ -552,4 +552,51 @@ describe("boot", () => {
       await running.close(500);
     }
   });
+
+  it("refuses `trustedProxies` without a hop to check it against", () => {
+    expect(() => createUnioraServer({ ...base(), trustedProxies: ["203.0.113.9"] })).toThrow(/trustedProxyHops/);
+    expect(() => createUnioraServer({ ...base(), trustedProxyHops: 1, trustedProxies: [] })).toThrow(/non-empty/);
+    expect(() => createUnioraServer({ ...base(), trustedProxyHops: 1, trustedProxies: ["not-an-ip"] })).toThrow(ServerConfigError);
+  });
+
+  it("with `trustedProxies` set, a direct caller that is NOT the real proxy cannot forge its address and evade the throttle", async () => {
+    // The real proxy would be 203.0.113.9; nothing in this test ever connects from there, so every request below
+    // arrives directly from the test's own loopback address — exactly an attacker who reaches the server without
+    // going through the proxy it is supposed to sit behind.
+    const server = createUnioraServer({ ...base(), trustedProxyHops: 1, trustedProxies: ["203.0.113.9"], limits: { authFailuresPerMinute: 3 } });
+    const running = await server.listen({ host: "127.0.0.1", port: 0, behindTlsProxy: true });
+    try {
+      const hit = (forwarded: string) =>
+        fetch(`${running.url}/v1/organizations`, { headers: { authorization: "Bearer bad", "x-forwarded-proto": "https", "x-forwarded-for": forwarded } }).then((r) => r.status);
+      // The attacker rotates a brand-new fake address on every request. Before this fix, each one looked like a
+      // never-seen-before source and the throttle never engaged (see `02-bruteforce-ip-spoof` in the audit).
+      expect(await hit("198.51.100.1")).toBe(401);
+      expect(await hit("198.51.100.2")).toBe(401);
+      expect(await hit("198.51.100.3")).toBe(401);
+      // The 4th failure from the SAME real (socket) address throttles, no matter what X-Forwarded-For claims.
+      expect(await hit("198.51.100.4")).toBe(429);
+      expect(await hit("203.0.113.254")).toBe(429);
+    } finally {
+      await running.close(500);
+    }
+  });
+
+  it("with `trustedProxies` set, a caller FROM the real proxy's address is still read through X-Forwarded-For as before", async () => {
+    const server = createUnioraServer({ ...base(), trustedProxyHops: 1, trustedProxies: ["127.0.0.1", "::1"], limits: { authFailuresPerMinute: 2 } });
+    const running = await server.listen({ host: "127.0.0.1", port: 0, behindTlsProxy: true });
+    try {
+      const hit = (forwarded: string) =>
+        fetch(`${running.url}/v1/organizations`, { headers: { authorization: "Bearer bad", "x-forwarded-proto": "https", "x-forwarded-for": forwarded } }).then((r) => r.status);
+      // The test connects from loopback, which IS in `trustedProxies` here, so X-Forwarded-For is honored exactly
+      // like the existing `trustedProxyHops`-only test above: different claimed addresses throttle independently.
+      // `blockedFor` is checked before the failure is recorded, so the Nth failure from one address still answers
+      // 401 and only the (N+1)th throttles (see the existing test above, with maxFailures 2: 1st and 2nd are 401).
+      expect(await hit("9.9.9.9")).toBe(401);
+      expect(await hit("9.9.9.9")).toBe(401);
+      expect(await hit("9.9.9.9")).toBe(429);
+      expect(await hit("8.8.8.8")).toBe(401);
+    } finally {
+      await running.close(500);
+    }
+  });
 });
