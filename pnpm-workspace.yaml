@@ -30,8 +30,10 @@ overrides:
   sharp: ">=0.35.5"
   "@modelcontextprotocol/sdk": ">=1.31.0"
 
-# No fixed version of braces exists yet (3.0.3 is the latest) and it is reached only through
-# apps/playground, which is private and never published. Revisit when braces ships a fix.
+# No fixed version of braces exists yet (3.0.3 is the latest). Reached only through devDependencies
+# (eslint-config-next, shadcn) of apps/playground (private, never published) and @uniora/studio — a
+# published package, but its devDependencies are never installed by anyone who depends on it, only
+# by this monorepo's own tooling. Revisit when braces ships a fix.
 auditConfig:
   ignoreGhsas:
     - GHSA-vfj7-8cjw-p6xm
