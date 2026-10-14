@@ -11,6 +11,10 @@ All notable changes to UNIORA. Packages are released in lockstep, so one version
   - No HTTP route, scope, schema or event changes: this is a server construction option, not part of the HTTP API surface, so `openapi.json`, `server-api.md` and the generated client are unaffected.
   - Docs: `guides/server.md` explains the risk and the option, next to `trustedProxyHops`.
 
+### Documentation
+
+- **Warning: never name a permission `policies.<anything>`.** `policies.*` is the reserved prefix the policy engine exempts from ALL policies (so nobody can lock themselves out of fixing the rules). The exemption is a plain prefix match on the permission key, not a check that the permission is really UNIORA's own — a host's own business permission that happens to share the prefix (an insurance company's `policies.claims.approve`, say) falls into the same exemption silently: no policy can ever govern it. Found during a security audit; not a code change, since the engine already fails loud (`policy_definition_invalid`) the moment anyone tries to write a policy for such a permission — the registration of the permission itself gives no such warning, which is the gap this closes. `guides/policies.md` now calls this out explicitly, next to where the exemption is first described.
+
 ## 0.13.0 - 2026-10-13
 
 Includes new migrations: Postgres `0047`, SQLite `0032` (run `uniora migrate`). They only add two nullable columns to the feature definitions (`default_reason`, `default_updated_at`). Nothing existing changes.
