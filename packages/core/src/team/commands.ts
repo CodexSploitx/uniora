@@ -188,7 +188,7 @@ const NOT_FOUND = new Set(["team_not_found", "team_membership_not_found", "team_
 export function teamErrorToHttp(error: unknown): TeamHttpError | null {
   if (!(error instanceof TeamError)) return null;
   const code = error.code;
-  if (code === "team_forbidden" || code === "team_accept_forbidden") {
+  if (code === "team_forbidden" || code === "team_accept_forbidden" || code === "team_target_stronger") {
     return { status: 403, body: { error: "forbidden", message: "You are not allowed to do that." } };
   }
   if (code === "team_authorization_required") {
