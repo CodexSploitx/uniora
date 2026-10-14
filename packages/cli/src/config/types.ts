@@ -26,6 +26,8 @@ export interface UnioraAuthConfig {
 export interface UnioraServerConfig {
   readonly defaultProvider?: string;
   readonly trustedProxyHops?: number;
+  /** El/los addresses exactos del proxy que nombra `trustedProxyHops`: sin esto, `X-Forwarded-For` se confía desde CUALQUIER conexión directa. Ver `guides/server.md`. */
+  readonly trustedProxies?: readonly string[];
   readonly readOnly?: boolean;
   readonly limits?: Partial<ServerLimits>;
   /** Proveedores de identidad cuyos tokens acepta `Uniora-Actor-Token`. */

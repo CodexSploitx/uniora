@@ -2441,6 +2441,7 @@ Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-T
 - `400` `actor_required`
 - `400` `identity_provider_required`
 - `400` `identity_provider_reserved`
+- `400` `role_name_invalid`
 - `403` `access_escalation`
 - `403` `access_owner_protected`
 - `403` `access_self_change`
@@ -2535,6 +2536,7 @@ Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-T
 - `400` `actor_required`
 - `400` `identity_provider_required`
 - `400` `identity_provider_reserved`
+- `400` `role_name_invalid`
 - `403` `access_escalation`
 - `403` `access_owner_protected`
 - `403` `access_self_change`
@@ -2542,6 +2544,7 @@ Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-T
 - `403` `forbidden`
 - `404` `organization_not_found`
 - `404` `role_not_found`
+- `409` `role_exists`
 - `412` `role_version_conflict`
 - `501` `actor_token_unsupported`
 
@@ -2909,6 +2912,7 @@ Delegated calls also say who they speak for, in one of two ways: `Uniora-Actor-T
 - `400` `identity_provider_required`
 - `400` `identity_provider_reserved`
 - `400` `owner_role_protected`
+- `400` `role_name_invalid`
 - `403` `access_escalation`
 - `403` `access_owner_protected`
 - `403` `access_self_change`

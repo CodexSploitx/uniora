@@ -119,6 +119,26 @@ describe("team service: nobody changes team without permission", () => {
     expect(await code(service.reactivateMember({ actor: lead, organizationId: "org", teamMembershipId: "tm-lead" }))).toBe("team_forbidden");
   });
 
+  it("cannot remove, suspend or strip the role of a team member who holds more power than you in that team", async () => {
+    const { service, storage } = await seed();
+    // "super" (vehicles.read, billing.write) is strictly more than "lead" holds (membersAdd, membersManage, vehicles.read
+    // — no billing.write). Give it to a fresh Barcelona team member.
+    await storage.memberships.create({ id: "m-rich", organizationId: "org", identity: { provider: "p", subject: "rich" } });
+    await storage.teamMemberships.add({ id: "tm-rich", organizationId: "org", teamId: "bcn", membershipId: "m-rich", roleIds: ["super"] });
+
+    // lead holds teams.members.manage in bcn (not .remove) — the permission gate alone would let these through.
+    expect(await code(service.suspendMember({ actor: lead, organizationId: "org", teamMembershipId: "tm-rich" }))).toBe("team_target_stronger");
+    expect(await code(service.unassignRole({ actor: lead, organizationId: "org", teamMembershipId: "tm-rich", roleId: "super" }))).toBe("team_target_stronger");
+    expect((await storage.teamMemberships.find("org", "bcn", "m-rich"))?.roleIds).toEqual(["super"]);
+
+    // hr holds every TEAM_PERMISSIONS key organization-wide (membersRemove included), but still doesn't hold
+    // billing.write anywhere: blocked too.
+    expect(await code(service.removeMember({ actor: hr, organizationId: "org", teamMembershipId: "tm-rich" }))).toBe("team_target_stronger");
+
+    // The organization Owner genuinely outranks everyone and is unaffected.
+    expect(await code(service.removeMember({ actor: boss, organizationId: "org", teamMembershipId: "tm-rich" }))).toBe("ok");
+  });
+
   it("moving between teams needs the right in both, and a lead of one team cannot do it", async () => {
     const { service, storage } = await seed();
     const move = (actor: typeof lead) => service.moveMember({ actor, organizationId: "org", membershipId: "m-juan", fromTeamId: "bcn", toTeamId: "mad", id: "moved" });

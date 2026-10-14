@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -219,6 +219,13 @@ describe("CLI con provider sqlite", () => {
         expect(config).toContain("process.env.DATABASE_URL");
         expect(readFileSync(join(fresh, ".env.example"), "utf8")).toContain("DATABASE_URL=sqlite:./uniora.db");
         expect(readFileSync(join(fresh, ".gitignore"), "utf8").split("\n")).toEqual(expect.arrayContaining([".env", "uniora.db*"]));
+
+        // A real project has @uniora/cli installed (that's how it got the `uniora` binary that
+        // runs init/migrate in the first place); link the real package so uniora.config.mjs's
+        // `import { defineConfig } from "@uniora/cli"` resolves exactly like a real `npm install`
+        // would, instead of relying on this fresh temp directory having one by accident.
+        mkdirSync(join(fresh, "node_modules", "@uniora"), { recursive: true });
+        symlinkSync(join(import.meta.dirname, "../.."), join(fresh, "node_modules", "@uniora", "cli"), "dir");
 
         // El "usuario" copia .env.example a .env.
         writeFileSync(join(fresh, ".env"), "DATABASE_URL=sqlite:./uniora.db\n");

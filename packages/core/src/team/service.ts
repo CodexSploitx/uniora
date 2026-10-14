@@ -65,6 +65,11 @@ export interface MoveTeamMemberInput extends TeamActor {
  * - Changing teams (`moveMember`) needs both `teams.members.remove` in the source team and `teams.members.add` in the destination.
  * - Nobody changes their own responsibility or roles, or lifts their own suspension (no self-promotion).
  * - You can only give a role whose every permission you hold yourself in that team (no escalation through team roles).
+ * - You do not touch (remove, suspend, reactivate, change the responsibility or roles of) a team member who holds more
+ *   power THAN YOU, in that team, through their own roles — the same way `AccessAdminService` protects organization
+ *   members (`team_target_stronger`). A team-scoped role is real, exercised authority (`engine.can({ teamId })` merges
+ *   it with organization-wide roles), so holding only the narrowest `teams.members.*` permission must not let someone
+ *   strip or demote a teammate whose team role grants far more.
  * - Each permission is satisfied organization-wide (a role of the organization) or inside that very team (a role held there);
  *   being a team owner or manager grants nothing by itself.
  *
@@ -96,6 +101,7 @@ export interface TeamService {
 
 const treeLock = (organizationId: string) => `uniora:team-tree:${organizationId}`;
 const forbidden = (what: string) => new TeamError(`You are not allowed to ${what}.`, "team_forbidden");
+const stronger = (what: string) => new TeamError(`${what} holds more power in this team than you do, so you cannot change it.`, "team_target_stronger");
 
 export function createTeamService(options: TeamServiceOptions): TeamService {
   const keys: TeamPermissionKeys = { ...TEAM_PERMISSIONS, ...options.permissions };
@@ -144,6 +150,45 @@ export function createTeamService(options: TeamServiceOptions): TeamService {
   async function isOwnRow(ctx: Context, row: TeamMembership): Promise<boolean> {
     const mine = await actorMembership(ctx, row.organizationId);
     return mine !== null && mine.id === row.membershipId;
+  }
+
+  /**
+   * What `membershipId` can do IN THIS TEAM, the same way `engine.can({ teamId })` decides it: its organization-wide
+   * roles plus the roles it holds in this very team (member.status.ts `activeTeamRoleIds`), owner included. Team
+   * membership that is not active contributes nothing — a suspended or removed row holds no power to compare against.
+   */
+  async function teamPower(ctx: Context, organizationId: string, teamId: string, membershipId: string): Promise<{ owner: boolean; keys: Set<string> }> {
+    const membership = await ctx.tx.memberships.findById(membershipId);
+    const orgRoles = membership && membership.organizationId === organizationId ? await ctx.tx.roles.findByIds(membership.roleIds) : [];
+    const row = await ctx.tx.teamMemberships.find(organizationId, teamId, membershipId);
+    const teamRoles = row && row.status === "active" ? await ctx.tx.roles.findByIds(row.roleIds) : [];
+    const roles = [...orgRoles, ...teamRoles].filter((role) => role.organizationId === organizationId);
+    const owner = roles.some((role) => role.isOwnerRole);
+    const rawKeys = new Set<string>();
+    for (const role of roles) for (const key of role.permissionKeys) rawKeys.add(key);
+    if (owner || rawKeys.size === 0) return { owner, keys: rawKeys };
+    return { owner, keys: new Set(await ctx.tx.permissions.expand([...rawKeys])) };
+  }
+
+  function covers(holder: { owner: boolean; keys: Set<string> }, needs: { owner: boolean; keys: Set<string> }): boolean {
+    if (holder.owner) return true;
+    if (needs.owner) return false;
+    for (const key of needs.keys) if (!holder.keys.has(key)) return false;
+    return true;
+  }
+
+  /**
+   * Mirrors AccessAdminService's "you do not touch whoever holds more power than you" (access/service.ts,
+   * `access_target_stronger`): a team-scoped role is real, exercised authority (`engine.can({ teamId })` merges it with
+   * the organization-wide roles), so someone whose only standing is `teams.members.remove`/`teams.members.manage` in a
+   * team must not be able to remove, suspend or strip the role of a teammate who holds more power than that, in that
+   * team, through their own team-scoped role.
+   */
+  async function assertCanTouchTeamMember(ctx: Context, organizationId: string, row: TeamMembership, what: string): Promise<void> {
+    const actorMembershipRow = await actorMembership(ctx, organizationId);
+    const actorPower = actorMembershipRow ? await teamPower(ctx, organizationId, row.teamId, actorMembershipRow.id) : { owner: false, keys: new Set<string>() };
+    const targetPower = await teamPower(ctx, organizationId, row.teamId, row.membershipId);
+    if (!covers(actorPower, targetPower)) throw stronger(what);
   }
 
   /** The actor may only hand out roles whose every permission they hold themselves, in that team or organization-wide. */
@@ -234,7 +279,10 @@ export function createTeamService(options: TeamServiceOptions): TeamService {
     removeMember: ({ actor, organizationId, teamMembershipId, reason }) =>
       run(actor, async (ctx) => {
         const row = await loadRow(ctx, organizationId, teamMembershipId);
-        if (!(await isOwnRow(ctx, row))) await require(ctx, organizationId, keys.membersRemove, "remove people from this team", row.teamId);
+        if (!(await isOwnRow(ctx, row))) {
+          await require(ctx, organizationId, keys.membersRemove, "remove people from this team", row.teamId);
+          await assertCanTouchTeamMember(ctx, organizationId, row, "This member");
+        }
         return ctx.tx.teamMemberships.setStatus(organizationId, row.id, "removed", { actor, reason, authorization: grant(ctx, organizationId, "member.status") });
       }),
 
@@ -242,6 +290,7 @@ export function createTeamService(options: TeamServiceOptions): TeamService {
       run(actor, async (ctx) => {
         const row = await loadRow(ctx, organizationId, teamMembershipId);
         await require(ctx, organizationId, keys.membersManage, "suspend people in this team", row.teamId);
+        await assertCanTouchTeamMember(ctx, organizationId, row, "This member");
         return ctx.tx.teamMemberships.setStatus(organizationId, row.id, "suspended", { actor, reason, authorization: grant(ctx, organizationId, "member.status") });
       }),
 
@@ -250,6 +299,7 @@ export function createTeamService(options: TeamServiceOptions): TeamService {
         const row = await loadRow(ctx, organizationId, teamMembershipId);
         if (await isOwnRow(ctx, row)) throw forbidden("lift your own suspension");
         await require(ctx, organizationId, keys.membersManage, "reactivate people in this team", row.teamId);
+        await assertCanTouchTeamMember(ctx, organizationId, row, "This member");
         return ctx.tx.teamMemberships.setStatus(organizationId, row.id, "active", { actor, authorization: grant(ctx, organizationId, "member.status") });
       }),
 
@@ -261,6 +311,7 @@ export function createTeamService(options: TeamServiceOptions): TeamService {
         if (responsibility === "owner" || row.responsibility === "owner") {
           await require(ctx, organizationId, keys.manage, "change the owner of this team", row.teamId);
         }
+        await assertCanTouchTeamMember(ctx, organizationId, row, "This member");
         return ctx.tx.teamMemberships.setResponsibility(organizationId, row.id, responsibility, { authorization: grant(ctx, organizationId, "member.responsibility") });
       }),
 
@@ -269,6 +320,7 @@ export function createTeamService(options: TeamServiceOptions): TeamService {
         const row = await loadRow(ctx, organizationId, teamMembershipId);
         if (await isOwnRow(ctx, row)) throw forbidden("give yourself roles");
         await require(ctx, organizationId, keys.membersManage, "give roles in this team", row.teamId);
+        await assertCanTouchTeamMember(ctx, organizationId, row, "This member");
         await assertCanGrant(ctx, organizationId, row.teamId, [roleId]);
         return ctx.tx.teamMemberships.assignRole(organizationId, row.id, roleId, { authorization: grant(ctx, organizationId, "member.role") });
       }),
@@ -277,6 +329,7 @@ export function createTeamService(options: TeamServiceOptions): TeamService {
       run(actor, async (ctx) => {
         const row = await loadRow(ctx, organizationId, teamMembershipId);
         await require(ctx, organizationId, keys.membersManage, "take roles away in this team", row.teamId);
+        await assertCanTouchTeamMember(ctx, organizationId, row, "This member");
         return ctx.tx.teamMemberships.unassignRole(organizationId, row.id, roleId, { authorization: grant(ctx, organizationId, "member.role") });
       }),
 

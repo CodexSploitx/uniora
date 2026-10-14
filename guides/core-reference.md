@@ -154,7 +154,7 @@ await storage.roles.delete(role.id, { members: { reassignTo: otherRoleId } });
 
 | Method | Purpose |
 | --- | --- |
-| `create({ id, organizationId, name, key?, description?, permissionKeys?, isSystem? })` | Name up to 100 characters, unique per organization ignoring case, accents and extra spaces ("Recepción" = "recepcion"; `normalizeRoleName` gives that form), key like `billing-manager` (`owner` is reserved). Permissions must be registered. |
+| `create({ id, organizationId, name, key?, description?, permissionKeys?, isSystem? })` | Name up to 100 characters, unique per organization ignoring case, accents, extra spaces and Latin/Cyrillic/Greek look-alikes ("Recepción" = "recepcion"; a Cyrillic "Оwner" collides with "Owner"; `normalizeRoleName` gives that form — `role_exists`), with no invisible or bidirectional-control characters (`role_name_invalid`); key like `billing-manager` (`owner` is reserved: `role_key_reserved`). Permissions must be registered. |
 | `createOwnerRole({ id, organizationId })` | The only way to make an Owner role. One per organization. Normally called by `createOrganizationWithOwner`. |
 | `findByIds(ids)` / `findSummariesByIds(ids)` | Summaries skip permission lists. |
 | `listByOrganization(organizationId)` | Internal use. |

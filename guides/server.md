@@ -130,6 +130,25 @@ It fails closed. It will **not** start when:
   authentication throttle uses, is the `N`-th entry from the right of `X-Forwarded-For`: say how many proxies you really run;
 - an option is invalid (`--default-provider uniora-api`, a limit outside its range...).
 
+**`trustedProxyHops` on its own trusts `X-Forwarded-For` from ANY direct connection, not only from your real proxy.** A rule that
+reads "the caller's address is the `N`-th entry from `X-Forwarded-For`" only holds if every request that reaches the process
+really went through that proxy. If it can ever be reached directly instead — a misconfigured network ACL, a second listener on
+the same host, a load balancer health-check path that skips the proxy, or simply the proxy being down while the port stays open
+— an attacker who connects directly can write whatever they like into `X-Forwarded-For`, including a brand-new fake address on
+every request. That defeats the failed-authentication throttle completely: each attempt looks like it came from a source never
+seen before, so it is never refused. Pass `trustedProxies` (the config file, not a CLI flag — it is a list, like `actorTokens`)
+with the exact address(es) of the real proxy to close this:
+
+```ts
+trustedProxyHops: 1,
+trustedProxies: ["10.0.4.7"], // only this address may set X-Forwarded-For; anyone else gets their own socket address instead
+```
+
+With it, a direct connection from any address other than the ones listed is treated exactly as `trustedProxyHops: 0` for that one
+request: its own socket address, `X-Forwarded-For` ignored. Left unset (for backward compatibility with an existing deployment),
+the server logs one `warn` at start reminding you to set it. There is no CLI flag for `trusted-proxy-hops` without also
+considering this: if you deploy from `uniora.config.mjs`, set both together.
+
 From code (for a custom setup, a framework or two database users):
 
 ```ts
@@ -141,6 +160,7 @@ const server = createUnioraServer({
   credentials: createPostgresApiCredentialStorage(readOnlyPool), // keys: it only READS them
   defaultProvider: "main",
   trustedProxyHops: 1,
+  trustedProxies: ["10.0.4.7"], // the real proxy's address; without it, any direct caller's X-Forwarded-For is trusted
   invitations: { acceptUrl: (token) => `https://app.example.com/invite/${token}`, sender },
 });
 const running = await server.listen({ host: "0.0.0.0", port: 8787, behindTlsProxy: true });
@@ -551,6 +571,7 @@ export default {
   server: {
     defaultProvider: "main",
     trustedProxyHops: 1,
+    trustedProxies: ["10.0.4.7"], // config-file only, like actorTokens: no --trusted-proxies flag
     sharedRateLimit: true,
     actorTokens: [{ provider: "main", issuer: "https://idp.example.com/", audience: "uniora", algorithms: ["RS256"], jwksUri: "https://idp.example.com/.well-known/jwks.json" }],
     requireVerifiedActors: true,
