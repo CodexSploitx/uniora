@@ -2,6 +2,15 @@
 
 All notable changes to UNIORA. Packages are released in lockstep, so one version number covers all of them. The format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased
+
+### Changed
+
+- **License: UNIORA moves from PolyForm Shield 1.0.0 to Apache-2.0.** UNIORA is now OSI-approved open source: use, modification and redistribution are allowed for any purpose, including competing products, with an express patent grant. The restriction on competing products no longer applies to new versions; copies already published stay under the license they were received with. No code, API or behavior change.
+  - `LICENSE` (root and every package) is the Apache-2.0 text, a root `NOTICE` carries the copyright line, and the `license` field of every `package.json` is `Apache-2.0`. `scripts/check-release.mjs` now requires `Apache-2.0`.
+  - The OpenAPI `info.license` is `Apache-2.0` (`guides/openapi.json` regenerated); no route, schema, scope, error or event changes, and the generated client is unaffected.
+  - READMEs (root, Spanish and every package) and the website's license section describe the new terms.
+
 ## 0.14.0 - 2026-10-14
 
 ### Security

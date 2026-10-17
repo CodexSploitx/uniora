@@ -244,7 +244,7 @@ export function buildOpenApiDocument(options: OpenApiOptions = {}): Json {
       version,
       description:
         "Organizations, roles, permissions, teams, policies and invitations, as a service you run yourself. Your backend calls it with an API key; your auth provider stays in your project. Every call needs `Authorization: Bearer <key>`.",
-      license: { name: "PolyForm-Shield-1.0.0", identifier: "PolyForm-Shield-1.0.0" },
+      license: { name: "Apache-2.0", identifier: "Apache-2.0" },
     },
     servers: [{ url: "https://uniora.example.com", description: "Your own deployment" }],
     tags: [...new Map(Object.values(TAGS).map((tag) => [tag.name, tag])).values()],

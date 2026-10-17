@@ -45,4 +45,4 @@ Every way an accept can fail (unknown, expired, revoked, used, wrong e-mail) ans
 
 Documentation: [Express, Next.js and React guide](https://github.com/CodexSploitx/uniora/blob/main/guides/frameworks.md) and the [full index](https://github.com/CodexSploitx/uniora/blob/main/guides/README.md).
 
-License: [PolyForm Shield 1.0.0](https://github.com/CodexSploitx/uniora/blob/main/LICENSE).
+License: [Apache-2.0](https://github.com/CodexSploitx/uniora/blob/main/LICENSE).

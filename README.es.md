@@ -11,7 +11,7 @@ Organizaciones, equipos, roles, permisos y feature flags — para cualquier prov
 [![GitHub stars](https://img.shields.io/github/stars/CodexSploitx/uniora?style=social)](https://github.com/CodexSploitx/uniora)
 ![status](https://img.shields.io/badge/status-desarrollo%20temprano-orange)
 [![npm](https://img.shields.io/npm/v/@uniora/core?label=%40uniora%2Fcore&color=efb100)](https://www.npmjs.com/org/uniora)
-![license](https://img.shields.io/badge/license-PolyForm%20Shield%201.0.0-blue)
+![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)
 ![pnpm](https://img.shields.io/badge/monorepo-pnpm%20workspaces-yellow)
 
@@ -410,9 +410,10 @@ Issues y pull requests son bienvenidos. El proyecto está en una etapa temprana,
 
 ## Licencia
 
-UNIORA es **código disponible** (*source-available*) bajo la [PolyForm Shield License 1.0.0](LICENSE) — gratis de usar, pero no se puede vender.
+UNIORA es **código abierto** bajo la [Apache License 2.0](LICENSE) — una licencia [aprobada por la OSI](https://opensource.org/license/apache-2-0).
 
-- **Puedes** usarlo gratis en cualquier proyecto — personal, interno o comercial, incluido un SaaS o producto de pago que *dependa de* UNIORA — y leerlo, modificarlo y redistribuirlo (conservando la licencia y la línea `Required Notice`).
-- **No puedes** usarlo para ofrecer un producto que compita con UNIORA — por ejemplo revenderlo, reempaquetarlo, u ofrecerlo (o un sustituto suyo) como tu propio producto o servicio, de pago o gratuito.
+- **Puedes** usarlo, modificarlo y redistribuirlo, para cualquier fin — personal, interno o comercial, incluido un SaaS de pago o un producto construido sobre UNIORA — con una concesión expresa de patentes de cada colaborador.
+- **Debes** conservar el texto de la licencia y el archivo [`NOTICE`](NOTICE) al redistribuirlo, e indicar qué archivos modificaste.
+- **No puedes** usar el nombre ni el logo de UNIORA como propios, y se entrega sin garantía.
 
-Es un resumen en lenguaje llano; lo único que rige es el archivo [`LICENSE`](LICENSE) (en inglés). Ten en cuenta que no es una licencia "open source" aprobada por la OSI.
+Es un resumen en lenguaje llano; lo único que rige es el archivo [`LICENSE`](LICENSE) (en inglés).

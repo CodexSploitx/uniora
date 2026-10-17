@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "description": "Behavioural conformance suite every @uniora/core storage adapter must pass (never published).",
-  "license": "PolyForm-Shield-1.0.0",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",

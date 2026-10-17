@@ -11,7 +11,7 @@ Organizations, teams, roles, permissions and feature flags — for any auth prov
 [![GitHub stars](https://img.shields.io/github/stars/CodexSploitx/uniora?style=social)](https://github.com/CodexSploitx/uniora)
 ![status](https://img.shields.io/badge/status-early%20development-orange)
 [![npm](https://img.shields.io/npm/v/@uniora/core?label=%40uniora%2Fcore&color=efb100)](https://www.npmjs.com/org/uniora)
-![license](https://img.shields.io/badge/license-PolyForm%20Shield%201.0.0-blue)
+![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)
 ![pnpm](https://img.shields.io/badge/monorepo-pnpm%20workspaces-yellow)
 
@@ -409,9 +409,10 @@ Issues and pull requests are welcome — this is early-stage, so open a discussi
 
 ## License
 
-UNIORA is **source-available** under the [PolyForm Shield License 1.0.0](LICENSE) — free to use, but it can't be sold.
+UNIORA is **open source** under the [Apache License 2.0](LICENSE) — an [OSI-approved](https://opensource.org/license/apache-2-0) license.
 
-- **You can** use it, for free, in any project — personal, internal or commercial, including a paid SaaS or product that *depends on* UNIORA — and read, modify and redistribute it (keeping the license and the `Required Notice` line).
-- **You can't** use it to provide a product that competes with UNIORA — for example reselling it, repackaging it, or offering it (or a substitute for it) as your own paid or free product or service.
+- **You can** use, modify and redistribute it, for any purpose — personal, internal or commercial, including a paid SaaS or a product built on UNIORA — with an express patent grant from every contributor.
+- **You must** keep the license text and the [`NOTICE`](NOTICE) file when you redistribute it, and say which files you changed.
+- **You can't** use the UNIORA name or logo as your own, and it comes with no warranty.
 
-That's a plain-language summary; the [`LICENSE`](LICENSE) file is the only thing that governs. Note this is not an OSI-approved "open source" license.
+That's a plain-language summary; the [`LICENSE`](LICENSE) file is the only thing that governs.

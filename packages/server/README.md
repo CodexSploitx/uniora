@@ -27,4 +27,4 @@ await server.listen({ host: "127.0.0.1", port: 8787 }); // off loopback it needs
 
 Guides: [the server](https://github.com/CodexSploitx/uniora/blob/main/guides/server.md) · [API reference](https://github.com/CodexSploitx/uniora/blob/main/guides/server-api.md).
 
-License: [PolyForm Shield 1.0.0](https://github.com/CodexSploitx/uniora/blob/main/LICENSE).
+License: [Apache-2.0](https://github.com/CodexSploitx/uniora/blob/main/LICENSE).

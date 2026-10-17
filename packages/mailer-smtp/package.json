@@ -2,7 +2,7 @@
   "name": "@uniora/mailer-smtp",
   "version": "0.14.0",
   "description": "SMTP delivery for UNIORA invitations: configured from .env, with professional multilingual e-mail templates",
-  "license": "PolyForm-Shield-1.0.0",
+  "license": "Apache-2.0",
   "keywords": [
     "uniora",
     "smtp",
