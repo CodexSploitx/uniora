@@ -40,7 +40,7 @@ const FEATS = [
   { key: "advanced_reports", label: "advanced_reports" },
 ];
 
-import { sparks } from "./extras.js";
+import { sparks } from "./fx.js";
 
 const L = {
   who: { en: "Identity resolved", es: "Identidad resuelta" },
