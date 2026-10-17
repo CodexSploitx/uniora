@@ -21,4 +21,4 @@ const storage = createPostgresStorage(pool);
 
 Documentation: [Storage guide](https://github.com/CodexSploitx/uniora/blob/main/guides/storage.md) and the [full index](https://github.com/CodexSploitx/uniora/blob/main/guides/README.md).
 
-License: [PolyForm Shield 1.0.0](https://github.com/CodexSploitx/uniora/blob/main/LICENSE).
+License: [Apache-2.0](https://github.com/CodexSploitx/uniora/blob/main/LICENSE).

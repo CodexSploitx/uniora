@@ -2,7 +2,7 @@
   "name": "@uniora/cli",
   "version": "0.14.0",
   "description": "Official UNIORA CLI: init, check, migrate, doctor and studio",
-  "license": "PolyForm-Shield-1.0.0",
+  "license": "Apache-2.0",
   "keywords": [
     "uniora",
     "cli",

@@ -38,7 +38,7 @@ if (tag) {
 
 for (const { dir, pkg } of packages) {
   const at = `${pkg.name} (${dir})`;
-  if (pkg.license !== "PolyForm-Shield-1.0.0") problems.push(`${at}: license debe ser PolyForm-Shield-1.0.0`);
+  if (pkg.license !== "Apache-2.0") problems.push(`${at}: license debe ser Apache-2.0`);
   if (!existsSync(join(dir, "LICENSE"))) problems.push(`${at}: falta LICENSE dentro del paquete`);
   if (!Array.isArray(pkg.files) || pkg.files.length === 0) {
     problems.push(`${at}: falta "files" (sin él npm respeta .gitignore y excluye dist/)`);

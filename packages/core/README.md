@@ -48,4 +48,4 @@ const unlocked = await engine.access.check({ identity, organizationId, permissio
 
 Documentation: [Core reference](https://github.com/CodexSploitx/uniora/blob/main/guides/core-reference.md) and the [full index](https://github.com/CodexSploitx/uniora/blob/main/guides/README.md).
 
-License: [PolyForm Shield 1.0.0](https://github.com/CodexSploitx/uniora/blob/main/LICENSE).
+License: [Apache-2.0](https://github.com/CodexSploitx/uniora/blob/main/LICENSE).

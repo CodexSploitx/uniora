@@ -2,7 +2,7 @@
   "name": "@uniora/express",
   "version": "0.14.0",
   "description": "Express middleware and invitation routes for @uniora/core: deny-by-default authorization guards for routes. No hard dependency on the `express` package.",
-  "license": "PolyForm-Shield-1.0.0",
+  "license": "Apache-2.0",
   "keywords": [
     "uniora",
     "express",

@@ -5,8 +5,8 @@
     "version": "0.0.0-docs",
     "description": "Organizations, roles, permissions, teams, policies and invitations, as a service you run yourself. Your backend calls it with an API key; your auth provider stays in your project. Every call needs `Authorization: Bearer <key>`.",
     "license": {
-      "name": "PolyForm-Shield-1.0.0",
-      "identifier": "PolyForm-Shield-1.0.0"
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
     }
   },
   "servers": [

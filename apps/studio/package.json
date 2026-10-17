@@ -2,7 +2,7 @@
   "name": "@uniora/studio",
   "version": "0.14.0",
   "description": "UNIORA Studio: local-first admin UI for UNIORA data. Launched via `npx uniora studio`.",
-  "license": "PolyForm-Shield-1.0.0",
+  "license": "Apache-2.0",
   "keywords": [
     "uniora",
     "admin",
