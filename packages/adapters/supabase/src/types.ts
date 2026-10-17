@@ -13,6 +13,8 @@ export interface SupabaseUser {
   /** Set by Supabase once the address is confirmed. */
   readonly email_confirmed_at?: string | null;
   readonly confirmed_at?: string | null;
+  /** What the OAuth provider or the sign-up form filled in (`full_name`, `name`, `avatar_url`, `picture`...). Read only by `toProfile`. */
+  readonly user_metadata?: Readonly<Record<string, unknown>> | null;
 }
 
 export interface SupabaseAuthResponse {

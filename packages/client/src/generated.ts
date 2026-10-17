@@ -51,6 +51,15 @@ export interface Member {
   updatedAt: string;
   lastActiveAt?: string;
   invitedBy?: Identity;
+  /** Present when the application has stored one for this person (`PUT /v1/profiles`). */
+  profile?: {
+    /** The person's name. */
+    displayName?: string;
+    /** The e-mail the auth provider reported. Display data only: never proof of anything. */
+    email?: string;
+    /** An `http(s)` URL of the picture. */
+    avatarUrl?: string;
+  };
   /** Present while the member is blocked or suspended. */
   blocked?: {
     at: string;
@@ -362,6 +371,10 @@ export interface Operations {
         description?: string;
         defaultEnabled: boolean;
         parentKey?: string;
+        /** Why the kill switch (`disableEverywhere`) turned the default off, when it was given. Absent otherwise. */
+        reason?: string;
+        /** When the kill switch last turned the default off. Absent if it never did. */
+        updatedAt?: string;
       }[];
       nextCursor: string | null;
     };
@@ -576,6 +589,12 @@ export interface Operations {
       /** The user's stable id in your auth provider. Never an e-mail address. */
       subject: string;
     };
+    /** Who the owner is (name, e-mail, avatar URL), stored with them so Studio shows a person and not an id. Display data only. */
+    ownerProfile?: {
+      displayName?: string | null;
+      email?: string | null;
+      avatarUrl?: string | null;
+    };
   };
     output: {
       organization: Organization;
@@ -606,6 +625,10 @@ export interface Operations {
         defaultEnabled: boolean;
         parentKey?: string;
         blockedBy?: string;
+        /** For an organization without an override: why the feature was turned off everywhere (the kill switch's reason), when it was given. */
+        defaultReason?: string;
+        /** When the kill switch turned the default off, alongside `defaultReason`. */
+        defaultUpdatedAt?: string;
       })[];
       nextCursor: string | null;
     };
@@ -1185,6 +1208,30 @@ export interface Operations {
       definition: Record<string, JsonValue>;
       hash: string;
       analysis: JsonValue;
+    };
+  };
+  /** Store the profiles of your users */
+  "profiles.put": {
+    input: {
+    /** The people to store. */
+    profiles: ({
+      /** Who the question is about. */
+      identity: {
+        /** An opaque label for the auth system the subject belongs to (not necessarily its vendor name). Omit it to use the server's default label. */
+        provider?: string;
+        /** The user's stable id in your auth provider. Never an e-mail address. */
+        subject: string;
+      };
+      displayName?: string | null;
+      email?: string | null;
+      avatarUrl?: string | null;
+    })[];
+  };
+    output: {
+      /** People who have a stored profile after the call. */
+      stored: number;
+      /** People who have none: nothing was sent about them, or everything stored was cleared. */
+      empty: number;
     };
   };
   /** Copy a role under a new name */
@@ -1871,7 +1918,7 @@ export const OPERATIONS = {
     path: "/v1/organizations",
     pathParams: [],
     query: [],
-    body: ["name","slug","owner"],
+    body: ["name","slug","owner","ownerProfile"],
     hasBody: true,
     scope: "organizations:create",
     delegated: false,
@@ -2358,6 +2405,22 @@ export const OPERATIONS = {
     actorToken: false,
     platform: false,
     safe: true,
+    ifMatch: false,
+    idempotent: false,
+    status: 200,
+  },
+  "profiles.put": {
+    method: "PUT",
+    path: "/v1/profiles",
+    pathParams: [],
+    query: [],
+    body: ["profiles"],
+    hasBody: true,
+    scope: "profiles:write",
+    delegated: false,
+    actorToken: false,
+    platform: false,
+    safe: false,
     ifMatch: false,
     idempotent: false,
     status: 200,

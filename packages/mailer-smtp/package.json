@@ -1,8 +1,8 @@
 {
   "name": "@uniora/mailer-smtp",
-  "version": "0.10.1",
+  "version": "0.14.0",
   "description": "SMTP delivery for UNIORA invitations: configured from .env, with professional multilingual e-mail templates",
-  "license": "PolyForm-Shield-1.0.0",
+  "license": "Apache-2.0",
   "keywords": [
     "uniora",
     "smtp",
@@ -52,6 +52,6 @@
     "@types/smtp-server": "^3.5.13",
     "smtp-server": "^3.19.17",
     "typescript": "^5.6.3",
-    "vitest": "^2.1.4"
+    "vitest": "^4.1.11"
   }
 }

@@ -47,7 +47,12 @@ export type { LeaveOrganizationInput, TransferOwnershipInput } from "./membershi
 export { leaveOrganization, transferOwnership } from "./membership/ownership.js";
 
 export type { IdentityProfile, ListMembersWithProfilesOptions, MemberListing, ProfileResolver } from "./profile/profiles.js";
-export { MAX_PROFILE_BATCH, listMembersWithProfiles, sanitizeProfile } from "./profile/profiles.js";
+export { MAX_PROFILE_BATCH, cleanAvatarUrl, cleanProfileText, listMembersWithProfiles, sanitizeProfile } from "./profile/profiles.js";
+export type { IdentityProfileInput, IdentityProfileRepository, NormalizedProfileInput, StoredIdentityProfile } from "./profile/repository.js";
+export { normalizeProfileInput } from "./profile/repository.js";
+export { createMemoryProfileRepository } from "./profile/memory.js";
+export type { ProfileSync, ProfileSyncOptions } from "./profile/sync.js";
+export { createProfileSync } from "./profile/sync.js";
 
 export type { Role } from "./role/types.js";
 export type {

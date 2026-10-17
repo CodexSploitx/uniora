@@ -45,6 +45,8 @@ import { MIGRATION_0042_POLICY_KINDS } from "./migrations/0042_policy_kinds.js";
 import { MIGRATION_0043_API_CREDENTIALS } from "./migrations/0043_api_credentials.js";
 import { MIGRATION_0044_RATE_LIMITS } from "./migrations/0044_rate_limits.js";
 import { MIGRATION_0045_WEBHOOKS } from "./migrations/0045_webhooks.js";
+import { MIGRATION_0046_IDENTITY_PROFILES } from "./migrations/0046_identity_profiles.js";
+import { MIGRATION_0047_FEATURE_DEFAULT_REASON } from "./migrations/0047_feature_default_reason.js";
 
 interface Migration {
   readonly id: string;
@@ -98,6 +100,8 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0043_api_credentials", sql: MIGRATION_0043_API_CREDENTIALS },
   { id: "0044_rate_limits", sql: MIGRATION_0044_RATE_LIMITS },
   { id: "0045_webhooks", sql: MIGRATION_0045_WEBHOOKS },
+  { id: "0046_identity_profiles", sql: MIGRATION_0046_IDENTITY_PROFILES },
+  { id: "0047_feature_default_reason", sql: MIGRATION_0047_FEATURE_DEFAULT_REASON },
 ];
 
 /**

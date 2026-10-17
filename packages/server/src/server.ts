@@ -7,7 +7,7 @@ import { isIPv6 } from "node:net";
 import type { AddressInfo } from "node:net";
 import { authenticateApiKey, clientMayAccessOrganization, createAuthorizationEngine } from "@uniora/core";
 import type { ApiPrincipal, Identity } from "@uniora/core";
-import { ServerConfigError, isLoopbackHost, resolveConfig } from "./config.js";
+import { ServerConfigError, isLoopbackHost, normalizeProxyAddress, resolveConfig } from "./config.js";
 import type { ResolvedConfig, UnioraServerOptions } from "./config.js";
 import { ApiError, errors, problemOf, toApiError } from "./errors.js";
 import { assertJsonContentType, hasBody, parseJsonBody, queryToObject, readBody, send } from "./http.js";
@@ -97,9 +97,18 @@ export function throttleKey(address: string): string {
   return `${groups.slice(0, 4).map((group) => group.toLowerCase().replace(/^0+(?=.)/, "")).join(":")}::/64`;
 }
 
-function sourceOf(req: IncomingMessage, hops: number): string {
+/**
+ * `X-Forwarded-For` is only trustworthy when the request really came through the proxy it claims to: a direct connection
+ * (the attacker's own, or a health check that skips the proxy) can write any value it likes into that header. With
+ * `trustedProxies` configured, a direct connection from outside that set is treated as `hops: 0` — its socket address, the
+ * header ignored — so a caller that is NOT the real proxy can never borrow a fake address to evade the failed-authentication
+ * throttle. Without `trustedProxies` (left unset for backward compatibility) every direct connection is trusted, which is
+ * only as safe as the network guaranteeing that nothing but the real proxy can ever reach this process.
+ */
+function sourceOf(req: IncomingMessage, hops: number, trustedProxies: ReadonlySet<string> | undefined): string {
   const socket = req.socket.remoteAddress ?? "unknown";
   if (hops === 0) return socket;
+  if (trustedProxies && !trustedProxies.has(normalizeProxyAddress(socket))) return socket;
   const header = req.headers["x-forwarded-for"];
   const list = (Array.isArray(header) ? header.join(",") : (header ?? "")).split(",").map((part) => part.trim()).filter((part) => part !== "");
   return (list[list.length - hops] ?? socket).slice(0, 64);
@@ -141,6 +150,13 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
       /* the operator's sink is down: nothing else to do */
     }
   };
+
+  if (config.trustedProxyHops > 0 && !config.trustedProxies) {
+    log({
+      level: "warn",
+      msg: "trustedProxyHops is set without trustedProxies: X-Forwarded-For is trusted from ANY direct connection, so a caller that reaches this process without going through the real proxy can forge its own address and run past the failed-authentication throttle. Set `trustedProxies` to the real proxy's address(es) to close this gap.",
+    });
+  }
 
   const localRate = new RateLimiter({ perSecond: limits.ratePerSecond, burst: limits.rateBurst });
   // Several instances share one budget per key when the storage keeps it (`sharedRateLimit`); each falls back to its own limit if the storage fails.
@@ -210,7 +226,7 @@ export function createUnioraServer(options: UnioraServerOptions): UnioraServer {
     let delegatedContext: DelegatedContext | undefined;
     let applicationContext: ApplicationContext | undefined;
     let platformContext: PlatformContext | undefined;
-    const source = sourceOf(req, config.trustedProxyHops);
+    const source = sourceOf(req, config.trustedProxyHops, config.trustedProxies);
 
     const respond = (body: unknown, code: number, headers?: Record<string, string>, contentType?: string) => {
       status = code;

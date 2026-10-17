@@ -1,8 +1,8 @@
 {
   "name": "@uniora/client",
-  "version": "0.10.1",
+  "version": "0.14.0",
   "description": "The typed client of the UNIORA API: decisions, organizations, roles, teams, policies and invitations from your backend, plus a remote authorization engine for the Express and Next guards.",
-  "license": "PolyForm-Shield-1.0.0",
+  "license": "Apache-2.0",
   "keywords": [
     "uniora",
     "authorization",
@@ -52,6 +52,6 @@
     "@types/better-sqlite3": "^9.6.0",
     "better-sqlite3": "^13.0.3",
     "typescript": "^5.6.3",
-    "vitest": "^2.1.4"
+    "vitest": "^4.1.11"
   }
 }

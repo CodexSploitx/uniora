@@ -1,4 +1,15 @@
-import type { AccessCheckInput, AuthorizationEngine, CanInput } from "@uniora/core";
+import type { AccessCheckInput, AuthorizationEngine, CanInput, IdentityProfile, ProfileSync } from "@uniora/core";
+
+/**
+ * Keeps the stored profile (name, e-mail, avatar) of the caller current: pass `createProfileSync(storage)` from `@uniora/core` and the
+ * `profile` your auth adapter returned (`resolveIdentityWithProfile`). The first request of every person, new or long-standing, stores
+ * it; afterwards it is written only when it changes. It runs for the identity of the check, whether or not the check then allows it,
+ * and never throws. Display data only: it is never part of the decision.
+ */
+export interface ProfileSyncHook {
+  syncProfile?: ProfileSync;
+  profile?: IdentityProfile;
+}
 
 /**
  * Thrown by `assertCan`/`assertAccess` when the check fails. Deliberately a
@@ -22,13 +33,15 @@ export class AuthorizationDeniedError extends Error {
  * (fail-closed by construction, not by discipline — uniora-security-engineering
  * INV-010). Delegates to `engine.can()` unchanged.
  */
-export async function assertCan(engine: AuthorizationEngine, input: CanInput): Promise<void> {
+export async function assertCan(engine: AuthorizationEngine, input: CanInput, options: ProfileSyncHook = {}): Promise<void> {
+  if (options.syncProfile && options.profile) await options.syncProfile(input.identity, options.profile);
   const allowed = await engine.can(input);
   if (!allowed) throw new AuthorizationDeniedError();
 }
 
 /** Same as `assertCan`, but for `engine.access.check()` (permission + feature). */
-export async function assertAccess(engine: AuthorizationEngine, input: AccessCheckInput): Promise<void> {
+export async function assertAccess(engine: AuthorizationEngine, input: AccessCheckInput, options: ProfileSyncHook = {}): Promise<void> {
+  if (options.syncProfile && options.profile) await options.syncProfile(input.identity, options.profile);
   const allowed = await engine.access.check(input);
   if (!allowed) throw new AuthorizationDeniedError();
 }

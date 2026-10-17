@@ -1,8 +1,8 @@
 {
   "name": "@uniora/sqlite",
-  "version": "0.10.1",
+  "version": "0.14.0",
   "description": "SQLite storage adapter for @uniora/core, over better-sqlite3",
-  "license": "PolyForm-Shield-1.0.0",
+  "license": "Apache-2.0",
   "keywords": [
     "uniora",
     "sqlite",
@@ -55,6 +55,6 @@
     "@uniora/storage-conformance": "workspace:^",
     "better-sqlite3": "^13.0.3",
     "typescript": "^5.6.3",
-    "vitest": "^2.1.4"
+    "vitest": "^4.1.11"
   }
 }

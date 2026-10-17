@@ -392,6 +392,7 @@ export async function runServerStart(cwd: string, options: ServerOptions): Promi
       credentials: driver.apiCredentials(),
       ...(defaultProvider !== undefined ? { defaultProvider } : {}),
       ...(trustedProxyHops !== undefined ? { trustedProxyHops } : {}),
+      ...(section.trustedProxies ? { trustedProxies: section.trustedProxies } : {}),
       ...(section.limits ? { limits: section.limits } : {}),
       ...(section.actorTokens ? { actorTokens: section.actorTokens } : {}),
       ...(section.machineTokens ? { machineTokens: section.machineTokens } : {}),

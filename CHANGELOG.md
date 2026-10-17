@@ -2,6 +2,81 @@
 
 All notable changes to UNIORA. Packages are released in lockstep, so one version number covers all of them. The format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased
+
+### Changed
+
+- **License: UNIORA moves from PolyForm Shield 1.0.0 to Apache-2.0.** UNIORA is now OSI-approved open source: use, modification and redistribution are allowed for any purpose, including competing products, with an express patent grant. The restriction on competing products no longer applies to new versions; copies already published stay under the license they were received with. No code, API or behavior change.
+  - `LICENSE` (root and every package) is the Apache-2.0 text, a root `NOTICE` carries the copyright line, and the `license` field of every `package.json` is `Apache-2.0`. `scripts/check-release.mjs` now requires `Apache-2.0`.
+  - The OpenAPI `info.license` is `Apache-2.0` (`guides/openapi.json` regenerated); no route, schema, scope, error or event changes, and the generated client is unaffected.
+  - READMEs (root, Spanish and every package) and the website's license section describe the new terms.
+
+## 0.14.0 - 2026-10-14
+
+### Security
+
+- **`vitest` bumped to `^4.1.11` across the whole monorepo (devDependency only, no published-package impact), closing 10 known advisories.** `pnpm audit` (without `--prod`, which CI alone runs) found 3 critical, 2 high and 5 moderate vulnerabilities in `vitest@2.1.9` and its transitive `tinypool`/`@vitest/mocker`: a critical arbitrary-file-read-and-execute when the Vitest UI server is listening (GHSA-5xrq-8626-4rwp), two critical prototype-pollution-to-RCE issues in `tinypool`'s worker options (GHSA-5gmw-xhrv-c9v3, GHSA-85c8-ppgw-ccpr), and a moderate path-traversal in `@vitest/mocker`'s redirect mock (GHSA-82fw-gwwq-j7x9). None of these are reachable by anyone using a published UNIORA package — `vitest` is a devDependency everywhere, never shipped — but they're real RCE risk for this repository's own local development and CI if the attack surface (the Vitest UI flag, attacker-influenced worker options) were ever exercised. No fix exists on the 2.x or 3.x lines for the `@vitest/mocker` advisory specifically (its version numbering tracks vitest's major), so the fix is the major-version bump rather than a patch release.
+  - `packages/database/conformance` needed an explicit `@types/node` devDependency it had been getting through transitive hoisting from `vitest`'s own dependency tree; the bump changed that tree enough to break the implicit resolution. Added explicitly, matching every sibling package.
+  - `pnpm audit` now reports only the pre-existing, already-documented `braces` advisory (no fix available; see `pnpm-workspace.yaml`), whose comment is corrected to also name `@uniora/studio`'s devDependencies as a path to it (previously said `apps/playground` only).
+  - Full `pnpm build && pnpm typecheck && pnpm test` (memory, SQLite and real Postgres) passes with the same vitest config files unchanged (no workspace/coverage/pool options to migrate).
+
+- **A role name that is a Latin/Cyrillic/Greek look-alike of another role's name — notably `Owner` — no longer slips past name uniqueness.** `owner` was already a reserved role *key* (`role_key_reserved`), closing the ASCII near-miss ("OWNER", "Owner ") the ordinary derived-key path would hit. But a role *name* using a confusable code point from another script — Cyrillic `О` instead of Latin `O`, which renders identically in every common UI font — derived to an unrelated key (`"Оwner"` → `wner`) and sailed through as a brand-new role, with whatever permissions its creator held. Found during a security audit; the real-world risk is a non-owner admin (anyone holding `roles.manage`) creating a role that reads as "Owner" in a role picker, a support ticket or an audit-log line, to confuse a teammate or a support agent into trusting it.
+  - **`normalizeRoleName`** (`@uniora/core`) now folds the common single-codepoint Cyrillic and Greek look-alikes of Latin letters to their Latin equivalent before the existing diacritic-stripping/lowercasing, so a homoglyph name collides with the real name the same way `"Recepción"`/`"recepcion"` already did (`role_exists`, 409) — general-purpose, not an `Owner`-only special case.
+  - **`sanitizeRoleName`** now also rejects zero-width and bidirectional-control code points outright (`role_name_invalid`, 400): they have no legitimate reason to appear in a name shown to people, only to hide characters from a reader while a comparison still sees them.
+  - **HTTP API**: `role_name_invalid` is now a documented, actually-reachable response of `POST /v1/organizations/:organizationId/roles`, `PATCH /v1/organizations/:organizationId/roles/:roleId` and `POST /v1/organizations/:organizationId/roles/:roleId/clone` (previously unreachable through these routes, since the request schema already bounds name length — only the new content check can trigger it); `roles.update` also gains the already-existing `role_exists` in its documented errors, which it could already return. No new route, field, scope or event. `openapi.json`, `server-api.md` regenerated; the generated client is unaffected (error codes are not part of its typed surface).
+  - Docs: `guides/core-reference.md`'s role table explains the new collision and rejection.
+
+- **`TeamService` now refuses to let someone touch a team member who holds more power than they do, in that team.** `AccessAdminService` (organization-level) has always enforced "you do not touch whoever holds more power than you" for every member-touching operation; `TeamService` enforced the symmetric "no escalation through roles" for *giving* a role (`assignRole`), but `removeMember`, `suspendMember`, `reactivateMember`, `setResponsibility` and `unassignRole` had no equivalent check at all — only a plain `teams.members.remove`/`teams.members.manage` permission, in that team. A team-scoped role is real, exercised authority (`engine.can({ teamId })` merges it with organization-wide roles, `authorization/engine.ts`), so someone holding only the narrowest team permission could remove, suspend, demote or strip the role of a teammate whose own team-scoped role granted far more — including permissions the actor never held anywhere. Found during a security audit; reproduced live with a member holding only `teams.members.manage` stripping another member's role that held a sensitive, unrelated business permission.
+  - `removeMember`, `suspendMember`, `reactivateMember`, `setResponsibility`, `assignRole` and `unassignRole` now also refuse (`team_target_stronger`) when the target's power in that team — organization-wide roles plus the roles they hold in that very team — is not fully covered by the actor's own (same scope). The organization Owner, and anyone who genuinely covers everything the target holds, is unaffected.
+  - **HTTP API**: no new route, field, scope or error code — `team_target_stronger` maps to the same generic `forbidden` (403) response `team_forbidden` already produced (`guides/teams.md` already documents this as "never says why beyond forbidden"), so `openapi.json`/`server-api.md` are unaffected.
+  - Docs: `guides/teams.md`'s rules list gains this bullet, next to "No escalation through roles".
+
+### Added
+
+- **`trustedProxies` closes a spoofing gap in `trustedProxyHops`.** With `trustedProxyHops > 0` and no `trustedProxies`, the server trusted `X-Forwarded-For` from ANY direct connection, not only from the real reverse proxy; a caller that reaches the process without actually going through that proxy (a misconfigured network, a second listener, a health-check path) could forge a fresh address on every request and run past the failed-authentication throttle indefinitely. Found during a security audit of the permission/API surface.
+  - **`createUnioraServer({ trustedProxies })`** (new, optional, `@uniora/server`): the exact address(es) of the proxy `trustedProxyHops` names. When set, a direct connection from anywhere else is treated as `trustedProxyHops: 0` (its own socket address, `X-Forwarded-For` ignored) — a caller that is not the real proxy can no longer borrow a fake address. Backward compatible: left unset, behavior is unchanged, but the server now logs one `warn` at start when `trustedProxyHops > 0` without it.
+  - No HTTP route, scope, schema or event changes: this is a server construction option, not part of the HTTP API surface, so `openapi.json`, `server-api.md` and the generated client are unaffected.
+  - Docs: `guides/server.md` explains the risk and the option, next to `trustedProxyHops`.
+
+### Documentation
+
+- **Warning: never name a permission `policies.<anything>`.** `policies.*` is the reserved prefix the policy engine exempts from ALL policies (so nobody can lock themselves out of fixing the rules). The exemption is a plain prefix match on the permission key, not a check that the permission is really UNIORA's own — a host's own business permission that happens to share the prefix (an insurance company's `policies.claims.approve`, say) falls into the same exemption silently: no policy can ever govern it. Found during a security audit; not a code change, since the engine already fails loud (`policy_definition_invalid`) the moment anyone tries to write a policy for such a permission — the registration of the permission itself gives no such warning, which is the gap this closes. `guides/policies.md` now calls this out explicitly, next to where the exemption is first described.
+
+## 0.13.0 - 2026-10-13
+
+Includes new migrations: Postgres `0047`, SQLite `0032` (run `uniora migrate`). They only add two nullable columns to the feature definitions (`default_reason`, `default_updated_at`). Nothing existing changes.
+
+### Added
+
+- **The reason of the kill switch is now stored and readable per organization.** `features.disableEverywhere(key, { reason })` used to leave the reason only in the audit log (`feature.disabled_everywhere`); an application could not tell an organization why a feature was unavailable.
+  - **Embedded API**: `FeatureDefinition` has optional `reason` and `updatedAt` (set by `disableEverywhere`; kept when the app registers the feature again with the default off, cleared when it is registered with `defaultEnabled: true` or the kill switch is pulled again without a reason). `EffectiveFeature` has optional `defaultReason` and `defaultUpdatedAt`, returned by `listEffective` / `listEffectiveMany` for organizations **without** an override. Same behaviour in memory, Postgres and SQLite (shared conformance test).
+  - **HTTP API / `@uniora/client`**: `organizations.features` items gain optional `defaultReason` and `defaultUpdatedAt`; `features.list` items gain optional `reason` and `updatedAt`. No new route, scope, error or event; all fields are optional, so a client from before keeps working.
+  - Docs: `concepts.md`, `core-reference.md` and `server.md` explain how to show the reason. `server-api.md`, `openapi.json` and the generated client are regenerated; in the reference the example ids and timestamps after the new feature moved by a few steps because the example deployment now has one killed feature (`legacy_exports`).
+
+## 0.12.0 - 2026-10-13
+
+### Added
+
+- **Profiles over the HTTP API** (for UNIORA used as an external server; the embedded library already had them in 0.11.0).
+  - **`PUT /v1/profiles`** (`profiles.put`, `uniora.profiles.put` in `@uniora/client`) stores the display name, e-mail and avatar URL of up to 100 people per call, together or not at all. A field left out is kept, `null` clears it, and the avatar must be an `http(s)` URL (anything else is a `400`). Display data only, not audited.
+  - **New scope `profiles:write`**, not sensitive. The route needs a client with every organization (`*`), because a person's profile is the same in all of them. It is in Studio's scope picker (group *provision*, English and Spanish) and accepted by `uniora server clients create --scopes`.
+  - **Member reads carry the profile**: `members.list` and `members.get` return an optional `profile` for the people who have one, and `q` on `members.list` also matches the name or e-mail of the profile. Both are additive and optional: a client from before this change keeps working.
+  - **`organizations.create` accepts an optional `ownerProfile`**, stored in the same transaction as the owner. A client without `profiles:write` that sends one is refused with a `403` and nothing is created.
+  - The reference (`server-api.md`), `openapi.json` and the generated client are regenerated. In the reference, the timestamps and example ids of the examples after the new ones moved by a few steps; nothing else about the other operations changed.
+
+## 0.11.0 - 2026-10-12
+
+Includes new migrations: Postgres `0046`, SQLite `0031` (run `uniora migrate`). They only add a table, `identity_profiles`. Nothing existing changes.
+
+### Added
+
+- **Stored profiles: Studio shows who a member is, not just an id.** A member used to be a bare provider id (`2eb65215-…`) because UNIORA only kept `(provider, subject)`. It now also stores the person's **display name, e-mail and avatar URL** (`storage.profiles`: `upsert`, `findMany`, `delete`; a plain URL, never an object). It is global per identity (the same person in every organization), display data only (never read by an authorization decision) and writing it is not audited, since it can run on every sign-in.
+  - **Every adapter reads it from its provider**: `toProfile(user)` in `@uniora/supabase` (`user_metadata`), `@uniora/clerk` (session-token claims or a Backend `User`), `@uniora/auth0` (`name`, `nickname`, `email`, `picture`) and `@uniora/better-auth` (`name`, `email`, `image`), plus `resolveIdentityWithProfile`, which verifies once and returns `{ identity, profile }` (same fail-closed contract as `resolveIdentity`).
+  - **Existing members fill themselves in**: `createProfileSync(storage)` returns a `sync(identity, profile)` to call where you already resolve the caller. The first request a person makes after the upgrade stores their profile; afterwards it is written only when it changes or after `minIntervalMs` (15 minutes), it never throws, and a field the provider did not give keeps what is stored. No migration script.
+  - **`@uniora/express` and `@uniora/next` keep it current for you**: pass `syncProfile: createProfileSync(storage)` to `authorize` / `requirePermission` / `requireFeature` (with `profile` in the context `resolve` returns), or `{ syncProfile, profile }` as the last argument of `assertCan`, `assertAccess` and `authorizeRoute`. The profile of every authenticated caller is stored on their request, whether or not the check then allows them.
+  - **Studio**: the members tables and the member page show the avatar (initials when there is none), the name, the e-mail and, underneath, the provider's id. The members search also finds a person by the **name or e-mail** of their profile (`storage.profiles.search`, and `orIdentities` on `memberships.searchListing` / `search` / `count`, which ADDS those identities to what the term matches; a search without it keeps its exact statement and plan).
+  - `listMembersWithProfiles` now also reads the stored profiles (the resolver, when given, still wins field by field). An avatar URL is capped at 2,048 characters and dropped, not cut, when longer.
+
 ## 0.10.1 - 2026-10-12
 
 ### Fixed

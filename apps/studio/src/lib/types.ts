@@ -32,10 +32,20 @@ export interface RoleRef {
   isOwnerRole: boolean;
 }
 
+/** What a screen shows about a person, as the host's auth provider reported it (stored by UNIORA). All optional: not every provider gives all three. */
+export interface ProfileView {
+  displayName?: string;
+  email?: string;
+  /** Just a URL, never an object. */
+  avatarUrl?: string;
+}
+
 /** A member with its roles already resolved to names (never raw role ids the client would have to look up). */
 export interface MemberRow {
   id: string;
   identity: IdentityView;
+  /** The stored name, e-mail and avatar, when the host has reported them; absent until the person is next seen by the app. */
+  profile?: ProfileView;
   /** A short preview only (Owner first, then alphabetical) — never every role a member holds. */
   roles: RoleRef[];
   /** How many roles the member holds in total (`roles.length` may be smaller). */
@@ -62,6 +72,7 @@ export interface RoleRow {
 export interface MemberHeader {
   id: string;
   identity: IdentityView;
+  profile?: ProfileView;
   organization: { id: string; name: string };
   /** Holds the protected Owner role: full access by design (a flag, not a list). */
   isOwner: boolean;

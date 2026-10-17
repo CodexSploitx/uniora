@@ -97,6 +97,7 @@ audited with the operator who made it.
 
 ```bash
 uniora server clients create --name signup-worker --scopes organizations:create --orgs '*'
+uniora server clients create --name profile-sync --scopes profiles:write --orgs '*'   # stores the name, e-mail and avatar of your users
 uniora server clients list
 uniora server clients update backend --scopes check,organizations:read,members:write,actor:assert
 uniora server clients disable backend            # every key of the client stops on its next request
@@ -129,6 +130,25 @@ It fails closed. It will **not** start when:
   authentication throttle uses, is the `N`-th entry from the right of `X-Forwarded-For`: say how many proxies you really run;
 - an option is invalid (`--default-provider uniora-api`, a limit outside its range...).
 
+**`trustedProxyHops` on its own trusts `X-Forwarded-For` from ANY direct connection, not only from your real proxy.** A rule that
+reads "the caller's address is the `N`-th entry from `X-Forwarded-For`" only holds if every request that reaches the process
+really went through that proxy. If it can ever be reached directly instead — a misconfigured network ACL, a second listener on
+the same host, a load balancer health-check path that skips the proxy, or simply the proxy being down while the port stays open
+— an attacker who connects directly can write whatever they like into `X-Forwarded-For`, including a brand-new fake address on
+every request. That defeats the failed-authentication throttle completely: each attempt looks like it came from a source never
+seen before, so it is never refused. Pass `trustedProxies` (the config file, not a CLI flag — it is a list, like `actorTokens`)
+with the exact address(es) of the real proxy to close this:
+
+```ts
+trustedProxyHops: 1,
+trustedProxies: ["10.0.4.7"], // only this address may set X-Forwarded-For; anyone else gets their own socket address instead
+```
+
+With it, a direct connection from any address other than the ones listed is treated exactly as `trustedProxyHops: 0` for that one
+request: its own socket address, `X-Forwarded-For` ignored. Left unset (for backward compatibility with an existing deployment),
+the server logs one `warn` at start reminding you to set it. There is no CLI flag for `trusted-proxy-hops` without also
+considering this: if you deploy from `uniora.config.mjs`, set both together.
+
 From code (for a custom setup, a framework or two database users):
 
 ```ts
@@ -140,6 +160,7 @@ const server = createUnioraServer({
   credentials: createPostgresApiCredentialStorage(readOnlyPool), // keys: it only READS them
   defaultProvider: "main",
   trustedProxyHops: 1,
+  trustedProxies: ["10.0.4.7"], // the real proxy's address; without it, any direct caller's X-Forwarded-For is trusted
   invitations: { acceptUrl: (token) => `https://app.example.com/invite/${token}`, sender },
 });
 const running = await server.listen({ host: "0.0.0.0", port: 8787, behindTlsProxy: true });
@@ -202,6 +223,26 @@ The organization, its protected Owner role and the founder's membership are crea
 result with `replayed: true`. The client adds a key by itself if you do not pass one and retries are on. Use a client with only
 `organizations:create`, and the list `*` (it cannot be limited to organizations that do not exist yet).
 
+### Profiles: show a person, not an id
+
+UNIORA only knows `(provider, subject)`. To let Studio and your own screens show a **name, an e-mail and an avatar**, your backend stores them
+where it already knows the user (right after verifying their session), or in pages to backfill the users you already have:
+
+```ts
+await uniora.profiles.put({
+  profiles: [{ identity: { subject: session.userId }, displayName: "Ana Pérez", email: "ana@example.com", avatarUrl: "https://cdn.example.com/ana.png" }],
+});
+// at sign-up, in the same call and the same transaction: organizations.create({ name, owner, ownerProfile: { displayName, email } })
+```
+
+Up to 100 people per call, stored together or not at all. A field you leave out is **kept**, `null` clears it, and the avatar is just an `http(s)`
+URL (an object or any other kind of address is refused with a 400). It is display data only: no authorization decision reads it, and writing
+it is not audited (it can run on every sign-in). A person has **one** profile in every organization, so the client needs the `profiles:write`
+scope **and** the list `*` (`ownerProfile` at sign-up also needs that scope: a client with only `organizations:create` that sends one is refused).
+Member reads (`members.list`, `members.get`) then carry a `profile`, and `q` on the member list also finds a person by the name or e-mail of it.
+
+Your auth adapter already turns its user into this shape (`toProfile`, see [Identity adapters](identity-adapters.md#profiles)); send that.
+
 ### Checks and snapshots from your backend
 
 ```ts
@@ -225,6 +266,25 @@ const { permissions, features } = await uniora.decisions.snapshot({ identity: { 
 
 `context` and `session` are things only **your** server can know. UNIORA cannot verify them, so never copy them from what the end user
 sent: build them from your verified session. See [policies](policies.md) for what they are for.
+
+### Why a feature is off for an organization
+
+`uniora.organizations.features(...)` (`GET /v1/organizations/:organizationId/features`) returns each feature as a check sees it. For an
+organization without an override whose feature was switched off for everyone (the kill switch), the item carries the operator's reason:
+
+```ts
+const { items } = await uniora.organizations.features({ organizationId });
+for (const feature of items) {
+  if (!feature.enabled && feature.reason === "default") {
+    // `defaultReason` / `defaultUpdatedAt` are optional: absent means no reason was given.
+    showUnavailable(feature.defaultReason ?? "This feature is not available.");
+  }
+}
+```
+
+The catalog (`GET /v1/features`) also lists `reason` and `updatedAt` on each killed feature. All of these fields are optional, so a client
+from before they existed keeps working. Needs the `organizations:read` scope, as before. The server stores the reason when an operator
+pulls the kill switch from the library (`storage.features.disableEverywhere(key, { reason })`).
 
 ### Changes on behalf of an end user
 
@@ -511,6 +571,7 @@ export default {
   server: {
     defaultProvider: "main",
     trustedProxyHops: 1,
+    trustedProxies: ["10.0.4.7"], // config-file only, like actorTokens: no --trusted-proxies flag
     sharedRateLimit: true,
     actorTokens: [{ provider: "main", issuer: "https://idp.example.com/", audience: "uniora", algorithms: ["RS256"], jwksUri: "https://idp.example.com/.well-known/jwks.json" }],
     requireVerifiedActors: true,

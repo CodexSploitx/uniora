@@ -34,7 +34,8 @@ export type TeamErrorCode =
   | "team_membership_version_conflict"
   | "team_member_unknown"
   | "team_role_invalid"
-  | "team_role_owner_protected";
+  | "team_role_owner_protected"
+  | "team_target_stronger";
 
 export class TeamError extends UnioraError {
   constructor(message: string, code: TeamErrorCode = "team_invalid") {

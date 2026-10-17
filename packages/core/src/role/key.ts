@@ -1,3 +1,4 @@
+import { containsInvisibleOrBidiControl, toConfusableSkeleton } from "../shared/confusables.js";
 import { deriveSlug, matchesSlugPattern, MAX_SLUG_LENGTH } from "../shared/slug.js";
 import { RoleError } from "./repository.js";
 
@@ -27,17 +28,26 @@ export function sanitizeRoleName(name: string): string {
   if (trimmed.length > MAX_NAME_LENGTH) {
     throw new RoleError(`Role name cannot exceed ${MAX_NAME_LENGTH} characters.`);
   }
+  // Zero-width/bidi-control code points have no legitimate reason to appear in a name shown to
+  // people — only to hide characters from a reader while a comparison still sees them (or the
+  // reverse: a visual override that makes a different name read as this one).
+  if (containsInvisibleOrBidiControl(trimmed)) {
+    throw new RoleError("Role name cannot contain invisible or bidirectional-control characters.");
+  }
   return trimmed;
 }
 
 /**
  * The form of a role name that must be unique within an organization: lowercase, without diacritics, whitespace
- * collapsed ("Recepción", "recepcion" and " RECEPCIÓN " are the same name). The roles repositories store it
- * (`name_normalized`) under a unique index, so the check holds under concurrent writes too. The display `name`
- * keeps the caller's spelling.
+ * collapsed ("Recepción", "recepcion" and " RECEPCIÓN " are the same name) — AND with cross-script look-alikes
+ * folded to the Latin letter they are confused with, so "Оwner" (Cyrillic О) also collides with "Owner" instead
+ * of slipping past both the name-uniqueness check and the `owner` reserved-key guard (`RESERVED_KEYS` above) as
+ * a "new", visually-indistinguishable role — see uniora-security-engineering §11 (Owner Protection) and STRIDE
+ * Spoofing. The roles repositories store this form (`name_normalized`) under a unique index, so the check holds
+ * under concurrent writes too. The display `name` keeps the caller's spelling.
  */
 export function normalizeRoleName(name: string): string {
-  return sanitizeRoleName(name).normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+  return toConfusableSkeleton(sanitizeRoleName(name).normalize("NFD").replace(/\p{M}/gu, "").toLowerCase());
 }
 
 /** Validates an explicit, caller-provided key. Throws (fail-closed) if malformed or reserved. */

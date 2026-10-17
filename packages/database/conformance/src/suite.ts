@@ -23,6 +23,7 @@ import {
 import { defineAccessScenarios } from "./access-suite.js";
 import type { StorageHarness } from "./harness.js";
 import { definePolicyConformance } from "./policy-suite.js";
+import { defineProfileConformance } from "./profile-suite.js";
 
 const identity = { provider: "supabase", subject: "user-1" };
 
@@ -51,6 +52,7 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
     // Who may give which power to whom (guard, rules and invitations), over this very database.
     defineAccessScenarios(harness);
     definePolicyConformance(harness);
+    defineProfileConformance(harness);
 
     it("persists organizations, deriving a slug from the name", async () => {
       const storage = harness.storage();
@@ -693,6 +695,54 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         expect((await storage.features.listByOrganization("org-1"))[0]).toMatchObject({ enabled: false, reason: "incidente", updatedBy: operator });
         await expect(storage.features.disableEverywhere("ghost")).rejects.toMatchObject({ code: "feature_unknown" });
         await storage.features.unregister("agenda");
+      });
+
+      it("disableEverywhere guarda el motivo en la definición y listEffective lo devuelve donde no hay override", async () => {
+        const storage = harness.storage();
+        await seedOrganizations(storage, ["org-1", "org-2"]);
+        await storage.features.register({ key: "agenda", name: "Agenda", defaultEnabled: true });
+        await storage.features.register({ key: "reports", name: "Reports", defaultEnabled: true });
+        await storage.features.enable("org-1", "agenda");
+
+        // Antes del interruptor no hay motivo en ninguna parte.
+        expect((await storage.features.listCatalog()).find((f) => f.key === "agenda")).not.toHaveProperty("reason");
+        expect((await storage.features.listEffective("org-2")).find((f) => f.key === "agenda")).not.toHaveProperty("defaultReason");
+
+        const before = Date.now();
+        await storage.features.disableEverywhere("agenda", { actor: operator, reason: "  Retirada el 1 de octubre  " });
+
+        const definition = (await storage.features.listCatalog()).find((f) => f.key === "agenda")!;
+        expect(definition).toMatchObject({ defaultEnabled: false, reason: "Retirada el 1 de octubre" });
+        expect(definition.updatedAt!.getTime()).toBeGreaterThanOrEqual(before - 1000);
+        // La organización sin override lo ve; la que tiene override muestra el suyo y no el de la definición.
+        expect((await storage.features.listEffective("org-2")).find((f) => f.key === "agenda")).toMatchObject({
+          enabled: false,
+          reason: "default",
+          defaultReason: "Retirada el 1 de octubre",
+          defaultUpdatedAt: definition.updatedAt,
+        });
+        const withOverride = (await storage.features.listEffective("org-1")).find((f) => f.key === "agenda")!;
+        expect(withOverride).toMatchObject({ reason: "disabled", override: { enabled: false, reason: "Retirada el 1 de octubre" } });
+        expect(withOverride).not.toHaveProperty("defaultReason");
+        expect((await storage.features.listEffectiveMany(["org-2"]))["org-2"]!.find((f) => f.key === "agenda")).toMatchObject({ defaultReason: "Retirada el 1 de octubre" });
+        // Otra función no se contagia.
+        expect((await storage.features.listEffective("org-2")).find((f) => f.key === "reports")).not.toHaveProperty("defaultReason");
+
+        // Una aplicación que vuelve a registrar su catálogo al arrancar no borra el motivo...
+        await storage.features.register({ key: "agenda", name: "Agenda" });
+        expect((await storage.features.listCatalog()).find((f) => f.key === "agenda")).toMatchObject({ reason: "Retirada el 1 de octubre", updatedAt: definition.updatedAt });
+        // ...apagarla de nuevo sin motivo borra el anterior...
+        await storage.features.disableEverywhere("agenda");
+        const again = (await storage.features.listCatalog()).find((f) => f.key === "agenda")!;
+        expect(again).not.toHaveProperty("reason");
+        expect(again.updatedAt).toBeInstanceOf(Date);
+        // ...y encenderla otra vez lo limpia todo.
+        await storage.features.disableEverywhere("agenda", { reason: "otra vez" });
+        await storage.features.register({ key: "agenda", name: "Agenda", defaultEnabled: true });
+        const back = (await storage.features.listCatalog()).find((f) => f.key === "agenda")!;
+        expect(back).not.toHaveProperty("reason");
+        expect(back).not.toHaveProperty("updatedAt");
+        expect((await storage.features.listEffective("org-2")).find((f) => f.key === "agenda")).toMatchObject({ enabled: true, reason: "default" });
       });
 
       it("una función activa por defecto no se desregistra mientras alguna organización la tenga efectivamente activa", async () => {

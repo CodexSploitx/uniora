@@ -23,4 +23,4 @@ Studio is an operator tool: run it on your own machine or behind your own access
 
 Documentation: [CLI, Studio and configuration guide](https://github.com/CodexSploitx/uniora/blob/main/guides/cli-and-studio.md) and the [full index](https://github.com/CodexSploitx/uniora/blob/main/guides/README.md).
 
-License: [PolyForm Shield 1.0.0](https://github.com/CodexSploitx/uniora/blob/main/LICENSE).
+License: [Apache-2.0](https://github.com/CodexSploitx/uniora/blob/main/LICENSE).

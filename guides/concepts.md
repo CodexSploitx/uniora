@@ -66,7 +66,21 @@ Per-organization switches ("has this organization unlocked advanced reports?"). 
 
 - A feature can be **on by default** (`defaultEnabled`); an override per organization wins.
 - A feature can have a **parent**: turn the parent off and its children are off too (`listEffective` tells you why: `enabled`, `disabled`, `default`, `parent_disabled`).
-- `disableEverywhere(key)` is the kill switch.
+- `disableEverywhere(key, { reason })` is the kill switch: it turns the feature off in every organization and sets its default to off. The reason is stored on the feature itself, so every organization can be told **why** the feature is unavailable without anyone reading the audit log (see [Telling organizations why a feature is off](#telling-organizations-why-a-feature-is-off)).
+
+### Telling organizations why a feature is off
+
+When an organization has no override and the feature is off because the kill switch was pulled, `listEffective` (and `GET /v1/organizations/:organizationId/features`) returns the reason next to the state:
+
+```json
+{ "key": "legacy_exports", "enabled": false, "reason": "default", "defaultEnabled": false,
+  "defaultReason": "Retired on 2026-10-01; use the new export instead.", "defaultUpdatedAt": "2026-10-01T09:30:00.000Z" }
+```
+
+- Show `defaultReason` when it is there; when it is absent, no reason was given, so show your own generic message.
+- An organization **with** its own override reports the reason of that override (`override.reason` in the library). `defaultReason` is only for organizations that follow the default.
+- The reason is trimmed and capped at 500 characters. Turning the kill switch on again without a reason clears the old one, and registering the feature with `defaultEnabled: true` clears it too.
+- Registering the feature again at start-up (with `defaultEnabled` off or omitted) **keeps** the reason, so your deploys do not wipe it.
 
 ## Entitlements
 

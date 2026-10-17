@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveIdentity, toIdentity, toVerifiedEmail } from "./identity.js";
+import { resolveIdentity, resolveIdentityWithProfile, toIdentity, toProfile, toVerifiedEmail } from "./identity.js";
 import type { SupabaseAuthClient } from "./types.js";
 
 function fakeClient(response: SupabaseAuthClient["auth"]["getUser"]): SupabaseAuthClient {
@@ -91,5 +91,44 @@ describe("toVerifiedEmail (audit F-13)", () => {
     expect(toVerifiedEmail(null)).toBeNull();
     expect(toVerifiedEmail(undefined)).toBeNull();
     expect(toVerifiedEmail({ ...({ id: "a", email: "Ana@X.com", email_confirmed_at: "2026-01-01T00:00:00Z" }), email: 42 as unknown as string })).toBeNull();
+  });
+});
+
+describe("toProfile", () => {
+  it("lee nombre, email y avatar del usuario (user_metadata)", () => {
+    expect(
+      toProfile({ id: "u", email: "ana@example.com", user_metadata: { full_name: "Ana Pérez", avatar_url: "https://cdn.example.com/a.png" } }),
+    ).toEqual({ displayName: "Ana Pérez", email: "ana@example.com", avatarUrl: "https://cdn.example.com/a.png" });
+  });
+
+  it("acepta los nombres alternativos (name, picture) y deja fuera lo que falta", () => {
+    expect(toProfile({ id: "u", user_metadata: { name: "Ben", picture: "https://cdn.example.com/b.png" } })).toEqual({
+      displayName: "Ben",
+      avatarUrl: "https://cdn.example.com/b.png",
+    });
+    expect(toProfile({ id: "u" })).toEqual({});
+    expect(toProfile(null)).toEqual({});
+  });
+
+  it("solo guarda una URL http(s) como avatar: un objeto o un data: URL se descartan", () => {
+    expect(toProfile({ id: "u", user_metadata: { avatar_url: { url: "https://x.io/a.png" } } })).toEqual({});
+    expect(toProfile({ id: "u", user_metadata: { avatar_url: "data:image/png;base64,AAAA" } })).toEqual({});
+    expect(toProfile({ id: "u", user_metadata: { avatar_url: "javascript:alert(1)" } })).toEqual({});
+  });
+});
+
+describe("resolveIdentityWithProfile", () => {
+  it("devuelve identidad y perfil del mismo usuario verificado", async () => {
+    const client = fakeClient(async () => ({ data: { user: { id: "u1", email: "a@b.co", user_metadata: { name: "Ana" } } }, error: null }));
+    expect(await resolveIdentityWithProfile(client, "tok")).toEqual({
+      identity: { provider: "supabase", subject: "u1" },
+      profile: { displayName: "Ana", email: "a@b.co" },
+    });
+  });
+
+  it("falla cerrado igual que resolveIdentity", async () => {
+    expect(await resolveIdentityWithProfile(fakeClient(async () => ({ data: { user: null }, error: new Error("x") })), "tok")).toBeNull();
+    expect(await resolveIdentityWithProfile(fakeClient(async () => { throw new Error("red"); }), "tok")).toBeNull();
+    expect(await resolveIdentityWithProfile(fakeClient(async () => ({ data: { user: { id: "u" } }, error: null })), "")).toBeNull();
   });
 });

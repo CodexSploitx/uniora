@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveIdentity, toIdentity, toVerifiedEmail } from "./identity.js";
+import { resolveIdentity, resolveIdentityWithProfile, toIdentity, toProfile, toVerifiedEmail } from "./identity.js";
 import type { Auth0VerifyTokenFn } from "./types.js";
 
 describe("toIdentity", () => {
@@ -86,5 +86,41 @@ describe("toVerifiedEmail (audit F-13)", () => {
     expect(toVerifiedEmail(null)).toBeNull();
     expect(toVerifiedEmail(undefined)).toBeNull();
     expect(toVerifiedEmail({ ...({ sub: "a", email: "Ana@X.com", email_verified: true }), email: 42 as unknown as string })).toBeNull();
+  });
+});
+
+describe("toProfile", () => {
+  it("lee name, email y picture del payload", () => {
+    expect(toProfile({ sub: "auth0|1", name: "Ana Pérez", email: "ana@example.com", picture: "https://s.gravatar.com/a.png" })).toEqual({
+      displayName: "Ana Pérez",
+      email: "ana@example.com",
+      avatarUrl: "https://s.gravatar.com/a.png",
+    });
+  });
+
+  it("usa nickname si no hay name, y devuelve {} sin datos", () => {
+    expect(toProfile({ sub: "auth0|1", nickname: "ana" })).toEqual({ displayName: "ana" });
+    expect(toProfile({ sub: "auth0|1" })).toEqual({});
+    expect(toProfile(undefined)).toEqual({});
+  });
+
+  it("descarta un avatar que no sea una URL http(s)", () => {
+    expect(toProfile({ sub: "auth0|1", picture: "javascript:alert(1)" })).toEqual({});
+  });
+});
+
+describe("resolveIdentityWithProfile", () => {
+  it("devuelve identidad y perfil de la misma verificación", async () => {
+    const verify: Auth0VerifyTokenFn = async () => ({ sub: "auth0|1", name: "Ana" });
+    expect(await resolveIdentityWithProfile(verify, "tok")).toEqual({
+      identity: { provider: "auth0", subject: "auth0|1" },
+      profile: { displayName: "Ana" },
+    });
+  });
+
+  it("falla cerrado: excepción, payload sin sub o token vacío dan null", async () => {
+    expect(await resolveIdentityWithProfile(async () => { throw new Error("firma"); }, "tok")).toBeNull();
+    expect(await resolveIdentityWithProfile((async () => ({ name: "x" })) as never, "tok")).toBeNull();
+    expect(await resolveIdentityWithProfile(async () => ({ sub: "u" }), "")).toBeNull();
   });
 });

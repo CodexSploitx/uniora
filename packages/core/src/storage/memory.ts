@@ -7,6 +7,8 @@ import type { CreateOrganizationInput, OrganizationRepository } from "../organiz
 import { OrganizationError, assertValidSlug, resolveOrganizationSlug, sanitizeOrganizationName } from "../organization/slug.js";
 import type { Membership, MembershipStatus } from "../membership/types.js";
 import { createMemoryPolicyRepository } from "../policy/memory.js";
+import { createMemoryProfileRepository } from "../profile/memory.js";
+import { MAX_PROFILE_BATCH } from "../profile/profiles.js";
 import type { BlockMembershipInput, CreateMembershipInput, MembershipListing, MembershipRepository, SearchMembershipsOptions } from "../membership/repository.js";
 import { MembershipError, assertBlockUntil, sanitizeBlockReason } from "../membership/repository.js";
 import type { Role } from "../role/types.js";
@@ -443,7 +445,7 @@ export function createMemoryStorage(): UnioraStorage {
     return copy(membership);
   }
 
-  function matchingMemberships(options?: { organizationId?: string; query?: string; identity?: Identity; status?: MembershipStatus; limit?: number }): Membership[] {
+  function matchingMemberships(options?: { organizationId?: string; query?: string; orIdentities?: readonly Identity[]; identity?: Identity; status?: MembershipStatus; limit?: number }): Membership[] {
     lapseBlocks();
     const query = options?.query?.trim().toLowerCase();
     return [...memberships.values()].filter(
@@ -451,7 +453,10 @@ export function createMemoryStorage(): UnioraStorage {
         (options?.organizationId === undefined || m.organizationId === options.organizationId) &&
         (options?.identity === undefined || sameIdentity(m.identity, options.identity)) &&
         (options?.status === undefined || m.status === options.status) &&
-        (!query || m.identity.subject.toLowerCase().includes(query) || m.identity.provider.toLowerCase().includes(query)),
+        (!query ||
+          m.identity.subject.toLowerCase().includes(query) ||
+          m.identity.provider.toLowerCase().includes(query) ||
+          (options?.orIdentities?.slice(0, MAX_PROFILE_BATCH).some((identity) => sameIdentity(identity, m.identity)) ?? false)),
     );
   }
 
@@ -1135,12 +1140,17 @@ function tally(requestedIds: string[], occurrences: string[]): Record<string, nu
       const name = sanitizeFeatureName(input.name);
       const key = resolveFeatureKey(name, input.key);
       assertValidFeatureParent(featureDefinitions, key, input.parentKey);
+      const defaultEnabled = input.defaultEnabled === true;
+      const previous = featureDefinitions.get(key);
       const definition: FeatureDefinition = {
         key,
         name,
         description: input.description,
-        defaultEnabled: input.defaultEnabled === true,
+        defaultEnabled,
         ...(input.parentKey !== undefined ? { parentKey: input.parentKey } : {}),
+        // An app registers its catalog on every start: the kill switch's reason must survive that, until the feature is turned back on.
+        ...(!defaultEnabled && previous?.reason !== undefined ? { reason: previous.reason } : {}),
+        ...(!defaultEnabled && previous?.updatedAt !== undefined ? { updatedAt: previous.updatedAt } : {}),
       };
       featureDefinitions.set(key, definition);
       return copy(definition);
@@ -1196,7 +1206,16 @@ function tally(requestedIds: string[], occurrences: string[]): Record<string, nu
         writeOverride(feature.organizationId, key, false, meta);
         disabledOverrides += 1;
       }
-      featureDefinitions.set(key, { ...definition, defaultEnabled: false });
+      const reason = sanitizeFeatureChangeReason(meta?.reason);
+      featureDefinitions.set(key, {
+        key: definition.key,
+        name: definition.name,
+        description: definition.description,
+        defaultEnabled: false,
+        ...(definition.parentKey !== undefined ? { parentKey: definition.parentKey } : {}),
+        ...(reason !== undefined ? { reason } : {}),
+        updatedAt: new Date(),
+      });
       return { disabledOverrides, defaultWasEnabled: definition.defaultEnabled };
     },
     async isEnabled(organizationId, key) {
@@ -2166,6 +2185,7 @@ function tally(requestedIds: string[], occurrences: string[]): Record<string, nu
   };
 
   const policyRepository = createMemoryPolicyRepository((organizationId) => organizations.has(organizationId));
+  const profileRepository = createMemoryProfileRepository();
 
   return {
     organizations: organizationRepository,
@@ -2182,6 +2202,7 @@ function tally(requestedIds: string[], occurrences: string[]): Record<string, nu
     teams: teamRepository,
     teamMemberships: teamMembershipRepository,
     policies: policyRepository,
+    profiles: profileRepository,
     async transaction<T>(callback: (tx: UnioraTransaction) => Promise<T>): Promise<T> {
       // In-memory storage has no isolation to offer; adapters with a real
       // database (e.g. Postgres) must run `callback` inside a DB transaction.
@@ -2200,6 +2221,7 @@ function tally(requestedIds: string[], occurrences: string[]): Record<string, nu
         teams: teamRepository,
         teamMemberships: teamMembershipRepository,
         policies: policyRepository,
+        profiles: profileRepository,
       });
     },
   };

@@ -1,9 +1,14 @@
-import type { AuthorizationEngine, Identity } from "@uniora/core";
+import type { AuthorizationEngine, Identity, IdentityProfile, ProfileSync } from "@uniora/core";
 
 /** Who is calling and in which organization — the two things the engine cannot guess. */
 export interface AuthorizationContext {
   identity: Identity;
   organizationId: string;
+  /**
+   * Who this person is, from your auth provider's adapter (`resolveIdentityWithProfile(...).profile`). Stored through the
+   * `syncProfile` option so Studio shows a name, e-mail and avatar. Display data only: never part of the decision.
+   */
+  profile?: IdentityProfile;
 }
 
 // Structural slices of Express's `Response`/`NextFunction`, so this package needs no
@@ -29,6 +34,13 @@ export interface MiddlewareOptions<Req> {
   onDenied?: (req: Req, res: ResponseLike) => void;
   /** Custom response when `resolve` yields no context. Defaults to `401 { "error": "unauthenticated" }`. */
   onUnauthenticated?: (req: Req, res: ResponseLike) => void;
+  /**
+   * `createProfileSync(storage)` from `@uniora/core`. With it, the `profile` of every authenticated context is stored (the first time
+   * the person is seen, then when it changes), so members who joined before profiles existed fill themselves in on their next request.
+   * It runs for any caller `resolve` accepted, whether or not the check then allows them, and it never throws or delays the answer by
+   * more than one write.
+   */
+  syncProfile?: ProfileSync;
 }
 
 export interface AuthorizeOptions<Req> extends MiddlewareOptions<Req> {
@@ -66,7 +78,7 @@ export function authorize<Req = unknown>(
   engine: AuthorizationEngine,
   options: AuthorizeOptions<Req>,
 ): (req: Req, res: ResponseLike, next: NextLike) => Promise<void> {
-  const { permission, feature, resolve, onDenied, onUnauthenticated } = options;
+  const { permission, feature, resolve, onDenied, onUnauthenticated, syncProfile } = options;
   if (permission === undefined && feature === undefined) {
     throw new TypeError("authorize(): pass at least one of `permission` or `feature`");
   }
@@ -79,6 +91,9 @@ export function authorize<Req = unknown>(
         else res.status(401).json({ error: "unauthenticated" });
         return;
       }
+
+      // The caller is authenticated here (the host's `resolve` accepted them): keep their profile current. `syncProfile` never rejects.
+      if (syncProfile && context.profile) await syncProfile(context.identity, context.profile);
 
       const permissionKey = typeof permission === "function" ? permission(req) : permission;
       const featureKey = typeof feature === "function" ? feature(req) : feature;

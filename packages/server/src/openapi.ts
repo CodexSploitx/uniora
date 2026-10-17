@@ -12,6 +12,7 @@ type Json = Record<string, unknown>;
 const TAGS: Readonly<Record<string, { name: string; description: string }>> = {
   decisions: { name: "Decisions", description: "Ask whether a user may do something. Application calls." },
   organizations: { name: "Organizations", description: "Read organizations and create them with their first Owner." },
+  profiles: { name: "Profiles", description: "Who the people are: name, e-mail and avatar URL, stored by your application and shown next to the members." },
   members: { name: "Members", description: "An organization's members and what a user may change about them." },
   roles: { name: "Roles", description: "Roles and the permissions they hold." },
   permissions: { name: "Catalog", description: "The permissions and features registered in the deployment." },
@@ -243,7 +244,7 @@ export function buildOpenApiDocument(options: OpenApiOptions = {}): Json {
       version,
       description:
         "Organizations, roles, permissions, teams, policies and invitations, as a service you run yourself. Your backend calls it with an API key; your auth provider stays in your project. Every call needs `Authorization: Bearer <key>`.",
-      license: { name: "PolyForm-Shield-1.0.0", identifier: "PolyForm-Shield-1.0.0" },
+      license: { name: "Apache-2.0", identifier: "Apache-2.0" },
     },
     servers: [{ url: "https://uniora.example.com", description: "Your own deployment" }],
     tags: [...new Map(Object.values(TAGS).map((tag) => [tag.name, tag])).values()],

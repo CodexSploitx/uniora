@@ -1,8 +1,8 @@
 {
   "name": "@uniora/server",
-  "version": "0.10.1",
+  "version": "0.14.0",
   "description": "UNIORA as its own self-hosted HTTP service: an authenticated, bounded, documented API over @uniora/core. Your backend calls it with an API key; your auth provider stays where it is.",
-  "license": "PolyForm-Shield-1.0.0",
+  "license": "Apache-2.0",
   "keywords": [
     "uniora",
     "authorization",
@@ -57,6 +57,6 @@
     "better-sqlite3": "^13.0.3",
     "pg": "^8.23.1",
     "typescript": "^5.6.3",
-    "vitest": "^2.1.4"
+    "vitest": "^4.1.11"
   }
 }

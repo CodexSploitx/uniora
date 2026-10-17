@@ -46,6 +46,18 @@ A protected operation can ask for `requireApplicablePolicy: true`: with no appli
 (`no_applicable_policy`). The policy administration permissions (`policies.*`) are never subject to policies, so no rule can lock
 anybody out of fixing the rules.
 
+> **Never name one of your own permissions `policies.<anything>`.** The exemption above is a prefix match on the permission
+> key, not a check that the permission is really UNIORA's own policy administration. If your application registers a
+> business permission under that same prefix — an insurance company's own "policies" domain is the obvious trap:
+> `policies.claims.approve`, `policies.renew` — that permission silently falls into the same exemption: **no policy
+> (`deny`, `require`, a `sensitive` step-up rule, a time or IP restriction...) can EVER apply to it**, for as long as the
+> permission exists. UNIORA fails loud about half of this: creating or activating a policy whose `actions` touch
+> `policies.*` is refused outright (`policy_definition_invalid`, "policies are never evaluated for the policy
+> administration permissions"), so you will notice if you try to write a rule for it. What you will NOT get is a warning
+> at the moment you register the permission itself (`storage.permissions.register`) or assign it to a role — the
+> exemption is silent until someone tries to govern that permission with a policy and hits the refusal. Pick a different
+> word for your own domain (`insurance_policies.*`, `claims.*`) and this never comes up.
+
 ## A policy
 
 ```jsonc

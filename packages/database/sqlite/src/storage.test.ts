@@ -48,6 +48,7 @@ const harness: StorageHarness = {
       delete from uniora_audit_log_checkpoints;
       delete from uniora_audit_logs;
       delete from uniora_identity_links;
+      delete from uniora_identity_profiles;
       delete from uniora_organizations;
     `);
     db.exec(AUDIT_APPEND_ONLY_TRIGGERS);

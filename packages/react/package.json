@@ -1,8 +1,8 @@
 {
   "name": "@uniora/react",
-  "version": "0.10.1",
+  "version": "0.14.0",
   "description": "React helpers for @uniora/core: <Can>/<Feature>/useCan/useFeature over a server-computed AuthorizationSnapshot. UX only, never a security boundary.",
-  "license": "PolyForm-Shield-1.0.0",
+  "license": "Apache-2.0",
   "keywords": [
     "uniora",
     "react",
@@ -55,6 +55,6 @@
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "typescript": "^5.6.3",
-    "vitest": "^2.1.4"
+    "vitest": "^4.1.11"
   }
 }

@@ -72,6 +72,7 @@ Rules it enforces (all covered by tests on memory, Postgres and SQLite):
 - **Each permission is satisfied organization-wide or inside that very team**, never through another team: a lead of Barcelona who holds `teams.members.add` through a Barcelona role cannot add anyone to Madrid.
 - **No self-promotion**: you cannot change your own responsibility, give yourself roles or lift your own suspension. Making someone team owner needs `teams.manage`.
 - **No escalation through roles**: you can only give a role whose every permission you hold yourself; the Owner role can never be given.
+- **You cannot touch a member who holds more power than you, in that team**: removing, suspending, reactivating, or changing the responsibility or roles of a team member is refused (`team_target_stronger`) if their roles — organization-wide or held in that very team — grant a permission yours do not. A team-scoped role is real, exercised power (`engine.can({ teamId })` merges it with your organization-wide roles), so holding only the narrowest `teams.members.*` permission cannot strip or demote a teammate whose team role grants far more. The same protection `AccessAdminService` gives organization members.
 - **Only the invited person accepts** an invitation (`acceptInvitation`).
 - **Deleting a team** needs `teams.manage` organization-wide.
 

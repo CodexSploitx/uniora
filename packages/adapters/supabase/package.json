@@ -1,8 +1,8 @@
 {
   "name": "@uniora/supabase",
-  "version": "0.10.1",
+  "version": "0.14.0",
   "description": "Supabase Auth adapter for @uniora/core: turns a Supabase session into an Identity",
-  "license": "PolyForm-Shield-1.0.0",
+  "license": "Apache-2.0",
   "keywords": [
     "uniora",
     "supabase",
@@ -44,6 +44,6 @@
   },
   "devDependencies": {
     "typescript": "^5.6.3",
-    "vitest": "^2.1.4"
+    "vitest": "^4.1.11"
   }
 }
