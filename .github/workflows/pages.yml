@@ -31,6 +31,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Estas tres van por etiqueta mayor: Dependabot (github-actions) propone los SHA fijados, como en el resto de workflows.
+      # Cache busting: stamps the commit into every css/js URL so a returning visitor never mixes old and new files.
+      - run: sed -i "s/__BUILD__/${GITHUB_SHA::8}/g" site/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
