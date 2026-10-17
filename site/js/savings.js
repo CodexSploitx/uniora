@@ -83,7 +83,7 @@ export function initSavings({ getLang, reduced }) {
       .map((p) => `<text x="${x(points.indexOf(p))}" y="${H - 20}" text-anchor="middle">${p.label}</text>`).join("");
     const cx = x(current), cy = y(points[current].v);
     $("svChart").innerHTML = `
-      <defs><linearGradient id="svg-a" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#efb100" stop-opacity=".35"/><stop offset="1" stop-color="#efb100" stop-opacity="0"/></linearGradient></defs>
+      <defs><linearGradient id="svg-a" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f7c325" stop-opacity=".35"/><stop offset="1" stop-color="#f7c325" stop-opacity="0"/></linearGradient></defs>
       ${ticks}${xl}
       <text x="${L + w / 2}" y="${H - 3}" text-anchor="middle" class="axis">${xLabel}</text>
       <path d="${area}" fill="url(#svg-a)" class="area"/>
