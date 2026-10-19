@@ -4,12 +4,18 @@ All notable changes to UNIORA. Packages are released in lockstep, so one version
 
 ## Unreleased
 
+## 0.14.1 - 2026-10-19
+
 ### Changed
 
 - **License: UNIORA moves from PolyForm Shield 1.0.0 to Apache-2.0.** UNIORA is now OSI-approved open source: use, modification and redistribution are allowed for any purpose, including competing products, with an express patent grant. The restriction on competing products no longer applies to new versions; copies already published stay under the license they were received with. No code, API or behavior change.
   - `LICENSE` (root and every package) is the Apache-2.0 text, a root `NOTICE` carries the copyright line, and the `license` field of every `package.json` is `Apache-2.0`. `scripts/check-release.mjs` now requires `Apache-2.0`.
   - The OpenAPI `info.license` is `Apache-2.0` (`guides/openapi.json` regenerated); no route, schema, scope, error or event changes, and the generated client is unaffected.
   - READMEs (root, Spanish and every package) and the website's license section describe the new terms.
+
+### Dependencies
+
+- **Routine dependency updates; no API, schema or behavior change.** `nodemailer` `^10.1.0` (the only runtime dependency that moved, in `@uniora/mailer-smtp`); development-only updates: `express` `^5.3.0` (in `@uniora/express`), `smtp-server` `^3.19.23`, `next` and `eslint-config-next` `16.4.0`, `@base-ui/react` `1.9.0`, `@tabler/icons-react` `3.49.0`, `shadcn` `4.22.0`, `jsdom` `30.1.3`. CI actions (`setup-node`, `configure-pages`, `upload-pages-artifact`, `deploy-pages`) and the website cache busting are repository-only.
 
 ## 0.14.0 - 2026-10-14
 
