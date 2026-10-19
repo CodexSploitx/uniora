@@ -1,6 +1,6 @@
 {
   "name": "@uniora/next",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "description": "Next.js glue for @uniora/core: request-scoped memoization, authorization guards for Server Actions and Route Handlers, and invitation route helpers. No hard dependency on the `next` package.",
   "license": "Apache-2.0",
   "keywords": [

@@ -1,6 +1,6 @@
 {
   "name": "@uniora/supabase",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "description": "Supabase Auth adapter for @uniora/core: turns a Supabase session into an Identity",
   "license": "Apache-2.0",
   "keywords": [

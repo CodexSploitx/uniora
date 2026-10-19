@@ -1,6 +1,6 @@
 {
   "name": "@uniora/cli",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "description": "Official UNIORA CLI: init, check, migrate, doctor and studio",
   "license": "Apache-2.0",
   "keywords": [

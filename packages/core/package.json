@@ -1,6 +1,6 @@
 {
   "name": "@uniora/core",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "description": "Framework-independent Organizations + Authorization engine for UNIORA",
   "license": "Apache-2.0",
   "keywords": [
