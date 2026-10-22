@@ -46,7 +46,7 @@
     "@uniora/core": "workspace:^"
   },
   "devDependencies": {
-    "@types/node": "^26.6.4",
+    "@types/node": "^26.6.5",
     "@uniora/server": "workspace:^",
     "@uniora/sqlite": "workspace:^",
     "@types/better-sqlite3": "^9.6.0",
