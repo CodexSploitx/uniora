@@ -1,6 +1,6 @@
 {
   "name": "@uniora/server",
-  "version": "0.14.1",
+  "version": "0.15.0",
   "description": "UNIORA as its own self-hosted HTTP service: an authenticated, bounded, documented API over @uniora/core. Your backend calls it with an API key; your auth provider stays where it is.",
   "license": "Apache-2.0",
   "keywords": [

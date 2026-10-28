@@ -4,6 +4,8 @@ All notable changes to UNIORA. Packages are released in lockstep, so one version
 
 ## Unreleased
 
+## 0.15.0 - 2026-10-28
+
 ### Added
 
 - **`uniora doctor` warns when the connection's role skips your row-level security policies (PostgreSQL).** A new `Row-level security` check reads only the catalog. It is `warn` when the role owns tables that have RLS enabled without `FORCE ROW LEVEL SECURITY`, or is a superuser / has `BYPASSRLS` (which ignore even `FORCE`); `ok` when no table has RLS or the role is subject to every policy. Run it with the application's `DATABASE_URL`. It has no HTTP route, scope, error or event, so the API (`openapi.json`, `server-api.md`, `@uniora/client`) is unchanged, and no migration. SQLite has no RLS and reports nothing.

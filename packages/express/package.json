@@ -1,6 +1,6 @@
 {
   "name": "@uniora/express",
-  "version": "0.14.1",
+  "version": "0.15.0",
   "description": "Express middleware and invitation routes for @uniora/core: deny-by-default authorization guards for routes. No hard dependency on the `express` package.",
   "license": "Apache-2.0",
   "keywords": [
