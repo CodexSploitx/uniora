@@ -64,6 +64,10 @@ Use two roles so the credentials your running app holds can't alter the schema o
 - `uniora_app` is what the application, Studio and the SDK connect as: data access only, read and append on
   `audit_logs`.
 
+The migrator needs `CREATE` on the database to run `applyMigrations` / `uniora migrate` ([Storage](storage.md#postgresql)).
+Keeping the two roles apart also matters for [row-level security](rls.md#4-the-table-owner-skips-the-policies): the owner of
+a table skips its policies, so a single role that migrates and serves the app has them switched off.
+
 [`guides/sql/least-privilege-roles.sql`](sql/least-privilege-roles.sql) creates both. Run it once as a
 superuser and re-run its `grant` section after every upgrade that adds tables. Validated on PostgreSQL 16:
 with `uniora_app`, `UPDATE`, `DELETE` and `TRUNCATE` on `audit_logs`, `DROP` / `ALTER`, removing the trigger and

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getMigrationStatus, listMigrationIds } from "@uniora/postgres";
 import pg from "pg";
-import { ensureDatabase, resetUnioraSchema, testDatabaseUrl } from "../test-database.js";
+import { ensureDatabase, postgresDatabaseUrl, resetUnioraSchema, testDatabaseUrl } from "../test-database.js";
 import { runMigrate } from "./migrate.js";
 
 describe("runMigrate", () => {
@@ -28,7 +28,7 @@ describe("runMigrate", () => {
     expect(process.exitCode).toBe(1);
   });
 
-  it.skipIf(!process.env.DATABASE_URL)(
+  it.skipIf(!postgresDatabaseUrl())(
     "aplica las migraciones contra una base de datos real cuando DATABASE_URL está disponible",
     async () => {
       writeFileSync(

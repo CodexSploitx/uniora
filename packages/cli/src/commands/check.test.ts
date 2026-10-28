@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { postgresDatabaseUrl } from "../test-database.js";
 import { runCheck } from "./check.js";
 
 describe("runCheck", () => {
@@ -40,7 +41,7 @@ describe("runCheck", () => {
     expect(output).not.toContain(":p@");
   });
 
-  it.skipIf(!process.env.DATABASE_URL)(
+  it.skipIf(!postgresDatabaseUrl())(
     "valida la config y conecta a una base de datos real cuando DATABASE_URL está disponible",
     async () => {
       writeFileSync(

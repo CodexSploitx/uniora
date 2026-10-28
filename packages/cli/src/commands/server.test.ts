@@ -113,8 +113,10 @@ describe("uniora server (SQLite)", () => {
     const { token } = await run("keys", "create", "--client", "web");
 
     const abort = new AbortController();
+    let finished!: Promise<unknown>;
     const running = new Promise<RunningServer>((resolve, reject) => {
-      runServer(["start"], dir, { json: true, port: "0", onStarted: resolve, stop: abort.signal }).catch(reject);
+      finished = runServer(["start"], dir, { json: true, port: "0", onStarted: resolve, stop: abort.signal });
+      finished.catch(reject);
     });
     const server = await running;
     try {
@@ -125,6 +127,7 @@ describe("uniora server (SQLite)", () => {
       expect(await ok.json()).toEqual({ items: [], nextCursor: null });
     } finally {
       abort.abort();
+      await finished; // el servidor cierra la base antes de que afterEach borre la carpeta (Windows bloquea el archivo abierto)
     }
   });
 
@@ -145,8 +148,10 @@ describe("uniora server (SQLite)", () => {
     await run("clients", "create", "--name", "panel", "--scopes", "platform:admin", "--orgs", "*");
     const { token } = await run("keys", "create", "--client", "panel");
     const abort = new AbortController();
+    let finished!: Promise<unknown>;
     const running = new Promise<RunningServer>((resolve, reject) => {
-      runServer(["start"], dir, { json: true, port: "0", configPath: "full.config.mjs", onStarted: resolve, stop: abort.signal }).catch(reject);
+      finished = runServer(["start"], dir, { json: true, port: "0", configPath: "full.config.mjs", onStarted: resolve, stop: abort.signal });
+      finished.catch(reject);
     });
     const server = await running;
     try {
@@ -160,6 +165,7 @@ describe("uniora server (SQLite)", () => {
       expect(bad.status).toBe(401);
     } finally {
       abort.abort();
+      await finished;
     }
   });
 

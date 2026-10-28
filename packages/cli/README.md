@@ -14,11 +14,13 @@ npx uniora platform init --admin provider:subject   # first Platform Administrat
 npx uniora server clients create --name backend --scopes check --orgs '*'   # API clients and keys of the server (guides/server.md)
 npx uniora server start   # run the API server (tokens, platform, webhooks: the `server` section of uniora.config.mjs)
 npx uniora webhooks create --url https://hooks.example.com/uniora --events 'membership.*'   # signed webhooks (guides/server.md)
-npx uniora doctor    # Node, .gitignore, config, database, migrations, owners, audit chain, SMTP, Studio
+npx uniora doctor    # Node, .gitignore, config, database, migrations, owners, RLS bypass, audit chain, SMTP, Studio
 npx uniora studio    # local admin UI (--read-only, --port N, --no-open)
 ```
 
 Every command accepts `--config <file>`, `--env <name>` and `--json` (one JSON object on stdout, never your connection string). Exit codes: `0` ok, `1` failed, `2` bad usage.
+
+On PostgreSQL, `uniora doctor` warns (read-only, catalog only) when the role it connects with would skip your row-level security policies: it owns tables that have RLS but not `FORCE ROW LEVEL SECURITY`, or it is a superuser / has `BYPASSRLS`. Run it with the application's `DATABASE_URL` to check the role that matters; see [RLS §4](https://github.com/CodexSploitx/uniora/blob/main/guides/rls.md#4-the-table-owner-skips-the-policies). `uniora migrate` needs a role with `CREATE` on the database ([Storage](https://github.com/CodexSploitx/uniora/blob/main/guides/storage.md#postgresql)).
 
 `uniora doctor` also checks your `UNIORA_SMTP_*` settings when `@uniora/mailer-smtp` is installed (it validates them; it never connects or prints credentials). Studio reads `UNIORA_INVITE_URL` (for example `https://app.example.com/invite/{token}`) to create invitations.
 

@@ -14,6 +14,11 @@ A **suspended or archived organization** (`organizations.setStatus`) denies ever
 
 Anything unknown — an organization, a permission, a feature, a missing identity, a `NULL` — answers `false`; they never raise.
 
+> **A policy only protects you from roles that are subject to it.** PostgreSQL does not apply row-level security to the
+> **owner of the table** (nor to a superuser or a role with `BYPASSRLS`), and it does so silently: no error, no warning.
+> If one role migrates your tables and also serves the application, every policy below is off. Read
+> [§4](#4-the-table-owner-skips-the-policies) before relying on them.
+
 ```sql
 create policy "members read" on public.vehicles
   for select using (uniora.is_member(organization_id));
@@ -72,6 +77,49 @@ trusted server code, e.g. a job that checks someone other than the caller. **Don
   `can()` agree: `alter database app set uniora.owner_requires_registered_permission = 'on';`
 - Implied permissions (`register({ key, implies })`): `has_permission` also passes when a role holds a permission that implies `key`, through the whole chain, like `can()`.
 - Features: policies and `computeAuthorizationSnapshot` use the same rule (override → default → parents).
+
+## 4. The table owner skips the policies
+
+This is standard PostgreSQL, not a UNIORA behavior, but it is the easiest way to end up with policies that do nothing.
+Row-level security is **not applied** to:
+
+- the **owner of the table** (the role that ran `create table`, or that you gave it to with `alter table … owner to`),
+  unless the table has `FORCE ROW LEVEL SECURITY`;
+- a **superuser** and any role with the **`BYPASSRLS`** attribute, always — `FORCE` does not stop them (on Supabase, the
+  `postgres` role has it).
+
+Seen against PostgreSQL 17 with a table protected by `uniora.is_member(organization_id)` and two rows in two organizations:
+
+| Connected as | Identity set | Rows read |
+| --- | --- | --- |
+| the table owner | none | 2 of 2 — no policy applied |
+| the table owner, after `FORCE ROW LEVEL SECURITY` | none | 0 |
+| an application role that does not own the table | a member of one organization | 1 of 2 |
+| an application role that does not own the table | none | 0 |
+
+Do both of these:
+
+1. **Serve the application with a role that does not own the tables and has neither `SUPERUSER` nor `BYPASSRLS`.**
+   Migrate with another role. This is the same split as [Hardening §5](hardening.md) and
+   [`least-privilege-roles.sql`](sql/least-privilege-roles.sql): one role owns and migrates, the other only reads and writes.
+2. **Add `FORCE ROW LEVEL SECURITY` to every table that has policies**, so that a mistake in (1) — a small installation that
+   uses one role for everything, a connection string copied from the wrong place — does not switch them off:
+
+```sql
+alter table public.vehicles enable row level security;
+alter table public.vehicles force  row level security;
+```
+
+`FORCE` also applies the policies to the owner when it runs your own migrations and seeds: it will see only the rows a
+policy lets it see, and its `insert`s and `update`s must pass `with check`. Run data migrations that must touch every row as a
+role with `BYPASSRLS` (and keep that role out of the application), or add a policy for them.
+
+`npx uniora doctor` warns when the role it connects with owns tables that have RLS and no `FORCE`, or has `SUPERUSER` /
+`BYPASSRLS`. Run it with the application's `DATABASE_URL` to check the role that matters; it reads only the catalog.
+
+Test it the way production runs it: connect **as the application role**, set the identity (§1) and check the rows you get
+for a member, for a person of another organization and for no identity at all. If you want a guard, add a test that also
+connects as the table owner and asserts it still sees no foreign rows once `FORCE` is on.
 
 Re-test your policies with the least-privileged role you use in production; `rls-functions.test.ts` in `@uniora/postgres` does
 exactly that against the real engine.

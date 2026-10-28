@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { applyMigrations } from "@uniora/postgres";
 import pg from "pg";
-import { ensureDatabase, resetUnioraSchema, testDatabaseUrl } from "../test-database.js";
+import { ensureDatabase, postgresDatabaseUrl, resetUnioraSchema, testDatabaseUrl } from "../test-database.js";
 import { checkGitignore, checkNodeRuntime, checkSmtp, checkStudio, runDoctor } from "./doctor.js";
 
 describe("checkSmtp", () => {
@@ -114,7 +114,7 @@ describe("runDoctor", () => {
     expect(logged).not.toContain("Conexión a la base de datos");
   });
 
-  it.skipIf(!process.env.DATABASE_URL)(
+  it.skipIf(!postgresDatabaseUrl())(
     "no falla cuando la config y la conexión son válidas, sin importar el estado de las migraciones",
     async () => {
       writeFileSync(

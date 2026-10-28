@@ -4,6 +4,19 @@ All notable changes to UNIORA. Packages are released in lockstep, so one version
 
 ## Unreleased
 
+### Added
+
+- **`uniora doctor` warns when the connection's role skips your row-level security policies (PostgreSQL).** A new `Row-level security` check reads only the catalog. It is `warn` when the role owns tables that have RLS enabled without `FORCE ROW LEVEL SECURITY`, or is a superuser / has `BYPASSRLS` (which ignore even `FORCE`); `ok` when no table has RLS or the role is subject to every policy. Run it with the application's `DATABASE_URL`. It has no HTTP route, scope, error or event, so the API (`openapi.json`, `server-api.md`, `@uniora/client`) is unchanged, and no migration. SQLite has no RLS and reports nothing.
+
+### Fixed
+
+- **`@uniora/cli` test suite, repository-only (no published code, API or behavior change).** Six tests failed on a Windows machine whose `.env` uses SQLite: the "real database" tests of `check`, `doctor` and `migrate` (and the ledger suites) ran whenever `DATABASE_URL` / `TEST_DATABASE_URL` existed, even when they were `sqlite:` URLs, and now run only for PostgreSQL URLs; the two `uniora server start` tests now wait for the server to close its database before the temporary folder is deleted (Windows locks an open SQLite file, `EPERM`); and the SQLite flow test links the CLI package with a directory junction, which Windows allows without elevated privileges.
+
+### Documentation
+
+- **[RLS](guides/rls.md) §4 "The table owner skips the policies"**: PostgreSQL does not apply row-level security to a table's owner (unless `FORCE ROW LEVEL SECURITY`) nor to a superuser or `BYPASSRLS` role, silently, so one role that migrates and serves the app has its policies off. Documents the table of what each role sees, the two fixes (separate roles, `FORCE` on every table with policies), what `FORCE` implies for your own migrations and seeds, and how to test it. Cross-linked from [Storage](guides/storage.md), [Hardening §5](guides/hardening.md), `least-privilege-roles.sql`, [CLI and Studio](guides/cli-and-studio.md) and the CLI README. Reported while integrating UNIORA in another project.
+- **[Storage](guides/storage.md#postgresql): `applyMigrations` / `uniora migrate` need `CREATE` on the database**, on every run and not only the first (the migrations run `create schema if not exists`, and PostgreSQL checks the privilege before it looks for the schema). Without it the error is `permission denied for database <name>` (`42501`). The guide now says so, with the `grant`; `least-privilege-roles.sql` and Hardening §5 state it too.
+
 ## 0.14.1 - 2026-10-19
 
 ### Changed
