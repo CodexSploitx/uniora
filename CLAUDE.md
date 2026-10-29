@@ -12,6 +12,10 @@ Resumen: si algo cambia en UNIORA, la API HTTP de `@uniora/server` (rutas, esque
 
 Un cambio **no** sube la versión: se anota bajo `## Unreleased` del CHANGELOG. El número (SemVer), el bump en bloque y la publicación están en la skill `uniora-release`, que se usa solo cuando la persona pide cortar un release. **Publicar es de la persona**: al terminar, entrégale siempre los enlaces para crear el tag y para el workflow de Actions, donde ella aprueba; no empujes el tag.
 
+## Registro de sesión
+
+Si existe `session.md` en la raíz, **léelo al empezar**: tiene el estado actual (qué PR, tag o release está en curso), el registro fechado de lo hecho, las preferencias de la persona y los trucos de entorno. **Actualízalo al terminar cada tarea** (fecha `AAAA-MM-DD`, qué se hizo, dónde queda y qué falta). Es local: no se commitea, así que añade siempre archivos concretos con `git add`.
+
 ## Comandos
 
 ```bash
