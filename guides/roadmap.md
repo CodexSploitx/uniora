@@ -12,6 +12,7 @@ What UNIORA does not do yet, and why. Nothing here is promised; it is the list w
 
 - **Server: delegated reads** of members, roles and teams (deny by default: the actor must hold a read permission). Policies can already be read as an end user; everything else is read by the application.
 - **Server: a published container image** (non-root, read-only filesystem, health check) and OpenTelemetry metrics.
+- **Row-level security: team hierarchy.** The SQL team functions (`uniora.is_team_member`, `uniora.is_team_manager`) answer for the teams a person belongs to or leads, the same as the engine's `subject.teamIds` and `subject.managedTeamIds`. Their hierarchy-aware variants, which also count the teams above a row's team (what the engine reads as `resource.teamPathIds`, for example "the leader of a parent team sees the rows of its child teams"), are left for later on purpose: depth (up to 8 levels), the cost per row and what "above" means need their own design. Until then, keep that rule in the application (`engine.authorize()` with a policy that reads `resource.teamPathIds`) or give the leaders explicit rows of their own.
 
 - **Resource-level permissions** ("edit *this* project"): a `resource` argument to `can`, with grants stored per resource. Today, model it with one role per resource or check ownership in your own code after `can`.
 - **Role inheritance and role templates**: a role that includes another, and templates copied into each new organization.

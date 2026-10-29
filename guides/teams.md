@@ -104,6 +104,8 @@ await engine.can({ identity, organizationId, permission: "vehicles.read", teamId
 
 With `teamId` the answer can only get **narrower**: the identity must be an active member of that active team of the organization **and** hold the permission through its organization roles or the roles it holds in that team. A role held in a team never counts outside it. Being team owner or manager grants nothing, the organization's Owner role does not skip the membership check, and a support grant does not apply. Unknown or foreign teams, archived teams, and pending, suspended or removed members are denied. `engine.access.check({ identity, organizationId, teamId })` answers "is an active member of this team". Which team a resource belongs to is your data; UNIORA only evaluates the context you pass.
 
+In the database, PostgreSQL row-level security can ask the same membership question for your own tables with `uniora.is_team_member` and `uniora.is_team_manager`: see [Policies by team](rls.md#5-policies-by-team).
+
 ## Serving teams over HTTP
 
 `@uniora/express` and `@uniora/next` give you one route per team command over the **service** (never over `storage.teams`):

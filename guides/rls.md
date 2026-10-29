@@ -1,7 +1,7 @@
 # Row-level security with UNIORA (PostgreSQL)
 
 Your own tables (`vehicles`, `reports`, …) can ask UNIORA — inside the database — who may see or change a row, with the
-same answers `engine.can()` and `access.check()` give. The functions ship with `uniora migrate` (Postgres migration `0021`).
+same answers `engine.can()` and `access.check()` give. The functions ship with `uniora migrate` (Postgres migration `0021`; the team functions of [§5](#5-policies-by-team) come with migration `0048`).
 
 | Function | True when |
 | --- | --- |
@@ -9,6 +9,8 @@ same answers `engine.can()` and `access.check()` give. The functions ship with `
 | `uniora.has_permission(org, key)` | a role of the user in `org` holds `key`, or the user is the Owner and `key` is well formed |
 | `uniora.is_feature_enabled(org, key)` | the feature is on for `org`: its override, else its default, and every parent on |
 | `uniora.has_access(org, permission, feature)` | every argument given holds (like `access.check`); with neither, `is_member` |
+| `uniora.is_team_member(org, team)` | the current user is an **active** member of the **active** team `team` of `org` (what the engine reads as `subject.teamIds`) — [policies by team](#5-policies-by-team) |
+| `uniora.is_team_manager(org, team)` | the same, and the person is the team's `owner` or `manager` (what the engine reads as `subject.managedTeamIds`) |
 
 A **suspended or archived organization** (`organizations.setStatus`) denies everyone in it from `is_member`, `has_permission` and `has_access`, Owner included, exactly like the engine; `is_feature_enabled` still reports the feature's own state.
 
@@ -63,11 +65,12 @@ as $$ select 'supabase'::text, auth.uid()::text where auth.uid() is not null $$;
 grant usage on schema uniora to authenticated;
 grant execute on function
   uniora.is_member(text), uniora.has_permission(text, text),
-  uniora.is_feature_enabled(text, text), uniora.has_access(text, text, text)
+  uniora.is_feature_enabled(text, text), uniora.has_access(text, text, text),
+  uniora.is_team_member(text, text), uniora.is_team_manager(text, text)
 to authenticated;
 ```
 
-The explicit-identity forms (`is_member(org, provider, subject)`, `has_permission(org, key, provider, subject)`) are for
+The explicit-identity forms (`is_member(org, provider, subject)`, `has_permission(org, key, provider, subject)`, `is_team_member(org, team, provider, subject)`, `is_team_manager(org, team, provider, subject)`) are for
 trusted server code, e.g. a job that checks someone other than the caller. **Don't grant them to end-user roles.**
 
 ## 3. Match the engine
@@ -120,6 +123,29 @@ role with `BYPASSRLS` (and keep that role out of the application), or add a poli
 Test it the way production runs it: connect **as the application role**, set the identity (§1) and check the rows you get
 for a member, for a person of another organization and for no identity at all. If you want a guard, add a test that also
 connects as the table owner and asserts it still sees no foreign rows once `FORCE` is on.
+
+## 5. Policies by team
+
+`uniora.is_team_member(org, team)` and `uniora.is_team_manager(org, team)` give your own tables a second layer for "only the people of this row's team": they answer in the database what the engine reads as `subject.teamIds` and `subject.managedTeamIds` for the [team policies](policies.md) (`kind: "scope"`). They need migration `0048` (`uniora migrate`, or apply `packages/database/postgres/sql/0048_rls_team_functions.sql`), and EXECUTE granted as in [§2](#2-grant-execute-on-purpose).
+
+```sql
+-- every active member of the row's team reads it
+create policy "team reads" on public.documents
+  for select using (uniora.is_team_member(organization_id, team_id));
+
+-- only the people who lead the row's team (owner or manager) read it
+create policy "team leads read" on public.payroll
+  for select using (uniora.is_team_manager(organization_id, team_id));
+```
+
+- **Store UNIORA's team id.** `team_id` must hold the `id` of the team in UNIORA, not its slug or your own external id. Which team a row belongs to is your data; UNIORA only answers whether the person belongs to that team.
+- **`uuid` columns need a cast.** The arguments are `text`. UNIORA's own ids are strings (and by default random UUIDs), so a `uuid` column is natural, but PostgreSQL does not convert it on its own: write `uniora.is_team_member(organization_id::text, team_id::text)`. Without the cast the policy is refused when you create it (`function uniora.is_team_member(uuid, uuid) does not exist`), so you find out at once; the same applies to `is_member`.
+- **What counts, exactly as in the engine.** An **active** member of an **active** team, who is also a current member of the organization: a pending, suspended or removed team member, an archived team, a blocked or suspended member (until the date ends) and a suspended or archived organization all answer `false`, like [`is_member`](#3-match-the-engine). An identity alias answers like the identity it links to. Being a team owner or manager only matters here; it grants no permission by itself (see [Team as context for `can`](teams.md#team-as-context-for-can)).
+- **Anything unknown is `false`, never an error:** a team that does not exist or belongs to another organization, an empty or `NULL` argument, no current identity.
+- **The engine and the database agree**, with one deliberate difference: the engine stops reading `subject.teamIds` for a person in more than 500 active teams (`MAX_SUBJECT_TEAMS`) and then refuses, "never a guess". The SQL functions ask about one team and answer exactly, so for that person they can say `true` where the engine refuses. The database is the second layer; the application still decides first.
+- **Not covered yet:** the team hierarchy (a leader of a parent team seeing the rows of its sub-teams, the engine's `resource.teamPathIds`) and the roles a person holds inside a team. The hierarchy is on the [roadmap](roadmap.md); until then keep those rules in the application with `engine.authorize()`.
+- **Cost.** Each row the policy evaluates calls the function, as with `is_member`: index the columns you filter on (`organization_id`, `team_id`) and measure with your own data.
+- The explicit-identity forms are for trusted server code only; do not grant them to roles an end user controls (§2).
 
 Re-test your policies with the least-privileged role you use in production; `rls-functions.test.ts` in `@uniora/postgres` does
 exactly that against the real engine.
