@@ -1,5 +1,17 @@
 import pg from "pg";
 
+function postgresUrl(value: string | undefined): string | undefined {
+  return value && /^postgres(ql)?:\/\//i.test(value) ? value : undefined;
+}
+
+/**
+ * `DATABASE_URL` solo si es de PostgreSQL. El `.env` de quien desarrolla con SQLite la define como
+ * `sqlite:./uniora.db`, y los tests que arman una config `postgresql` con ella no deben activarse.
+ */
+export function postgresDatabaseUrl(): string | undefined {
+  return postgresUrl(process.env.DATABASE_URL);
+}
+
 /**
  * Helper de tests: una base de datos PROPIA (derivada de `TEST_DATABASE_URL`,
  * nunca `DATABASE_URL`) para probar contra un schema `uniora` vacío sin tocar
@@ -7,7 +19,7 @@ import pg from "pg";
  * distinto porque vitest corre los archivos en paralelo.
  */
 export function testDatabaseUrl(database: string): string | undefined {
-  const base = process.env.TEST_DATABASE_URL;
+  const base = postgresUrl(process.env.TEST_DATABASE_URL);
   if (!base) return undefined;
   const url = new URL(base);
   url.pathname = `/${database}`;

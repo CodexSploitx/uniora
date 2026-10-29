@@ -1,0 +1,6 @@
+# Los tests comparan estos archivos byte a byte con lo que genera el código (el SQL de las migraciones,
+# la referencia y el contrato de la API). Con core.autocrlf=true (Windows) Git los dejaría en CRLF y fallarían.
+*.sql text eol=lf
+guides/server-api.md text eol=lf
+guides/openapi.json text eol=lf
+packages/client/src/generated.ts text eol=lf

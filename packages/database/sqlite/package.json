@@ -1,6 +1,6 @@
 {
   "name": "@uniora/sqlite",
-  "version": "0.14.1",
+  "version": "0.15.0",
   "description": "SQLite storage adapter for @uniora/core, over better-sqlite3",
   "license": "Apache-2.0",
   "keywords": [

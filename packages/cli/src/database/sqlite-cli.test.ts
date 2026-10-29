@@ -225,7 +225,8 @@ describe("CLI con provider sqlite", () => {
         // `import { defineConfig } from "@uniora/cli"` resolves exactly like a real `npm install`
         // would, instead of relying on this fresh temp directory having one by accident.
         mkdirSync(join(fresh, "node_modules", "@uniora"), { recursive: true });
-        symlinkSync(join(import.meta.dirname, "../.."), join(fresh, "node_modules", "@uniora", "cli"), "dir");
+        // "junction": en Windows un symlink de directorio exige privilegios; una junction no (en POSIX el tipo se ignora).
+        symlinkSync(join(import.meta.dirname, "../.."), join(fresh, "node_modules", "@uniora", "cli"), "junction");
 
         // El "usuario" copia .env.example a .env.
         writeFileSync(join(fresh, ".env"), "DATABASE_URL=sqlite:./uniora.db\n");

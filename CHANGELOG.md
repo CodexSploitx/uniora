@@ -4,6 +4,26 @@ All notable changes to UNIORA. Packages are released in lockstep, so one version
 
 ## Unreleased
 
+## 0.15.0 - 2026-10-28
+
+### Added
+
+- **`uniora doctor` warns when the connection's role skips your row-level security policies (PostgreSQL).** A new `Row-level security` check reads only the catalog. It is `warn` when the role owns tables that have RLS enabled without `FORCE ROW LEVEL SECURITY`, or is a superuser / has `BYPASSRLS` (which ignore even `FORCE`); `ok` when no table has RLS or the role is subject to every policy. Run it with the application's `DATABASE_URL`. It has no HTTP route, scope, error or event, so the API (`openapi.json`, `server-api.md`, `@uniora/client`) is unchanged, and no migration. SQLite has no RLS and reports nothing.
+
+### Security
+
+- **Dependencies with published advisories updated; no API, schema or behavior change.** `next` and `eslint-config-next` `16.4.0` → `16.4.3` in `@uniora/studio` (published, already compiled) and the private playground: `next build` stopped on the registry's security advisory for 16.4.0. `@uniora/mailer-smtp` now requires `nodemailer` `^10.2.1` (was `^10.1.0`; versions below 10.1.4 have advisories), so installing it can no longer resolve a vulnerable `nodemailer`. In the lockfile, `body-parser` `2.4.0` (high severity, reached through the playground's `shadcn`), `qs` `6.17.0` and `fast-uri` `3.1.9`. `pnpm audit --prod --audit-level=high`, which CI runs, passes; one low-severity advisory remains in `deepmerge` (a development dependency of `shadcn` in the private playground).
+
+### Fixed
+
+- **Repository tooling, no published code, API or behavior change.** `scripts/check-packages.mjs` never ran `publint` or `attw` on Windows (`pnpm` is `pnpm.cmd`, so every check reported `NaN`); it now runs through the shell there. A new `.gitattributes` keeps `*.sql`, `guides/server-api.md`, `guides/openapi.json` and `packages/client/src/generated.ts` as LF: with `core.autocrlf=true` Git checked them out as CRLF and three `@uniora/sqlite` tests, which compare them byte by byte with what the code generates, failed. The webhook test "never lets a hostile receiver's address through" failed about one run in four against PostgreSQL because its dispatcher used the real clock instead of the test clock that runs a little ahead of the database's; it now uses the shared one.
+- **`@uniora/cli` test suite, repository-only (no published code, API or behavior change).** Six tests failed on a Windows machine whose `.env` uses SQLite: the "real database" tests of `check`, `doctor` and `migrate` (and the ledger suites) ran whenever `DATABASE_URL` / `TEST_DATABASE_URL` existed, even when they were `sqlite:` URLs, and now run only for PostgreSQL URLs; the two `uniora server start` tests now wait for the server to close its database before the temporary folder is deleted (Windows locks an open SQLite file, `EPERM`); and the SQLite flow test links the CLI package with a directory junction, which Windows allows without elevated privileges.
+
+### Documentation
+
+- **[RLS](guides/rls.md) §4 "The table owner skips the policies"**: PostgreSQL does not apply row-level security to a table's owner (unless `FORCE ROW LEVEL SECURITY`) nor to a superuser or `BYPASSRLS` role, silently, so one role that migrates and serves the app has its policies off. Documents the table of what each role sees, the two fixes (separate roles, `FORCE` on every table with policies), what `FORCE` implies for your own migrations and seeds, and how to test it. Cross-linked from [Storage](guides/storage.md), [Hardening §5](guides/hardening.md), `least-privilege-roles.sql`, [CLI and Studio](guides/cli-and-studio.md) and the CLI README. Reported while integrating UNIORA in another project.
+- **[Storage](guides/storage.md#postgresql): `applyMigrations` / `uniora migrate` need `CREATE` on the database**, on every run and not only the first (the migrations run `create schema if not exists`, and PostgreSQL checks the privilege before it looks for the schema). Without it the error is `permission denied for database <name>` (`42501`). The guide now says so, with the `grant`; `least-privilege-roles.sql` and Hardening §5 state it too.
+
 ## 0.14.1 - 2026-10-19
 
 ### Changed

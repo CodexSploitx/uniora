@@ -16,7 +16,11 @@
 create role uniora_migrator login password :migrator_password nosuperuser nocreaterole nocreatedb;
 create role uniora_app      login password :app_password      nosuperuser nocreaterole nocreatedb;
 
--- The migrator creates (and therefore owns) the schema and every object in it.
+-- The migrator creates (and therefore owns) the schema and every object in it. It needs CREATE on the database on every
+-- `uniora migrate` / applyMigrations run (the migrations run `create schema if not exists`), not only the first.
+--
+-- Row-level security on YOUR tables: a table's owner skips its policies. Keep uniora_app from owning them, and add
+-- `alter table ... force row level security` to each table with policies (guides/rls.md, section 4).
 select format('grant create on database %I to uniora_migrator', current_database()) \gexec
 
 -- Everything below runs AFTER the first `uniora migrate` (so the tables exist) and again after each

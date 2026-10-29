@@ -27,11 +27,18 @@ const storage = createPostgresStorage(pool);
 ```
 
 - Everything lives in the `uniora` schema, so it never collides with your tables.
+- **The role that calls `applyMigrations` needs `CREATE` on the database** (and no superuser). The migrations run `create schema if not exists`, and PostgreSQL checks that privilege before it looks at whether the schema exists, so it is needed on **every** run, not only the first. Without it you get `permission denied for database <name>` (SQLSTATE `42501`) and nothing is applied. Grant it once, as a superuser or the database owner:
+
+  ```sql
+  grant create on database myapp to uniora_migrator;   -- the role that runs applyMigrations / `uniora migrate`
+  ```
+
+  Use that role only to migrate. The role the application runs as does not need it, nor does `createPostgresStorage`: see [Hardening §5](hardening.md) and [`least-privilege-roles.sql`](sql/least-privilege-roles.sql), which grant it for you.
 - Migrations are never destructive. A migration whose SQL changed after it was applied is reported as `modified` and blocks `applyMigrations`; a database newer than your code reports `unknown`.
 - The audit log is append-only in the database itself (triggers) and hash-chained.
 - Production: connect the app with the least-privilege role and run migrations with another ([Hardening §5](hardening.md), [`least-privilege-roles.sql`](sql/least-privilege-roles.sql)).
 - If your team applies SQL with its own tooling (Flyway, Atlas, …), use the commented `.sql` files instead of `applyMigrations`: [SQL migrations](sql-migrations.md).
-- Row-level security in your own tables can use UNIORA's SQL functions: [RLS](rls.md).
+- Row-level security in your own tables can use UNIORA's SQL functions: [RLS](rls.md). The role that owns a table skips its policies unless the table has `FORCE ROW LEVEL SECURITY`, so migrate with one role and serve the app with another ([RLS §4](rls.md#4-the-table-owner-skips-the-policies)).
 
 Inspect migrations from code:
 

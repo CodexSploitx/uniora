@@ -1,6 +1,6 @@
 {
   "name": "@uniora/client",
-  "version": "0.14.1",
+  "version": "0.15.0",
   "description": "The typed client of the UNIORA API: decisions, organizations, roles, teams, policies and invitations from your backend, plus a remote authorization engine for the Express and Next guards.",
   "license": "Apache-2.0",
   "keywords": [

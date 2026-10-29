@@ -353,12 +353,13 @@ describe.each(BACKENDS)("webhook dispatcher over %s", (name: BackendName) => {
   });
 
   it("never lets a hostile receiver's address through, even if it was registered under a public name", async () => {
-    const { service, dispatcher, publish, storage } = await boot({ urlPolicy: {} });
+    const { service, dispatcher, publish, storage, clock } = await boot({ urlPolicy: {} });
     // Registered as an ordinary name; at delivery time it resolves to the metadata address.
     const lenient = createWebhookService({ storage, urlPolicy: { allowInsecureHttp: false } });
     const { endpoint } = await lenient.createEndpoint({ actor: operator, url: "https://hooks.example.com/uniora", events: ["*"] });
     void service;
-    const guarded = createWebhookDispatcher({ webhooks: storage, outbox: backend.storage.outbox, now: () => new Date(), send: (input) => sendWebhook({ ...input, resolve: async () => ["169.254.169.254"] }) });
+    // The same clock as `boot` (a little ahead of the real one): with the real clock a delivery the database just stamped can still look not due yet.
+    const guarded = createWebhookDispatcher({ webhooks: storage, outbox: backend.storage.outbox, now: () => clock.now, send: (input) => sendWebhook({ ...input, resolve: async () => ["169.254.169.254"] }) });
     await publish("evt_1", "a.b");
     expect(await guarded.tick()).toMatchObject({ delivered: 0, failed: 1 });
     expect(await storage.deliveries.findById(`${endpoint.id}:evt_1`)).toMatchObject({ lastError: "the name resolves to a private address" });

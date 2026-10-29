@@ -21,11 +21,12 @@ for (const root of ROOTS) {
       ["publint", ["--strict"]],
       ["attw", ["--pack", ".", "--profile", "esm-only", "--no-emoji"]],
     ]) {
-      const result = spawnSync("pnpm", ["exec", tool, ...args], { cwd: dir, encoding: "utf8" });
+      // En Windows `pnpm` es `pnpm.cmd`: sin shell, spawnSync no lo encuentra y `status` es null (la comprobación no corre).
+      const result = spawnSync("pnpm", ["exec", tool, ...args], { cwd: dir, encoding: "utf8", shell: process.platform === "win32" });
       const ok = result.status === 0;
       console.log(`${ok ? "✓" : "✗"} ${pkg.name} · ${tool}`);
       if (!ok) {
-        console.log(result.stdout + result.stderr);
+        console.log(`${result.error ? `${result.error.message}\n` : ""}${result.stdout ?? ""}${result.stderr ?? ""}`);
         failures.push(`${pkg.name} (${tool})`);
       }
     }

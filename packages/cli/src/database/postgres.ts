@@ -41,6 +41,7 @@ export function createPostgresDriver(connectionString: string): DatabaseDriver {
               severity: "warn",
               message: `${row?.server_version ?? "versión desconocida"}: por debajo de la ${MIN_SUPPORTED_POSTGRES_MAJOR}, fuera de soporte upstream. Actualiza cuando puedas.`,
             },
+        await rowLevelSecurityCheck(pool),
       ];
     },
 
@@ -94,6 +95,74 @@ export function createPostgresDriver(connectionString: string): DatabaseDriver {
 
     close: () => pool.end(),
   };
+}
+
+/** Lo que `doctor` sabe del rol de la conexión frente a las tablas con row-level security de la base. */
+export interface RowLevelSecurityFacts {
+  /** El rol es superusuario o tiene `BYPASSRLS`: ignora toda política, incluso con `FORCE`. */
+  readonly bypasses: boolean;
+  /** Tablas con RLS activada (fuera de los esquemas del sistema). */
+  readonly tables: number;
+  /** Muestra de tablas con RLS sin `FORCE` de las que el rol es dueño (o miembro del rol dueño). */
+  readonly unforcedOwned: readonly string[];
+  readonly unforcedOwnedTotal: number;
+}
+
+/**
+ * PostgreSQL no aplica las políticas RLS al dueño de la tabla (salvo `FORCE ROW LEVEL SECURITY`) ni a un
+ * superusuario o rol con `BYPASSRLS`: una aplicación que se conecta con uno de ellos tiene las políticas
+ * desactivadas sin error ni aviso. Es `warn`: puede ser el rol de administración con el que se corre `doctor`,
+ * no el de la aplicación, así que el mensaje dice a qué rol se refiere.
+ */
+export function rowLevelSecurityResult(facts: RowLevelSecurityFacts): CheckResult {
+  const name = "Row-level security";
+  if (facts.tables === 0) {
+    return { name, severity: "ok", message: "ninguna tabla con row-level security (nada que comprobar)" };
+  }
+  const problems: string[] = [];
+  if (facts.bypasses) {
+    problems.push(
+      `el rol de esta conexión es superusuario o tiene BYPASSRLS: se salta las políticas de las ${facts.tables} tabla(s) con RLS, aunque tengan FORCE`,
+    );
+  }
+  if (facts.unforcedOwnedTotal > 0) {
+    const sample = facts.unforcedOwned.join(", ");
+    problems.push(
+      `el rol de esta conexión es dueño de ${facts.unforcedOwnedTotal} tabla(s) con RLS sin FORCE ROW LEVEL SECURITY (${sample}${facts.unforcedOwnedTotal > facts.unforcedOwned.length ? ", …" : ""}): el dueño se salta sus políticas`,
+    );
+  }
+  if (problems.length === 0) {
+    return { name, severity: "ok", message: `${facts.tables} tabla(s) con RLS; el rol de esta conexión no se las salta` };
+  }
+  return {
+    name,
+    severity: "warn",
+    message: `${problems.join("; ")}. Si la aplicación se conecta con este rol, esas políticas no se aplican. Sirve la aplicación con un rol que no sea el dueño (migra con otro) o ejecuta "alter table … force row level security" (guides/rls.md).`,
+  };
+}
+
+/** Solo lectura sobre el catálogo; no necesita acceso a las tablas de nadie. */
+export async function rowLevelSecurityCheck(pool: Pool): Promise<CheckResult> {
+  const bypass = await pool.query<{ bypasses: boolean }>(
+    "select rolsuper or rolbypassrls as bypasses from pg_roles where rolname = current_user",
+  );
+  const rls = await pool.query<{ qualified: string; unforced_owned: boolean; total: string }>(
+    `select format('%I.%I', n.nspname, c.relname) as qualified,
+            (not c.relforcerowsecurity and pg_has_role(current_user, c.relowner, 'USAGE')) as unforced_owned,
+            count(*) over () as total
+       from pg_class c
+       join pg_namespace n on n.oid = c.relnamespace
+      where c.relkind in ('r', 'p') and c.relrowsecurity
+        and n.nspname not in ('pg_catalog', 'information_schema') and n.nspname !~ '^pg_'
+      order by 1`,
+  );
+  const unforced = rls.rows.filter((row) => row.unforced_owned);
+  return rowLevelSecurityResult({
+    bypasses: bypass.rows[0]?.bypasses === true,
+    tables: Number(rls.rows[0]?.total ?? 0),
+    unforcedOwned: unforced.slice(0, 5).map((row) => row.qualified),
+    unforcedOwnedTotal: unforced.length,
+  });
 }
 
 /** Forma estructural de `AuditIntegrityReport` de @uniora/core (la CLI no depende de él directamente). */

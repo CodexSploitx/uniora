@@ -1,6 +1,6 @@
 {
   "name": "@uniora/mailer-smtp",
-  "version": "0.14.1",
+  "version": "0.15.0",
   "description": "SMTP delivery for UNIORA invitations: configured from .env, with professional multilingual e-mail templates",
   "license": "Apache-2.0",
   "keywords": [
@@ -45,7 +45,7 @@
   },
   "dependencies": {
     "@uniora/core": "workspace:^",
-    "nodemailer": "^10.1.0"
+    "nodemailer": "^10.2.1"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
