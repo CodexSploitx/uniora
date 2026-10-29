@@ -19,6 +19,8 @@ export interface WebhookHarness {
 }
 
 const at = (seconds: number) => new Date(Date.UTC(2030, 0, 1, 0, 0, seconds));
+// The time the tests claim at: a little ahead of the real clock. `enqueue` stamps `available_at` with the database's clock, which can run ahead of this process's (a container), and a delivery stamped "in the future" is not due yet.
+const soon = () => new Date(Date.now() + 5_000);
 
 /** The behaviour every `WebhookStorage` adapter must reproduce. Real database, never mocks. */
 export function defineWebhookConformance(harness: WebhookHarness): void {
@@ -213,12 +215,12 @@ export function defineWebhookConformance(harness: WebhookHarness): void {
       it("claims oldest first, leases them, and skips what is not due", async () => {
         const { deliveries } = harness.storage();
         for (const id of ["evt-1", "evt-2", "evt-3"]) await deliveries.enqueue(delivery("whe_a", id));
-        const first = await deliveries.claim({ limit: 2, leaseSeconds: 30, now: new Date() });
+        const first = await deliveries.claim({ limit: 2, leaseSeconds: 30, now: soon() });
         expect(first.map((row) => row.eventId)).toEqual(["evt-1", "evt-2"]);
         expect(first.every((row) => row.attempts === 1)).toBe(true);
-        const second = await deliveries.claim({ limit: 10, now: new Date() });
+        const second = await deliveries.claim({ limit: 10, now: soon() });
         expect(second.map((row) => row.eventId)).toEqual(["evt-3"]);
-        expect(await deliveries.claim({ now: new Date() })).toEqual([]);
+        expect(await deliveries.claim({ now: soon() })).toEqual([]);
         // The lease runs out: they can be taken again.
         const later = await deliveries.claim({ now: new Date(Date.now() + 120_000) });
         expect(later.map((row) => row.eventId).sort()).toEqual(["evt-1", "evt-2", "evt-3"]);
@@ -230,7 +232,8 @@ export function defineWebhookConformance(harness: WebhookHarness): void {
       it("never hands the same delivery to two concurrent workers", async () => {
         const { deliveries } = harness.storage();
         for (let index = 0; index < 12; index++) await deliveries.enqueue(delivery("whe_a", `evt-${index}`));
-        const batches = await Promise.all(Array.from({ length: 4 }, () => deliveries.claim({ limit: 5, now: new Date() })));
+        const now = soon();
+        const batches = await Promise.all(Array.from({ length: 4 }, () => deliveries.claim({ limit: 5, now })));
         const ids = batches.flat().map((row) => row.id);
         expect(new Set(ids).size).toBe(ids.length);
         expect(ids).toHaveLength(12);
@@ -240,15 +243,15 @@ export function defineWebhookConformance(harness: WebhookHarness): void {
         const { endpoints, deliveries } = harness.storage();
         await deliveries.enqueue(delivery("whe_a", "evt-1"));
         await endpoints.setStatus("whe_a", "disabled");
-        expect(await deliveries.claim({ now: new Date() })).toEqual([]);
+        expect(await deliveries.claim({ now: soon() })).toEqual([]);
         await endpoints.setStatus("whe_a", "enabled");
-        expect((await deliveries.claim({ now: new Date() })).map((row) => row.eventId)).toEqual(["evt-1"]);
+        expect((await deliveries.claim({ now: soon() })).map((row) => row.eventId)).toEqual(["evt-1"]);
       });
 
       it("completes a delivery and records what the receiver said", async () => {
         const { deliveries } = harness.storage();
         await deliveries.enqueue(delivery("whe_a", "evt-1"));
-        await deliveries.claim({ now: new Date() });
+        await deliveries.claim({ now: soon() });
         expect(await deliveries.complete("whe_a:evt-1", { httpStatus: 204, durationMs: 42, at: at(5) })).toBe(true);
         expect(await deliveries.complete("whe_a:evt-1", { httpStatus: 204, durationMs: 42 })).toBe(false);
         expect(await deliveries.findById("whe_a:evt-1")).toMatchObject({ status: "delivered", lastHttpStatus: 204, lastDurationMs: 42, deliveredAt: at(5) });
@@ -258,10 +261,10 @@ export function defineWebhookConformance(harness: WebhookHarness): void {
       it("retries at the time asked and goes dead at the maximum, keeping the last error", async () => {
         const { deliveries } = harness.storage();
         await deliveries.enqueue(delivery("whe_a", "evt-1"));
-        await deliveries.claim({ now: new Date() });
+        await deliveries.claim({ now: soon() });
         const retryAt = new Date(Date.now() + 60_000);
         expect(await deliveries.fail("whe_a:evt-1", { error: "HTTP 500", httpStatus: 500, durationMs: 9, retryAt, maxAttempts: 2 })).toBe("pending");
-        expect(await deliveries.claim({ now: new Date() })).toEqual([]);
+        expect(await deliveries.claim({ now: soon() })).toEqual([]);
         const again = await deliveries.claim({ now: new Date(retryAt.getTime() + 1000) });
         expect(again.map((row) => row.attempts)).toEqual([2]);
         expect(await deliveries.fail("whe_a:evt-1", { error: "timeout", retryAt, maxAttempts: 2 })).toBe("dead");
@@ -280,7 +283,7 @@ export function defineWebhookConformance(harness: WebhookHarness): void {
         await deliveries.enqueue(delivery("whe_a", "evt-1"));
         await deliveries.enqueue(delivery("whe_a", "evt-2", { eventType: "role.updated" }));
         await deliveries.enqueue(delivery("whe_b", "evt-3"));
-        await deliveries.claim({ limit: 1, now: new Date() });
+        await deliveries.claim({ limit: 1, now: soon() });
         await deliveries.complete("whe_a:evt-1", { httpStatus: 200, durationMs: 1 });
         expect((await deliveries.search()).map((row) => row.eventId)).toEqual(["evt-3", "evt-2", "evt-1"]);
         const page = await deliveries.search({ limit: 2 });
@@ -296,7 +299,7 @@ export function defineWebhookConformance(harness: WebhookHarness): void {
       it("prunes only delivered deliveries older than the cutoff", async () => {
         const { deliveries } = harness.storage();
         for (const id of ["evt-1", "evt-2", "evt-3"]) await deliveries.enqueue(delivery("whe_a", id));
-        await deliveries.claim({ limit: 3, now: new Date() });
+        await deliveries.claim({ limit: 3, now: soon() });
         await deliveries.complete("whe_a:evt-1", { httpStatus: 200, durationMs: 1, at: at(1) });
         await deliveries.complete("whe_a:evt-2", { httpStatus: 200, durationMs: 1, at: at(100) });
         expect(await deliveries.pruneDelivered(at(50))).toBe(1);
@@ -347,7 +350,7 @@ export function defineWebhookConformance(harness: WebhookHarness): void {
         const { endpoint } = await service.createEndpoint({ actor: operator, url: "https://hooks.example.com/", events: ["*"] });
         await storage.deliveries.enqueue(delivery(endpoint.id, "evt-1"));
         await expect(service.requeueDelivery({ actor: operator, deliveryId: `${endpoint.id}:evt-1` })).rejects.toBeInstanceOf(WebhookError);
-        await storage.deliveries.claim({ now: new Date() });
+        await storage.deliveries.claim({ now: soon() });
         await storage.deliveries.fail(`${endpoint.id}:evt-1`, { error: "boom", retryAt: new Date(), maxAttempts: 1 });
         const revived = await service.requeueDelivery({ actor: operator, deliveryId: `${endpoint.id}:evt-1` });
         expect(revived).toMatchObject({ status: "pending", attempts: 0 });
