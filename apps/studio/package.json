@@ -1,6 +1,6 @@
 {
   "name": "@uniora/studio",
-  "version": "0.15.0",
+  "version": "1.0.0",
   "description": "UNIORA Studio: local-first admin UI for UNIORA data. Launched via `npx uniora studio`.",
   "license": "Apache-2.0",
   "keywords": [

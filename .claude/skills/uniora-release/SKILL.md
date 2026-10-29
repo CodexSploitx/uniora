@@ -13,9 +13,9 @@ El número sale de lo que haya acumulado `Unreleased`, siguiendo [SemVer](https:
 
 | Qué contiene lo acumulado | Sube | Ejemplo |
 | --- | --- | --- |
-| Solo **correcciones** de errores, sin API ni datos nuevos (el comportamiento documentado no cambia) | PARCHE | `0.12.0` → `0.12.1` |
-| **Funciones nuevas compatibles**: campo, ruta, scope, error, evento, export o migración nuevos, y todo lo opcional | MENOR | `0.12.1` → `0.13.0` (y el parche vuelve a `0`) |
-| **Cambio incompatible**: quitar o renombrar algo, hacer obligatorio un campo, cambiar un significado | MAYOR (mientras sea `0.x`: MENOR, anunciado como incompatible en el CHANGELOG) | `1.4.2` → `2.0.0` |
+| Solo **correcciones** de errores, sin API ni datos nuevos (el comportamiento documentado no cambia) | PARCHE | `1.0.0` → `1.0.1` |
+| **Funciones nuevas compatibles**: campo, ruta, scope, error, evento, export o migración nuevos, y todo lo opcional | MENOR | `1.0.1` → `1.1.0` (y el parche vuelve a `0`) |
+| **Cambio incompatible**: quitar o renombrar algo, hacer obligatorio un campo, cambiar un significado | MAYOR, anunciado como incompatible en el CHANGELOG (desde `1.0.0` un cambio incompatible nunca sale en un MENOR) | `1.4.2` → `2.0.0` |
 
 - Si hay de varias clases, manda la más alta. Una corrección que además añade un campo a la API es MENOR, no PARCHE.
 - Un PARCHE nunca añade ni quita superficie pública: si el cambio añade un campo o una migración, no es un parche aunque "arregle algo".

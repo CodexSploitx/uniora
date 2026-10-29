@@ -4,7 +4,11 @@ All notable changes to UNIORA. Packages are released in lockstep, so one version
 
 ## Unreleased
 
-## 0.15.0 - 2026-10-28
+## 1.0.0 - 2026-10-29
+
+**First stable release.** UNIORA has run in real projects and leaves development status. From 1.0.0 the project follows [SemVer](https://semver.org) for its whole public surface: the HTTP API of `@uniora/server` (routes, schemas, scopes, errors, events), `@uniora/client`, the embedded API of `@uniora/core` and the adapters, and the database migrations. Within 1.x these change only in a backward-compatible way (a patch never adds or removes public surface; a minor only adds, with optional fields and unchanged defaults), and anything that breaks waits for 2.0 and is announced in this file. The previous 0.x line stays on npm; `0.15.0` was never published, so this release also carries everything that was going to be in it. No API, schema or behavior change compared with the last 0.x release (`0.14.1`) other than what is listed below, and no migration, so there is nothing to run for `uniora migrate`.
+
+To adopt it: raise every `@uniora/*` package to `^1.0.0` (they are released in lockstep, so use the same version for all of them), then reinstall. A `^0.14.1` range does not pick up 1.0.0 on its own.
 
 ### Added
 
@@ -16,7 +20,7 @@ All notable changes to UNIORA. Packages are released in lockstep, so one version
 
 ### Fixed
 
-- **Repository tooling, no published code, API or behavior change.** `scripts/check-packages.mjs` never ran `publint` or `attw` on Windows (`pnpm` is `pnpm.cmd`, so every check reported `NaN`); it now runs through the shell there. A new `.gitattributes` keeps `*.sql`, `guides/server-api.md`, `guides/openapi.json` and `packages/client/src/generated.ts` as LF: with `core.autocrlf=true` Git checked them out as CRLF and three `@uniora/sqlite` tests, which compare them byte by byte with what the code generates, failed. The webhook test "never lets a hostile receiver's address through" failed about one run in four against PostgreSQL because its dispatcher used the real clock instead of the test clock that runs a little ahead of the database's; it now uses the shared one.
+- **Repository tooling, no published code, API or behavior change.** `scripts/check-packages.mjs` never ran `publint` or `attw` on Windows (`pnpm` is `pnpm.cmd`, so every check reported `NaN`); it now runs through the shell there. A new `.gitattributes` keeps `*.sql`, `guides/server-api.md`, `guides/openapi.json` and `packages/client/src/generated.ts` as LF: with `core.autocrlf=true` Git checked them out as CRLF and three `@uniora/sqlite` tests, which compare them byte by byte with what the code generates, failed. The webhook test "never lets a hostile receiver's address through" failed about one run in four against PostgreSQL because its dispatcher used the real clock instead of the test clock that runs a little ahead of the database's; it now uses the shared one. The same happened in the shared webhook conformance suite (`@uniora/storage-conformance`, private, used by the PostgreSQL and SQLite adapters): its tests claimed deliveries with the process's clock right after the database stamped them with its own, which in a container can run ahead, so they failed on a machine with a skewed clock (never in CI); they now claim at a time a few seconds ahead.
 - **`@uniora/cli` test suite, repository-only (no published code, API or behavior change).** Six tests failed on a Windows machine whose `.env` uses SQLite: the "real database" tests of `check`, `doctor` and `migrate` (and the ledger suites) ran whenever `DATABASE_URL` / `TEST_DATABASE_URL` existed, even when they were `sqlite:` URLs, and now run only for PostgreSQL URLs; the two `uniora server start` tests now wait for the server to close its database before the temporary folder is deleted (Windows locks an open SQLite file, `EPERM`); and the SQLite flow test links the CLI package with a directory junction, which Windows allows without elevated privileges.
 
 ### Documentation

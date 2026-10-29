@@ -10,7 +10,7 @@ Include what you found, how to reproduce it (a failing test or a short script is
 
 ## Supported versions
 
-UNIORA is `0.x`: only the latest minor version receives security fixes.
+Only the latest minor version of the current major (`1.x`) receives security fixes. Fixes ship as a patch release and never contain a breaking change.
 
 ## What is in scope
 
