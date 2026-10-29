@@ -17,7 +17,7 @@
     "@uniora/supabase": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^26.6.4",
+    "@types/node": "^26.6.5",
     "@types/pg": "^8.11.10",
     "jose": "^6.2.12",
     "pg": "^8.23.1",
