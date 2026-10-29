@@ -402,7 +402,7 @@ Todos los comandos aceptan `--config <archivo>`, `--env <nombre>` (carga `.env.<
 
 ## Estado
 
-UNIORA está en desarrollo activo (Roadmap V1.x). Publicado en npm bajo el scope [`@uniora`](https://www.npmjs.com/org/uniora) (`0.x`: la API aún puede cambiar entre versiones minor).
+UNIORA es estable (`1.x`) y está lista para producción. Publicado en npm bajo el scope [`@uniora`](https://www.npmjs.com/org/uniora). Sigue [SemVer](https://semver.org): dentro de `1.x` la API HTTP, la API embebida y las migraciones de base de datos solo cambian de forma compatible, y lo que rompa espera a `2.0` y se anuncia en el [CHANGELOG](CHANGELOG.md). Sigue mejorando: consulta la [hoja de ruta](guides/roadmap.md).
 
 ## Contribuir
 

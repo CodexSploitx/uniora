@@ -401,7 +401,7 @@ Every command accepts `--config <file>`, `--env <name>` (loads `.env.<name>` —
 
 ## Status
 
-UNIORA is under active development (V1.x). Published on npm under the [`@uniora`](https://www.npmjs.com/org/uniora) scope (`0.x`: the API may still change between minor versions).
+UNIORA is stable (`1.x`) and ready for production. Published on npm under the [`@uniora`](https://www.npmjs.com/org/uniora) scope. It follows [SemVer](https://semver.org): within `1.x` the HTTP API, the embedded API and the database migrations only change in a backward-compatible way, and anything that breaks waits for `2.0` and is announced in the [CHANGELOG](CHANGELOG.md). It keeps improving: see the [roadmap](guides/roadmap.md).
 
 ## Contributing
 

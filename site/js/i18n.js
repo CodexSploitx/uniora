@@ -20,7 +20,7 @@ export const ES = {
   "hero.p1": "Integración rápida<br>y sencilla",
   "hero.p2": "Seguridad de nivel<br>empresarial",
   "hero.p3": "Totalmente flexible<br>y escalable",
-  "hero.pill": "en desarrollo · código abierto",
+  "hero.pill": "estable · código abierto",
   "copy": "copiar",
   "hv.app": "Tu aplicación",
   "hv.app2": "Acceso seguro<br>y controlado",
