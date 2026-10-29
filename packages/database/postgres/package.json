@@ -1,6 +1,6 @@
 {
   "name": "@uniora/postgres",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "PostgreSQL storage adapter for @uniora/core",
   "license": "Apache-2.0",
   "keywords": [

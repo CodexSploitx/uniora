@@ -4,6 +4,8 @@ All notable changes to UNIORA. Packages are released in lockstep, so one version
 
 ## Unreleased
 
+## 1.1.0 - 2026-10-29
+
 ### Added
 
 - **Row-level security by team (PostgreSQL): `uniora.is_team_member(org, team)` and `uniora.is_team_manager(org, team)`**, each also with an explicit-identity form `(org, team, provider, subject)` for trusted server code. They answer in the database what the engine reads as `subject.teamIds` and `subject.managedTeamIds`, so a policy on your own table can say "only the members of this row's team see it": `create policy "team reads" on public.documents for select using (uniora.is_team_member(organization_id, team_id));`. True only for an active member of an active team who is also a current member of the organization (blocked or suspended members, suspended or archived organizations and identity aliases decide exactly as in `is_member`); anything unknown is `false` and nothing raises. `security definer` with a pinned `search_path`, `stable`, EXECUTE revoked from `public` like the other functions.

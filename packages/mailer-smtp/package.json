@@ -1,6 +1,6 @@
 {
   "name": "@uniora/mailer-smtp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "SMTP delivery for UNIORA invitations: configured from .env, with professional multilingual e-mail templates",
   "license": "Apache-2.0",
   "keywords": [
