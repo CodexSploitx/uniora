@@ -4,6 +4,10 @@ All notable changes to UNIORA. Packages are released in lockstep, so one version
 
 ## Unreleased
 
+### Documentation
+
+- **[RLS by team](guides/rls.md#5-policies-by-team): two gaps closed.** (1) Rows of several teams and rows of none: a policy over a `text[]` list of teams (`exists (select 1 from unnest(team_ids) … uniora.is_team_member(organization_id, t.id))`), and a row without a team — `NULL` or empty — is visible to nobody, the Owner included, as in the engine; both examples are executed in the tests, and the test that compares the functions with `engine.authorize` now also covers a resource with no team. (2) A function of your own named `uniora.is_team_member` / `uniora.is_team_manager` in the `uniora` schema: with other parameter names or another return type `uniora migrate` stops, with the same name and types the migration replaces it without a warning — drop or rename it before upgrading, and keep your own functions in your own schema. Documentation and tests only: no code, API, migration or version change.
+
 ## 1.1.0 - 2026-10-29
 
 ### Added
