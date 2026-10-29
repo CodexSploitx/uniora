@@ -74,7 +74,7 @@ No existe una nube de UNIORA. En ambos modos lo ejecutas tú y los datos son tuy
 - **Log de auditoría.** Solo-añadir y encadenado por hash, con verificación de integridad ([guía](guides/audit-log.md)).
 - **Webhooks y outbox.** Eventos escritos en la misma transacción que el cambio y entregados después, firmados y con reintentos ([outbox](guides/outbox.md)).
 - **Administradores de plataforma y support grants.** El poder del personal propio queda fuera de cualquier organización, y el acceso temporal y auditado a los datos de un cliente es explícito ([plataforma](guides/platform.md), [support grants](guides/support-grants.md)).
-- **Row-level security en PostgreSQL.** Funciones SQL que dan a tus propias tablas las mismas respuestas que el motor ([guía](guides/rls.md)).
+- **Row-level security en PostgreSQL.** Funciones SQL que dan a tus propias tablas las mismas respuestas que el motor: pertenencia, permisos, funciones activas y equipos ([guía](guides/rls.md)).
 - **Herramientas.** Un CLI con ledger de migraciones, un cliente tipado y Studio, una interfaz de administración local. Medido con 5.000.000 de membresías ([rendimiento](guides/performance.md)).
 
 ## UNIORA Studio

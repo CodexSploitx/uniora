@@ -47,6 +47,7 @@ import { MIGRATION_0044_RATE_LIMITS } from "./migrations/0044_rate_limits.js";
 import { MIGRATION_0045_WEBHOOKS } from "./migrations/0045_webhooks.js";
 import { MIGRATION_0046_IDENTITY_PROFILES } from "./migrations/0046_identity_profiles.js";
 import { MIGRATION_0047_FEATURE_DEFAULT_REASON } from "./migrations/0047_feature_default_reason.js";
+import { MIGRATION_0048_RLS_TEAM_FUNCTIONS } from "./migrations/0048_rls_team_functions.js";
 
 interface Migration {
   readonly id: string;
@@ -102,6 +103,7 @@ const MIGRATIONS: readonly Migration[] = [
   { id: "0045_webhooks", sql: MIGRATION_0045_WEBHOOKS },
   { id: "0046_identity_profiles", sql: MIGRATION_0046_IDENTITY_PROFILES },
   { id: "0047_feature_default_reason", sql: MIGRATION_0047_FEATURE_DEFAULT_REASON },
+  { id: "0048_rls_team_functions", sql: MIGRATION_0048_RLS_TEAM_FUNCTIONS },
 ];
 
 /**

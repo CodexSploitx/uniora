@@ -4,6 +4,16 @@ All notable changes to UNIORA. Packages are released in lockstep, so one version
 
 ## Unreleased
 
+## 1.1.0 - 2026-10-29
+
+### Added
+
+- **Row-level security by team (PostgreSQL): `uniora.is_team_member(org, team)` and `uniora.is_team_manager(org, team)`**, each also with an explicit-identity form `(org, team, provider, subject)` for trusted server code. They answer in the database what the engine reads as `subject.teamIds` and `subject.managedTeamIds`, so a policy on your own table can say "only the members of this row's team see it": `create policy "team reads" on public.documents for select using (uniora.is_team_member(organization_id, team_id));`. True only for an active member of an active team who is also a current member of the organization (blocked or suspended members, suspended or archived organizations and identity aliases decide exactly as in `is_member`); anything unknown is `false` and nothing raises. `security definer` with a pinned `search_path`, `stable`, EXECUTE revoked from `public` like the other functions.
+  - **One deliberate difference with the engine:** the engine stops reading `subject.teamIds` for a person in more than 500 active teams and refuses; the SQL functions ask about one team and answer exactly. The team hierarchy (`resource.teamPathIds`) and the roles held inside a team are not covered yet (see the roadmap).
+  - **Adopting it:** upgrade, run `uniora migrate` (or apply `packages/database/postgres/sql/0048_rls_team_functions.sql`), grant EXECUTE on the functions to the roles your policies run as, and store UNIORA's team id (not the slug) in your table's team column; the arguments are `text`, so cast `uuid` columns (`team_id::text`). Migration `0048` is PostgreSQL only; SQLite and the in-memory storage have no row-level security and change nothing.
+  - **API:** database functions only. There is no HTTP route, scope, error or event, so `openapi.json`, `server-api.md` and `@uniora/client` are unchanged.
+  - Documented in `guides/rls.md` ("Policies by team"), `guides/teams.md`, the README and the roadmap (team hierarchy for later).
+
 ## 1.0.0 - 2026-10-29
 
 **First stable release.** UNIORA has run in real projects and leaves development status. From 1.0.0 the project follows [SemVer](https://semver.org) for its whole public surface: the HTTP API of `@uniora/server` (routes, schemas, scopes, errors, events), `@uniora/client`, the embedded API of `@uniora/core` and the adapters, and the database migrations. Within 1.x these change only in a backward-compatible way (a patch never adds or removes public surface; a minor only adds, with optional fields and unchanged defaults), and anything that breaks waits for 2.0 and is announced in this file. The previous 0.x line stays on npm; `0.15.0` was never published, so this release also carries everything that was going to be in it. No API, schema or behavior change compared with the last 0.x release (`0.14.1`) other than what is listed below, and no migration, so there is nothing to run for `uniora migrate`.

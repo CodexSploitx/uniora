@@ -74,7 +74,7 @@ There is no UNIORA cloud. In both modes you run it and you own the data.
 - **Audit log.** Append-only and hash-chained, with an integrity check ([guide](guides/audit-log.md)).
 - **Webhooks and outbox.** Events written in the same transaction as the change, then delivered signed, with retries ([outbox](guides/outbox.md)).
 - **Platform administrators and support grants.** Staff power kept outside any organization, and temporary, audited access to a customer's data ([platform](guides/platform.md), [support grants](guides/support-grants.md)).
-- **PostgreSQL row-level security.** SQL functions that give your own tables the same answers as the engine ([guide](guides/rls.md)).
+- **PostgreSQL row-level security.** SQL functions that give your own tables the same answers as the engine: membership, permissions, features and teams ([guide](guides/rls.md)).
 - **Tooling.** A CLI with a migration ledger, a typed client, and Studio, a local admin UI. Measured on 5,000,000 memberships ([performance](guides/performance.md)).
 
 ## UNIORA Studio
