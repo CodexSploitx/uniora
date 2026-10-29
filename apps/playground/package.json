@@ -16,7 +16,7 @@
     "@uniora/next": "workspace:*",
     "@uniora/react": "workspace:*",
     "class-variance-authority": "^0.7.1",
-    "cn": "^0.4.0",
+    "cn": "^0.5.0",
     "next": "16.4.3",
     "react": "19.3.0",
     "react-dom": "19.2.8",
