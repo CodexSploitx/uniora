@@ -450,6 +450,11 @@ describe("uniora.* functions for row-level security", () => {
         expect(await asProbe(identity, "select uniora.is_team_member('org-1', $1) as v", [team]), `${identity.subject} / ${team}: ${decision.decision}`).toBe(decision.decision === "allow");
       }
     }
+    // A resource with no team is a fact ("none"), not a gap: nothing intersects, so nobody gets in — like a row without team in SQL.
+    for (const identity of [staff, owner]) {
+      const decision = await engine.authorize({ identity, organizationId: "org-1", permission: "vehicles.read", resource: { type: "vehicle", id: "v-1", organizationId: "org-1", teamIds: [] } });
+      expect(decision.decision, `${identity.subject} sobre un recurso sin equipo`).not.toBe("allow");
+    }
   }, 60_000);
 
   it("una política using (uniora.is_team_member(organization_id, team_id)) deja ver solo las filas del equipo", async () => {
@@ -525,6 +530,34 @@ describe("uniora.* functions for row-level security", () => {
     expect(await asProbe(big, "select uniora.is_team_member('org-big', 't-big-1') as v")).toBe(true); // where the engine refuses
     expect(await asProbe(big, "select uniora.is_team_member('org-big', 't-big-0') as v")).toBe(false);
   }, 60_000);
+
+  it("filas con varios equipos (text[]) y filas sin equipo: se ve la fila si cualquiera de sus equipos es tuyo y una fila sin equipo no la ve nadie", async () => {
+    // The policies of guides/rls.md ("Rows of several teams, rows of none").
+    for (const table of ["rls_team_multi", "rls_team_nullable"]) await pool.query(`drop table if exists public.${table}`);
+    await pool.query("create table public.rls_team_multi (id int primary key, organization_id text not null, team_ids text[])");
+    await pool.query("create table public.rls_team_nullable (id int primary key, organization_id text not null, team_id text)");
+    try {
+      for (const table of ["rls_team_multi", "rls_team_nullable"]) {
+        await pool.query(`alter table public.${table} enable row level security`);
+        await pool.query(`grant select on public.${table} to ${PROBE_ROLE}`);
+      }
+      await pool.query("insert into public.rls_team_multi values (1, 'org-1', '{t-ops,t-sales}'), (2, 'org-1', '{t-sales}'), (3, 'org-1', '{}'), (4, 'org-1', null)");
+      await pool.query("insert into public.rls_team_nullable values (1, 'org-1', 't-ops'), (2, 'org-1', null)");
+      await pool.query(`create policy "any of the row's teams" on public.rls_team_multi for select using (exists (select 1 from unnest(team_ids) as t(id) where uniora.is_team_member(organization_id, t.id)))`);
+      await pool.query(`create policy "team reads" on public.rls_team_nullable for select using (uniora.is_team_member(organization_id, team_id))`);
+      const visible = (table: string, identity: Identity | undefined) => asProbe<number[]>(identity, `select coalesce(array_agg(id order by id), '{}') as v from public.${table}`);
+      expect(await visible("rls_team_multi", staff)).toEqual([1]); // t-ops is theirs; t-sales is only pending
+      expect(await visible("rls_team_multi", manager)).toEqual([1, 2]); // either team is enough
+      expect(await visible("rls_team_multi", stranger)).toEqual([]);
+      expect(await visible("rls_team_multi", undefined)).toEqual([]);
+      // Rows 3 (empty array) and 4 (NULL) have no team: nobody sees them, not even the Owner of the organization.
+      expect(await visible("rls_team_multi", owner)).toEqual([]);
+      expect(await visible("rls_team_nullable", staff)).toEqual([1]);
+      expect(await visible("rls_team_nullable", owner)).toEqual([]);
+    } finally {
+      for (const table of ["rls_team_multi", "rls_team_nullable"]) await pool.query(`drop table if exists public.${table}`);
+    }
+  }, 30_000);
 
   it("con columnas uuid hay que convertir a text: lo que dice la guía funciona y sin convertir falla a la vista", async () => {
     const org = randomUUID();

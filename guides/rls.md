@@ -140,6 +140,16 @@ create policy "team leads read" on public.payroll
 
 - **Store UNIORA's team id.** `team_id` must hold the `id` of the team in UNIORA, not its slug or your own external id. Which team a row belongs to is your data; UNIORA only answers whether the person belongs to that team.
 - **`uuid` columns need a cast.** The arguments are `text`. UNIORA's own ids are strings (and by default random UUIDs), so a `uuid` column is natural, but PostgreSQL does not convert it on its own: write `uniora.is_team_member(organization_id::text, team_id::text)`. Without the cast the policy is refused when you create it (`function uniora.is_team_member(uuid, uuid) does not exist`), so you find out at once; the same applies to `is_member`.
+- **Rows of several teams, rows of none.** The functions answer for one team at a time. When a row belongs to a list of teams (`team_ids text[]`, like the engine's `resource.teamIds`), ask for each one: the row is visible if **any** of them is yours.
+
+  ```sql
+  create policy "any of the row's teams" on public.documents
+    for select using (exists (
+      select 1 from unnest(team_ids) as t(id) where uniora.is_team_member(organization_id, t.id)));
+  ```
+
+  A row **without a team** (`team_id` is `NULL`, or `team_ids` is empty or `NULL`) is visible to nobody, the organization's Owner included — the same as a resource with `teamIds: []` in the engine, where nothing intersects. If those rows should be visible to the members of the organization, say so in your policy (for example with `uniora.is_member(organization_id)`); it is a decision about your data.
+- **Do not create your own functions in the `uniora` schema.** If you already have a `uniora.is_team_member` or `uniora.is_team_manager` of your own (before upgrading, for example), drop or rename it before running the migration. With other parameter names or another return type `uniora migrate` stops (`cannot change name of input parameter`, `cannot change return type of existing function`); with the same name and the same types, the migration replaces yours with UNIORA's without a warning. Keep your own functions in your own schema.
 - **What counts, exactly as in the engine.** An **active** member of an **active** team, who is also a current member of the organization: a pending, suspended or removed team member, an archived team, a blocked or suspended member (until the date ends) and a suspended or archived organization all answer `false`, like [`is_member`](#3-match-the-engine). An identity alias answers like the identity it links to. Being a team owner or manager only matters here; it grants no permission by itself (see [Team as context for `can`](teams.md#team-as-context-for-can)).
 - **Anything unknown is `false`, never an error:** a team that does not exist or belongs to another organization, an empty or `NULL` argument, no current identity.
 - **The engine and the database agree**, with one deliberate difference: the engine stops reading `subject.teamIds` for a person in more than 500 active teams (`MAX_SUBJECT_TEAMS`) and then refuses, "never a guess". The SQL functions ask about one team and answer exactly, so for that person they can say `true` where the engine refuses. The database is the second layer; the application still decides first.
