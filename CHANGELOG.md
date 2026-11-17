@@ -4,6 +4,10 @@ All notable changes to UNIORA. Packages are released in lockstep, so one version
 
 ## Unreleased
 
+### Security
+
+- **`@uniora/studio` (and `@uniora/cli`, which installs it) now ships Next.js `16.4.6`** (was `16.4.3`, inside two moderate advisories, `GHSA-mfr8-8qww-v76h` and `GHSA-vc7v-qv4w-wrv8`, about `use cache` with root parameters; fixed from `16.4.5`). Studio is published already compiled, and its `.next` output only runs on the Next version that built it (running it on another one fails with `ENOENT … .next/server/preview-props.json`), so `next` stays an **exact** version on purpose: a range would let a package manager pair the compiled output with a different Next. The security fix therefore reaches projects with a new Studio release, not with a lockfile update: upgrade `@uniora/studio` / `@uniora/cli` once this ships. Studio remains a local tool (`127.0.0.1`, a fresh token on every run, `--read-only` available) and must not be exposed to a network. The private playground moves to the same version. `pnpm audit` reports no `next` advisory afterwards. No API, schema or behavior change.
+
 ### Documentation
 
 - **[RLS by team](guides/rls.md#5-policies-by-team): two gaps closed.** (1) Rows of several teams and rows of none: a policy over a `text[]` list of teams (`exists (select 1 from unnest(team_ids) … uniora.is_team_member(organization_id, t.id))`), and a row without a team — `NULL` or empty — is visible to nobody, the Owner included, as in the engine; both examples are executed in the tests, and the test that compares the functions with `engine.authorize` now also covers a resource with no team. (2) A function of your own named `uniora.is_team_member` / `uniora.is_team_manager` in the `uniora` schema: with other parameter names or another return type `uniora migrate` stops, with the same name and types the migration replaces it without a warning — drop or rename it before upgrading, and keep your own functions in your own schema. Documentation and tests only: no code, API, migration or version change.
