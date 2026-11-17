@@ -4,6 +4,10 @@ All notable changes to UNIORA. Packages are released in lockstep, so one version
 
 ## Unreleased
 
+## 1.2.0 - 2026-11-17
+
+Minor release: new compatible exports (`@uniora/core/validation`, `retireFeature`) and a security update of the Next.js that `@uniora/studio` ships. No migration, no HTTP API change; to adopt it, raise every `@uniora/*` package to `^1.2.0` (they are released in lockstep) and reinstall. A `^1.1.0` range already accepts it, but a lockfile keeps `1.1.0` until you update.
+
 ### Added
 
 - **`retireFeature(storage, key, options?)`: retire a feature definition in one idempotent, atomic call.** `features.register` only adds, and `unregister` refuses while the feature is on anywhere, so a feature dropped from an application's catalog stayed in `uniora.feature_definitions` (and in Studio) unless the caller chained `disableEverywhere` and `unregister` and handled both errors. `retireFeature` runs both in one transaction (the kill switch only with `disableEverywhere: true`; otherwise a feature still on somewhere is refused with `feature_in_use`), rolls the kill switch back if a child feature blocks it (`feature_has_children`), treats an already-absent key as success (`{ retired: false }`, nothing audited) and, with `createAuditedStorage`, records `feature.disabled_everywhere` and `feature.unregistered`. Overrides left switched off disappear with the definition; nothing else about those organizations changes. Embedded API only: the HTTP API has no write route for the feature catalog (applications declare it with `features.register`), so no route, scope, error or event is added and `openapi.json`, `server-api.md` and `@uniora/client` are unchanged; no migration; Studio already offers "Unregister". Tested on memory, SQLite and PostgreSQL through the shared conformance suite ([Core reference](guides/core-reference.md#retiring-a-feature-retirefeature)). Reported by an integrating project.
