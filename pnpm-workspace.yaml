@@ -34,6 +34,12 @@ overrides:
 # (eslint-config-next, shadcn) of apps/playground (private, never published) and @uniora/studio — a
 # published package, but its devDependencies are never installed by anyone who depends on it, only
 # by this monorepo's own tooling. Revisit when braces ships a fix.
+# picomatch (GHSA-fc5q-39xc-vjpf, ReDoS through a single-branch glob pattern, high): the advisory names 4.0.8
+# as the fix but the registry's latest is 4.0.7 (checked 2026-11-17), so it cannot be updated yet. Reached
+# only through shadcn and the lint/type tooling (apps/playground is private; @uniora/studio's devDependencies
+# are never installed by its users); nothing published depends on it at runtime. Ignored with the owner's OK
+# (2026-11-17). Remove this entry once picomatch >= 4.0.8 exists and the lockfile resolves it.
 auditConfig:
   ignoreGhsas:
     - GHSA-vfj7-8cjw-p6xm
+    - GHSA-fc5q-39xc-vjpf
