@@ -266,7 +266,7 @@ const effective = await storage.features.listEffective(orgId); // [{ key, enable
 | `listByOrganization(organizationId)` | Explicit overrides only. |
 | `listCatalog()` / `search({ query?, enabledIn?, limit?, after? })` / `count(...)` | |
 | `summarizeUsage(keys, sampleSize)` / `countEnabledByOrganization(ids)` | Admin-screen aggregates. |
-| `unregister(key)` | Refused while enabled somewhere (`feature_in_use`) or a parent (`feature_has_children`). |
+| `unregister(key)` | Removes the definition and the overrides left switched off. Refused while enabled somewhere (`feature_in_use`) or a parent (`feature_has_children`). To retire a feature in one call, see [Retiring a feature](#retiring-a-feature-retirefeature) below. |
 
 ```ts
 await storage.features.disableEverywhere("legacy_exports", { actor, reason: "Retired; use the new export." });
@@ -278,6 +278,38 @@ if (feature && !feature.enabled && feature.reason === "default") {
 ```
 
 Re-registering a feature keeps the kill switch's reason while `defaultEnabled` stays off and clears it when `defaultEnabled` is `true`.
+
+### Retiring a feature: `retireFeature`
+
+**What it is for.** A feature you stop offering (its code is gone, or the plan that sold it) has to leave the catalog, or its row keeps showing up in Studio and in every `listCatalog` / `listEffective` for nothing. `features.register` only adds, and `unregister` refuses while the feature is on anywhere, so retiring used to be "`disableEverywhere`, then `unregister`, and handle both errors". `retireFeature(storage, key, options?)` does both in **one transaction** and is **idempotent**, so an app can run it on every start for the keys it dropped from its code (a `features:sync` script).
+
+**Requirements.** `@uniora/core` 1.2.0 or later; any storage (memory, PostgreSQL, SQLite). No migration. It does not authorize the caller: guard it with `engine.can`, or run it from your own deploy script.
+
+```ts
+import { retireFeature } from "@uniora/core";
+
+const result = await retireFeature(storage, "setup_tutorial", {
+  disableEverywhere: true,          // also switch it off where it is still on
+  actor: { provider: "main", subject: "deploy-bot" },
+  reason: "Removed from the product",
+});
+// { retired: true, disabledOverrides: 3, defaultWasEnabled: false }
+await retireFeature(storage, "setup_tutorial", { disableEverywhere: true }); // { retired: false, … } — already gone, no error
+```
+
+**Rules that surprise.**
+
+- Without `disableEverywhere`, a feature that is still **effectively on** in some organization is refused (`feature_in_use`) and nothing changes: turning something off for customers is a decision, so it is explicit. With it, the kill switch (`features.disableEverywhere`, with your `actor` / `reason`) runs first.
+- Overrides that were already **off** (for instance organizations an admin or your billing switched it off for) are not rewritten: they disappear together with the definition, because there is nothing left for them to refer to. Nothing else about those organizations changes.
+- Another feature that names it as `parentKey` blocks the retirement (`feature_has_children`): retire or detach the children first. Because it is one transaction, a refusal also undoes the kill switch.
+- A key that does not exist is not an error: `{ retired: false, disabledOverrides: 0, defaultWasEnabled: false }` and nothing is audited. A typo is therefore silent; check the returned `retired` if that matters.
+- With `createAuditedStorage`, the audit log gets `feature.disabled_everywhere` and `feature.unregistered` (see [Audit log](audit-log.md)).
+
+**Errors.** `feature_in_use`, `feature_has_children` ([Errors](errors.md)).
+
+**Studio and the HTTP API.** Studio's feature catalog already has "Unregister" (same refusals as `unregister`). There is no HTTP route for it: the HTTP API has no write route for the feature catalog at all (the catalog is declared by your application's code with `features.register`, not by API clients), so adding only "retire" would be one-sided; `openapi.json`, `server-api.md` and `@uniora/client` do not change.
+
+**Adopting it.** Upgrade `@uniora/core`, and replace your `disableEverywhere` + `unregister` pair (or your hand-made SQL `delete`) with `retireFeature`. Do **not** delete rows from `uniora.feature_definitions` by hand: the `retireFeature` / `unregister` path is the one that checks children and audits.
 This needs migration Postgres `0047` / SQLite `0032` (`uniora migrate`).
 
 Key: lowercase alphanumerics separated by underscores, up to 63 characters.

@@ -35,7 +35,7 @@ const unlocked = await engine.access.check({ identity, organizationId, permissio
 | Authorization | `createAuthorizationEngine` (`can`, `access.check`, `onDecision`), `computeAuthorizationSnapshot` |
 | Organizations | `createOrganizationWithOwner`, `storage.organizations` |
 | Members and ownership | `storage.memberships`, `transferOwnership`, `leaveOrganization` (the last Owner can never leave) |
-| Roles, permissions, features | `storage.roles`, `storage.permissions`, `storage.features` |
+| Roles, permissions, features | `storage.roles`, `storage.permissions`, `storage.features`, `retireFeature` (remove a feature from the catalog in one idempotent call) |
 | Invitations | `createInvitationService` (`invite`, `resend`, `revoke`, `preview`, `accept`), `invitationErrorToHttp` |
 | Audit | `storage.auditLogs`, `createAuditedStorage`, `auditLogs.verifyIntegrity()` (append-only, hash-chained) |
 | Identity | `Identity`, `storage.identityLinks` (migrate providers without losing anything) |

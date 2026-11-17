@@ -18,6 +18,7 @@ import {
   createTrustedTeamStorage,
   dispatchOutbox,
   leaveOrganization,
+  retireFeature,
   transferOwnership,
 } from "@uniora/core";
 import { defineAccessScenarios } from "./access-suite.js";
@@ -753,6 +754,59 @@ export function defineStorageConformance(harness: StorageHarness, adapterSpecifi
         await storage.features.disable("org-1", "agenda");
         // Todas las organizaciones existentes la tienen apagada → se puede desregistrar.
         await storage.features.unregister("agenda");
+      });
+
+      it("retireFeature: se niega mientras esté activa, y con disableEverywhere la apaga y la retira en una sola llamada", async () => {
+        const storage = harness.storage();
+        await seedOrganizations(storage, ["org-1", "org-2", "org-3"]);
+        await storage.features.register({ key: "agenda", name: "Agenda", defaultEnabled: true });
+        await storage.features.disable("org-2", "agenda"); // bloqueada por el negocio en org-2
+        await storage.features.enable("org-3", "agenda");
+
+        await expect(retireFeature(storage, "agenda")).rejects.toMatchObject({ code: "feature_in_use" });
+        expect(await storage.features.isEnabled("org-1", "agenda")).toBe(true);
+        expect(await storage.features.isEnabled("org-3", "agenda")).toBe(true);
+
+        expect(await retireFeature(storage, "agenda", { actor: operator, reason: "Retirada del producto", disableEverywhere: true })).toEqual({
+          retired: true,
+          disabledOverrides: 1,
+          defaultWasEnabled: true,
+        });
+        expect((await storage.features.listCatalog()).some((f) => f.key === "agenda")).toBe(false);
+        for (const id of ["org-1", "org-2", "org-3"]) expect(await storage.features.listByOrganization(id)).toEqual([]);
+        expect(await storage.features.isEnabled("org-1", "agenda")).toBe(false);
+
+        // Ya no existe: repetirlo es un éxito sin efecto (un sync puede correr en cada arranque).
+        expect(await retireFeature(storage, "agenda", { disableEverywhere: true })).toEqual({
+          retired: false,
+          disabledOverrides: 0,
+          defaultWasEnabled: false,
+        });
+      });
+
+      it("retireFeature sin disableEverywhere retira una función que ya no está activa en ninguna parte, sin tocar otras", async () => {
+        const storage = harness.storage();
+        await seedOrganizations(storage, ["org-1"]);
+        await storage.features.register({ key: "old", name: "Old" });
+        await storage.features.register({ key: "keep", name: "Keep" });
+        await storage.features.disable("org-1", "old");
+        await storage.features.enable("org-1", "keep");
+        expect(await retireFeature(storage, "old")).toMatchObject({ retired: true, disabledOverrides: 0 });
+        expect((await storage.features.listCatalog()).map((f) => f.key)).toEqual(["keep"]);
+        expect(await storage.features.isEnabled("org-1", "keep")).toBe(true);
+      });
+
+      it("retireFeature es atómica: si otra función depende de ella, el interruptor global se deshace", async () => {
+        const storage = harness.storage();
+        await seedOrganizations(storage, ["org-1"]);
+        await storage.features.register({ key: "root", name: "Root" });
+        await storage.features.register({ key: "child", name: "Child", parentKey: "root" });
+        await storage.features.enable("org-1", "root");
+        await storage.features.enable("org-1", "child");
+        await expect(retireFeature(storage, "root", { disableEverywhere: true })).rejects.toMatchObject({ code: "feature_has_children" });
+        expect(await storage.features.isEnabled("org-1", "root")).toBe(true);
+        expect(await storage.features.isEnabled("org-1", "child")).toBe(true);
+        expect((await storage.features.listCatalog()).map((f) => f.key).sort()).toEqual(["child", "root"]);
       });
     });
 
