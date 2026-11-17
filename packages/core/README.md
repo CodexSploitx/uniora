@@ -39,9 +39,11 @@ const unlocked = await engine.access.check({ identity, organizationId, permissio
 | Invitations | `createInvitationService` (`invite`, `resend`, `revoke`, `preview`, `accept`), `invitationErrorToHttp` |
 | Audit | `storage.auditLogs`, `createAuditedStorage`, `auditLogs.verifyIntegrity()` (append-only, hash-chained) |
 | Identity | `Identity`, `storage.identityLinks` (migrate providers without losing anything) |
+| Browser | `@uniora/core/validation`: the pure name, slug and key helpers, with no `node:*` import (see below) |
 
 ## Things to know
 
+- **Browser code imports `@uniora/core/validation`, not the root.** The root entry point includes server-only parts (`node:crypto`, `node:net`), which a client bundle cannot read (`UnhandledSchemeError` in `next dev` with webpack). The subpath exports only the pure helpers (`sanitizeOrganizationName`, `resolveOrganizationSlug`, `assertValidRoleKey`, …), the same functions the server runs. Validating in the browser is a convenience; the server stays the authority. See [the reference](https://github.com/CodexSploitx/uniora/blob/main/guides/core-reference.md#browser-code-uniorecorevalidation).
 - **Authorization is yours at the edges.** The invitation service, `assignRole`, `transferOwnership` and friends do not authorize their caller: guard them with `engine.can` (we suggest `members.invite`, `roles.assign`, `organization.transfer_ownership`).
 - Owner can't be granted by `assignRole` or by an invitation; use `assignOwnerRole` or `transferOwnership`.
 - See the [hardening guide](https://github.com/CodexSploitx/uniora/blob/main/guides/hardening.md) before going to production.

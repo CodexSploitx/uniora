@@ -1,6 +1,7 @@
 # `@uniora/core` reference
 
-Everything is exported from the package root: `import { … } from "@uniora/core"`. Every repository below is a property of
+Everything is exported from the package root: `import { … } from "@uniora/core"`. For the **browser**, the pure helpers are also
+exported from [`@uniora/core/validation`](#browser-code-uniorecorevalidation). Every repository below is a property of
 `UnioraStorage` (`storage.roles`, …) and of the `tx` object inside `storage.transaction(async (tx) => …)`.
 
 **Conventions**
@@ -10,6 +11,43 @@ Everything is exported from the package root: `import { … } from "@uniora/core
 - Batch methods (`findByIds`, `countByRole`, `listEffectiveMany`, …) answer a whole page in one call. Every requested id is present in a map result (`0` when none).
 - **No repository checks who is calling.** Authorize first with `engine.can` (see [Concepts](concepts.md#who-authorizes-the-caller)).
 - Wrap storage in [`createAuditedStorage`](audit-log.md) to have every change audited (and optionally enqueued in the outbox).
+
+---
+
+## Browser code: `@uniora/core/validation`
+
+**What it is for.** The root entry point gathers the whole package, including parts that only make sense on a server (they use `node:crypto` and `node:net`: API keys, webhooks, policy hashing). A client component that imported one text helper from `@uniora/core` therefore made the bundler read those Node modules, and `next dev` with webpack failed with `UnhandledSchemeError: Reading from "node:crypto"`. The subpath `@uniora/core/validation` exports **only the pure helpers**, so a form can validate a name, a slug or a key with exactly the rules the server enforces.
+
+**Requirements.** `@uniora/core` 1.2.0 or later. No configuration; the package also declares `"sideEffects": false`, so a bundler that tree-shakes drops what you do not use even from the root entry point.
+
+**Minimal example (a client component):**
+
+```tsx
+"use client";
+import { OrganizationError, resolveOrganizationSlug, sanitizeOrganizationName } from "@uniora/core/validation";
+
+export function SlugPreview({ name }: { name: string }) {
+  try {
+    return <code>{resolveOrganizationSlug(sanitizeOrganizationName(name))}</code>; // "Acme Corp" → "acme-corp"
+  } catch (error) {
+    return error instanceof OrganizationError ? <em>{error.message}</em> : null;
+  }
+}
+```
+
+**What it exports** (the same functions as the root, not copies — a test compares them): `sanitizeOrganizationName`, `slugify`, `assertValidSlug`, `resolveOrganizationSlug`, `assertOrganizationStatus`, `sanitizeStatusReason`; `sanitizeRoleName`, `normalizeRoleName`, `assertValidRoleKey`, `resolveRoleKey`, `sanitizeRoleDescription`; `assertValidPermissionKey`, `sanitizePermissionName`; `assertValidFeatureKey`, `resolveFeatureKey`, `sanitizeFeatureName`; the team helpers (`resolveTeamSlug`, `sanitizeTeamName`, `sanitizeTeamData`, `sanitizeTeamExternalId`, `sanitizeTeamReason`) and their limits; `cleanProfileText`, `cleanAvatarUrl`; `sameIdentity`; and the error classes they throw (`UnioraError`, `OrganizationError`, `RoleError`, `PermissionError`, `FeatureError`, `TeamError`) with their `…ErrorCode` types.
+
+**Rules that surprise.**
+
+- Checking in the browser is a convenience for the person typing, **never the authority**: the server (or your own back end) runs the same function again, because a client can skip your page.
+- Everything here is pure: no storage, no clock, no network, so nothing in it can answer "is this slug already taken?". Ask the server for that.
+- Nothing from the root entry point that needs Node (`createApiKey`, webhook signing, `computePolicyHash`, storage) is available here, on purpose. A test walks the import graph of `validation.ts` and fails if a Node built-in or a package ever enters it.
+
+**Errors.** The same typed errors and `code`s as on the server ([Errors](errors.md)); a failed helper throws, so wrap it in `try/catch` as above.
+
+**HTTP API.** None: this is an embedded-library entry point, so `openapi.json`, `server-api.md` and `@uniora/client` do not change. A project that uses UNIORA as an external service does not need it.
+
+**Adopting it.** Upgrade `@uniora/core` and replace `from "@uniora/core"` by `from "@uniora/core/validation"` in the files that run in the browser. Nothing else changes for code that keeps importing from the root.
 
 ---
 
